@@ -1,0 +1,10 @@
+[package]
+name = "bip322"
+version = "0.1.0"
+edition = "2021"
+description = "Implements BIP322 generic message signing"
+license = "CC0-1.0"
+
+[dependencies]
+bitcoin = { version =  "0.31.2" }
+bitcoin_hashes = "0.14.0"
