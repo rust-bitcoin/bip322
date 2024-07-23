@@ -50,4 +50,4 @@ jobs:
     
     - name: Tests
       run: |
-        cargo test --lib
+        cargo test --all
