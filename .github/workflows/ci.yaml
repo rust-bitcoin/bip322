@@ -49,5 +49,4 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     
     - name: Tests
-      run: |
-        cargo test --all
+      run: cargo test --all
