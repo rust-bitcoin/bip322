@@ -19,7 +19,6 @@ fn create_message_signature(
   let mut to_sign = to_sign.clone();
 
   let secp = Secp256k1::new();
-  let private_key = private_key;
   let key_pair = Keypair::from_secret_key(&secp, &private_key.inner);
   let (x_only_public_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
   to_sign.inputs[0].tap_internal_key = Some(x_only_public_key);

@@ -1,14 +1,8 @@
 use {
   bitcoin::{
-    absolute::LockTime,
-    blockdata::script,
-    opcodes,
-    psbt::Psbt,
-    script::PushBytes,
-    secp256k1::Secp256k1,
-    transaction::Version,
-    Address, Amount, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Transaction,
-    TxIn, TxOut, Witness,
+    absolute::LockTime, blockdata::script, opcodes, psbt::Psbt, script::PushBytes,
+    secp256k1::Secp256k1, transaction::Version, Address, Amount, Network, OutPoint, PrivateKey,
+    PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
   },
   bitcoin_hashes::{sha256, Hash},
 };
