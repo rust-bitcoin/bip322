@@ -8,10 +8,12 @@ use {
 };
 
 mod sign;
-pub use sign::{full_sign, simple_sign};
+mod verify;
 
-mod verifier;
-pub use verifier::{full_verify, simple_verify};
+pub use {
+  sign::{full_sign, simple_sign},
+  verify::{full_verify, simple_verify},
+};
 
 pub struct Wallet {
   pub btc_address: Address,
@@ -183,20 +185,20 @@ mod tests {
   #[test]
   fn simple_verify_and_falsify_taproot() {
     assert!(
-            simple_verify(
-                &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-                "Hello World",
-                "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-            )
-        );
+      simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World", 
+        "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
+      )
+    );
 
     assert!(
-            !simple_verify(
-                &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-                "Hello World -- This should fail",
-                "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-            )
-        );
+      !simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World -- This should fail",
+        "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
+      )
+    );
   }
 
   #[test]
@@ -210,9 +212,9 @@ mod tests {
     );
 
     assert_eq!(
-            signature,
-            "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-        );
+      signature,
+      "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
+    );
   }
 
   #[test]
