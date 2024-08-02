@@ -40,7 +40,7 @@ publish-release revision='master':
   #!/usr/bin/env bash
   set -euxo pipefail
   rm -rf tmp/release
-  git clone https://github.com/ordinals/ord.git tmp/release
+  git clone https://github.com/raphjaph/bip322.git tmp/release
   cd tmp/release
   git checkout {{ revision }}
   cargo publish
