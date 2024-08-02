@@ -1,21 +1,18 @@
 use {
-  base64::{engine::general_purpose, Engine},
   bitcoin::{
-    absolute::LockTime,
-    blockdata::script,
-    consensus::{Decodable, Encodable},
-    key::{Keypair, TapTweak},
-    opcodes,
-    psbt::Psbt,
-    script::PushBytes,
-    secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
-    sighash::{self, SighashCache, TapSighashType},
-    transaction::Version,
-    Address, Amount, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Transaction,
-    TxIn, TxOut, Witness,
+    absolute::LockTime, blockdata::script, opcodes, psbt::Psbt, script::PushBytes,
+    secp256k1::Secp256k1, transaction::Version, Address, Amount, Network, OutPoint, PrivateKey,
+    PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
   },
   bitcoin_hashes::{sha256, Hash},
-  std::{io::Cursor, str},
+};
+
+mod sign;
+mod verify;
+
+pub use {
+  sign::{full_sign, simple_sign},
+  verify::{full_verify, simple_verify},
 };
 
 pub struct Wallet {
@@ -57,7 +54,7 @@ fn message_hash(message: &str) -> Vec<u8> {
     .to_vec()
 }
 
-fn to_spend(address: &Address, message: &str) -> Transaction {
+fn create_to_spend(address: &Address, message: &str) -> Transaction {
   Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -82,153 +79,36 @@ fn to_spend(address: &Address, message: &str) -> Transaction {
   }
 }
 
-fn to_sign(to_spend_tx: Transaction) -> Transaction {
-  Transaction {
+fn create_to_sign(to_spend: &Transaction) -> Psbt {
+  let inputs = vec![TxIn {
+    previous_output: OutPoint {
+      txid: to_spend.txid(),
+      vout: 0,
+    },
+    script_sig: ScriptBuf::new(),
+    sequence: Sequence(0),
+    witness: Witness::new(),
+  }];
+
+  let to_sign = Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
-    input: vec![TxIn {
-      previous_output: OutPoint {
-        txid: to_spend_tx.txid(),
-        vout: 0,
-      },
-      script_sig: ScriptBuf::new(),
-      sequence: Sequence(0),
-      witness: Witness::new(),
-    }],
+    input: inputs,
     output: vec![TxOut {
       value: Amount::from_sat(0),
       script_pubkey: script::Builder::new()
         .push_opcode(opcodes::all::OP_RETURN)
         .into_script(),
     }],
-  }
-}
+  };
 
-// #[allow(unused)]
-fn to_sign_psbt(
-  to_spend_tx: Transaction,
-  to_sign_tx: Transaction,
-) -> Result<Psbt, bitcoin::psbt::Error> {
-  let mut psbt = Psbt::from_unsigned_tx(to_sign_tx)?;
+  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap();
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::from_sat(0),
-    script_pubkey: to_spend_tx.output[0].script_pubkey.clone(),
+    script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
 
-  Ok(psbt)
-}
-
-pub fn sign(address: &Address, message: &str, wallet: &Wallet) -> String {
-  let to_spend_tx = to_spend(address, message);
-  let to_sign_tx = to_sign(to_spend_tx.clone());
-  let mut psbt = to_sign_psbt(to_spend_tx.clone(), to_sign_tx).unwrap();
-
-  let secp = Secp256k1::new();
-  let private_key = wallet.private_key;
-  let key_pair = Keypair::from_secret_key(&secp, &private_key.inner);
-  let (x_only_public_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
-
-  psbt.inputs[0].tap_internal_key = Some(x_only_public_key);
-
-  let sighash_type = TapSighashType::All;
-
-  let mut sighash_cache = SighashCache::new(psbt.unsigned_tx.clone());
-
-  let sighash = sighash_cache
-    .taproot_key_spend_signature_hash(
-      0,
-      &sighash::Prevouts::All(&[TxOut {
-        value: Amount::from_sat(0),
-        script_pubkey: to_spend_tx.output[0].clone().script_pubkey,
-      }]),
-      sighash_type,
-    )
-    .expect("signature hash should compute");
-
-  let key_pair = key_pair
-    .tap_tweak(&secp, psbt.inputs[0].tap_merkle_root)
-    .to_inner();
-
-  let sig = secp.sign_schnorr_no_aux_rand(
-    &secp256k1::Message::from_digest_slice(sighash.as_ref())
-      .expect("should be cryptographically secure hash"),
-    &key_pair,
-  );
-
-  let witness = sighash_cache
-    .witness_mut(0)
-    .expect("getting mutable witness reference should work");
-
-  witness.push(
-    bitcoin::taproot::Signature {
-      sig,
-      hash_ty: sighash_type,
-    }
-    .to_vec(),
-  );
-
-  let mut buffer = Vec::new();
-  witness.consensus_encode(&mut buffer).unwrap();
-
-  general_purpose::STANDARD.encode(buffer)
-}
-
-pub fn verify(address: &Address, message: &str, signature: &str) -> bool {
-  let to_spend_tx = to_spend(address, message);
-  let to_sign_tx = to_sign(to_spend_tx.clone());
-
-  let mut cursor = Cursor::new(general_purpose::STANDARD.decode(signature).unwrap());
-
-  let witness = match Witness::consensus_decode_from_finite_reader(&mut cursor) {
-    Ok(witness) => witness,
-    Err(_) => return false,
-  };
-
-  let encoded_signature = &witness.to_vec()[0];
-
-  let (signature, sighash_type) = if encoded_signature.len() == 65 {
-    (
-      Signature::from_slice(&encoded_signature.as_slice()[..64]).unwrap(),
-      TapSighashType::from_consensus_u8(encoded_signature[64]).unwrap(),
-    )
-  } else if encoded_signature.len() == 64 {
-    (
-      Signature::from_slice(encoded_signature.as_slice()).unwrap(),
-      TapSighashType::Default,
-    )
-  } else {
-    return false;
-  };
-
-  let pub_key =
-    if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
-      if witness_program.version().to_num() == 1 && witness_program.program().len() == 32 {
-        XOnlyPublicKey::from_slice(witness_program.program().as_bytes()).unwrap()
-      } else {
-        return false;
-      }
-    } else {
-      return false;
-    };
-
-  let mut sighash_cache = SighashCache::new(to_sign_tx);
-
-  let sighash = sighash_cache
-    .taproot_key_spend_signature_hash(
-      0,
-      &sighash::Prevouts::All(&[TxOut {
-        value: Amount::from_sat(0),
-        script_pubkey: to_spend_tx.output[0].clone().script_pubkey,
-      }]),
-      sighash_type,
-    )
-    .expect("signature hash should compute");
-
-  let message = Message::from_digest_slice(sighash.as_ref()).unwrap();
-
-  Secp256k1::verification_only()
-    .verify_schnorr(&signature, &message, &pub_key)
-    .is_ok()
+  psbt
 }
 
 #[cfg(test)]
@@ -259,7 +139,7 @@ mod tests {
   #[test]
   fn to_spend_txids_correct() {
     assert_eq!(
-      to_spend(
+      create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         ""
       )
@@ -269,7 +149,7 @@ mod tests {
     );
 
     assert_eq!(
-      to_spend(
+      create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         "Hello World"
       )
@@ -281,47 +161,51 @@ mod tests {
 
   #[test]
   fn to_sign_txids_correct() {
+    let to_spend = create_to_spend(
+      &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
+      "",
+    );
+    let to_sign = create_to_sign(&to_spend);
     assert_eq!(
-      to_sign(to_spend(
-        &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        ""
-      ))
-      .txid()
-      .to_string(),
+      to_sign.unsigned_tx.txid().to_string(),
       "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
     );
 
+    let to_spend = create_to_spend(
+      &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
+      "Hello World",
+    );
+    let to_sign = create_to_sign(&to_spend);
     assert_eq!(
-      to_sign(to_spend(
-        &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "Hello World"
-      ))
-      .txid()
-      .to_string(),
+      to_sign.unsigned_tx.txid().to_string(),
       "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
     );
   }
 
   #[test]
-  fn verify_and_falsify_taproot() {
-    assert!(verify(
-      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-      "Hello World",
-      "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-    ),);
+  fn simple_verify_and_falsify_taproot() {
+    assert!(
+      simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World", 
+        "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
+      )
+    );
 
-    assert!(!verify(
-      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-      "Hello World -- This should fail",
-      "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-    ),);
+    assert!(
+      !simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World -- This should fail",
+        "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
+      )
+    );
   }
 
   #[test]
-  fn sign_taproot() {
+  fn simple_sign_taproot() {
     let wallet = Wallet::new(WIF_PRIVATE_KEY);
 
-    let signature = sign(
+    let signature = simple_sign(
       &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
       "Hello World",
       &wallet,
@@ -334,13 +218,28 @@ mod tests {
   }
 
   #[test]
-  fn roundtrip_taproot() {
+  fn roundtrip_taproot_simple() {
     let wallet = Wallet::new(WIF_PRIVATE_KEY);
 
-    assert!(verify(
+    assert!(simple_verify(
       &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
       "Hello World",
-      &sign(
+      &simple_sign(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World",
+        &wallet
+      )
+    ));
+  }
+
+  #[test]
+  fn roundtrip_taproot_full() {
+    let wallet = Wallet::new(WIF_PRIVATE_KEY);
+
+    assert!(full_verify(
+      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+      "Hello World",
+      &full_sign(
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
         "Hello World",
         &wallet
