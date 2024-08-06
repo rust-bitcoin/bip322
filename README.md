@@ -15,3 +15,16 @@ generic message signing and verification.
 ## Test Vectors
 
 https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
+
+## Compile for WASM
+
+For MacOs:
+
+```
+brew install llvm
+rustup toolchain install nightly
+rustup target add wasm32-unknown-unknown --toolchain nightly
+rustup default nightly-aarch64-apple-darwin
+cd www
+AR=/opt/homebrew/opt/llvm/bin/llvm-ar CC=/opt/homebrew/opt/llvm/bin/clang wasm-pack build --target web --no-typescript
+```
