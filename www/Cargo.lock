@@ -23,8 +23,6 @@ checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
 [[package]]
 name = "bip322"
 version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea198cb6bc6f443099b9628a60b02183cd3d1ea1d3cd172f890f90196c44d00"
 dependencies = [
  "base64",
  "bitcoin",
@@ -42,7 +40,6 @@ dependencies = [
  "bech32",
  "bitcoin-internals",
  "bitcoin_hashes 0.13.0",
- "bitcoinconsensus",
  "hex-conservative 0.1.2",
  "hex_lit",
  "secp256k1",
@@ -78,16 +75,6 @@ checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
 dependencies = [
  "bitcoin-io",
  "hex-conservative 0.2.1",
-]
-
-[[package]]
-name = "bitcoinconsensus"
-version = "0.20.2-0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54505558b77e0aa21b2491a7b39cbae9db22ac8b1bc543ef4600edb762306f9c"
-dependencies = [
- "cc",
- "libc",
 ]
 
 [[package]]
@@ -134,12 +121,6 @@ name = "hex_lit"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3011d1213f159867b13cfd6ac92d2cd5f1345762c63be3554e84092d85a50bbd"
-
-[[package]]
-name = "libc"
-version = "0.2.155"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
 
 [[package]]
 name = "log"

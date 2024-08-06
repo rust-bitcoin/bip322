@@ -7,7 +7,7 @@ license = "CC0-1.0"
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = { version =  "0.31.2", features = ["bitcoinconsensus"] }
+bitcoin = { version =  "0.31.2" }
 bitcoin_hashes = "0.14.0"
 hex = "0.4.3"
 miniscript = "11.0.0"
