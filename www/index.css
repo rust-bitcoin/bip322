@@ -1,9 +1,9 @@
 :root {
- --width-target: calc(100vw / 6);
- --height-target: calc(100vh / 3);
- --size: min(var(--width-target), var(--height-target));
- --margin-vertical: calc((100vh - var(--size) * 2) / 2);
- --margin-horizontal: calc((100vw - var(--size) * 5) / 2);
+  --width-target: calc(100vw / 6);
+  --height-target: calc(100vh / 3);
+  --size: min(var(--width-target), var(--height-target));
+  --margin-vertical: calc((100vh - var(--size) * 2) / 2);
+  --margin-horizontal: calc((100vw - var(--size) * 5) / 2);
 }
 
 * {
@@ -30,7 +30,7 @@ a:hover {
   text-shadow: 0 0 5px #fff;
 }
 
-body { 
+body {
   /* display: flex; */
   /* flex-direction: column; */
   /* justify-content: center; */
@@ -42,17 +42,38 @@ body {
   margin-top: var(--margin-vertical);
 }
 
-body > * {
+body>* {
   width: 100%;
 }
 
-body > div {
+body>div {
   height: var(--size);
   text-shadow: 0 0 5px #fff;
 }
 
-#bip:after       { content: 'bip322'; }
-#bip:hover:after { content: 'verify'; }
+#bip {
+  cursor: pointer;
+}
+
+#bip:not(.hidden)::after {
+  content: 'bip322';
+}
+
+#bip:not(.hidden):hover::after {
+  content: 'verify';
+}
+
+#verify-form {
+  display: none;
+}
+
+#verify-form.visible {
+  display: block;
+}
+
+#verify-button {
+  cursor: pointer;
+}
 
 .navbar {
   display: flex;
