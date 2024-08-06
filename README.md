@@ -22,6 +22,7 @@ For MacOs:
 
 ```
 brew install llvm
+cargo install wasm-pack
 rustup toolchain install nightly
 rustup target add wasm32-unknown-unknown --toolchain nightly
 rustup default nightly-aarch64-apple-darwin
