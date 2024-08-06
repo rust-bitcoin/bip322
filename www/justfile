@@ -8,14 +8,3 @@ wasm:
 
 serve: wasm 
   python3 -m http.server -b 127.0.0.1 -d . 8080
-
-wasm-miccul:
- rustup toolchain install nightly
- rustup target add wasm32-unknown-unknown --toolchain nightly
- rustup default nightly-x86_64-apple-darwin
- AR=/opt/homebrew/opt/llvm/bin/llvm-ar CC=/opt/homebrew/opt/llvm/bin/clang wasm-pack build --target web --no-typescript
- cp pkg/www.js pkg/www_bg.wasm .
- rustup default stable
-
-serve-miccul: wasm-miccul
-  python3 -m http.server -b 127.0.0.1 -d . 8080
