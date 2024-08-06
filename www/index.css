@@ -31,11 +31,6 @@ a:hover {
 }
 
 body {
-  /* display: flex; */
-  /* flex-direction: column; */
-  /* justify-content: center; */
-  /* align-items: center; */
-  /* min-height: 100vh; */
   margin-bottom: var(--margin-vertical);
   margin-left: var(--margin-horizontal);
   margin-right: var(--margin-horizontal);
@@ -73,7 +68,6 @@ body>div {
   flex-direction: column;
   gap: 24px;
   width: 67%;
-  /* max-width: 840px; */
 }
 
 #verify-form.visible {
