@@ -1,4 +1,5 @@
 use {
+  // anyhow::{Context, Error},
   bitcoin::{
     absolute::LockTime, blockdata::script, opcodes, psbt::Psbt, script::PushBytes,
     secp256k1::Secp256k1, transaction::Version, Address, Amount, Network, OutPoint, PrivateKey,
@@ -43,6 +44,8 @@ impl Wallet {
 }
 
 const TAG: &str = "BIP0322-signed-message";
+
+type Result<T = (), E = error::Bip322Error> = std::result::Result<T, E>;
 
 // message_hash = sha256(sha256(tag) || sha256(tag) || message); see BIP340
 fn message_hash(message: &str) -> Vec<u8> {
@@ -103,7 +106,7 @@ fn create_to_sign(to_spend: &Transaction) -> Psbt {
     }],
   };
 
-  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap();
+  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap(); // TODO
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::from_sat(0),
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
@@ -190,15 +193,15 @@ mod tests {
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
         "Hello World", 
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      )
+      ).is_ok()
     );
 
     assert!(
-      !simple_verify(
+      simple_verify(
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      )
+      ).is_err()
     );
   }
 
@@ -230,7 +233,8 @@ mod tests {
         "Hello World",
         &wallet
       )
-    ));
+    )
+    .is_ok());
   }
 
   #[test]
@@ -245,6 +249,7 @@ mod tests {
         "Hello World",
         &wallet
       )
-    ));
+    )
+    .is_ok());
   }
 }
