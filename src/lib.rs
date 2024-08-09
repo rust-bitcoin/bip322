@@ -7,6 +7,7 @@ use {
   bitcoin_hashes::{sha256, Hash},
 };
 
+mod error;
 mod sign;
 mod verify;
 
@@ -42,6 +43,8 @@ impl Wallet {
 }
 
 const TAG: &str = "BIP0322-signed-message";
+
+type Result<T = (), E = error::Bip322Error> = std::result::Result<T, E>;
 
 // message_hash = sha256(sha256(tag) || sha256(tag) || message); see BIP340
 fn message_hash(message: &str) -> Vec<u8> {
@@ -102,7 +105,7 @@ fn create_to_sign(to_spend: &Transaction) -> Psbt {
     }],
   };
 
-  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap();
+  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap(); // TODO
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::from_sat(0),
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
@@ -113,7 +116,7 @@ fn create_to_sign(to_spend: &Transaction) -> Psbt {
 
 #[cfg(test)]
 mod tests {
-  use {super::*, std::str::FromStr};
+  use {super::*, error::Bip322Error, pretty_assertions::assert_eq, std::str::FromStr};
 
   /// From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   /// and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
@@ -189,15 +192,16 @@ mod tests {
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
         "Hello World", 
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      )
+      ).is_ok()
     );
 
-    assert!(
-      !simple_verify(
+    assert_eq!(
+      simple_verify(
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      )
+      ),
+      Err(Bip322Error::Invalid)
     );
   }
 
@@ -229,7 +233,8 @@ mod tests {
         "Hello World",
         &wallet
       )
-    ));
+    )
+    .is_ok());
   }
 
   #[test]
@@ -244,6 +249,38 @@ mod tests {
         "Hello World",
         &wallet
       )
-    ));
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn invalid_address() {
+    assert_eq!(simple_verify(
+      &Address::from_str("3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV").unwrap().assume_checked(), 
+      "",
+      "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="), 
+    Err(Bip322Error::InvalidAddress)
+    )
+  }
+
+  #[test]
+  fn malformed_signature() {
+    assert_eq!(
+      simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World",
+        "invalid signature not in base64 encoding"
+      ),
+      Err(Bip322Error::MalformedSignature)
+    );
+
+    assert_eq!(
+      simple_verify(
+        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        "Hello World", 
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
+      ),
+      Err(Bip322Error::MalformedSignature)
+    )
   }
 }
