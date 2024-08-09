@@ -44,15 +44,15 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
-          path: './www'
-          exclude: 
-            - '**/target'
-            - '**/pkg'
-            - '**/src'
-            - '**/Cargo.toml'
-            - '**/Cargo.lock'
+          path: |
+            './www'
+            '!**/target'
+            '!**/pkg'
+            '!**/src'
+            '!**/Cargo.toml'
+            '!**/Cargo.lock'
 
       - name: Deploy to GitHub Pages
         id: deployment
