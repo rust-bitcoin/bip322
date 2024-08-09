@@ -20,16 +20,21 @@ fn extract_pub_key(address: &Address) -> Result<XOnlyPublicKey> {
     return Err(Bip322Error::InvalidAddress);
   }
 
-  // TODO: assert single key path spend
-
   if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
-    if witness_program.version().to_num() == 1 && witness_program.program().len() == 32 {
-      Ok(XOnlyPublicKey::from_slice(witness_program.program().as_bytes()).unwrap())
-    } else {
-      Err(Bip322Error::ScriptSpendP2TR)
+    if witness_program.version().to_num() != 1 {
+      return Err(Bip322Error::InvalidAddress);
     }
+
+    if witness_program.program().len() != 32 {
+      return Err(Bip322Error::NotKeyPathSpend);
+    }
+
+    Ok(
+      XOnlyPublicKey::from_slice(witness_program.program().as_bytes())
+        .expect("should extract an xonly public key"),
+    )
   } else {
-    Err(Bip322Error::ScriptSpendP2TR)
+    Err(Bip322Error::InvalidAddress)
   }
 }
 
@@ -70,7 +75,8 @@ fn decode_and_verify(
     )
     .expect("signature hash should compute");
 
-  let message = Message::from_digest_slice(sighash.as_ref()).map_err(|_| Bip322Error::Invalid)?;
+  let message =
+    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
   Secp256k1::verification_only()
     .verify_schnorr(&signature, &message, pub_key)

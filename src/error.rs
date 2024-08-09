@@ -6,5 +6,5 @@ pub enum Bip322Error {
   MalformedSignature, // wrong length
   NotSigned,
   InvalidSigHash,  // only sighash All and Default supported
-  ScriptSpendP2TR, // only single key path spend supported
+  NotKeyPathSpend, // only single key path spend supported
 }
