@@ -1,6 +1,6 @@
 [package]
 name = "bip322"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Implements BIP322 generic message signing"
 license = "CC0-1.0"
