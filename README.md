@@ -29,4 +29,11 @@ The WASM binary and Javascript glue code can then be found in `www/pkg`.
 
 ## Test Vectors
 
-https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
+- from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)
+- from [bip322-js](https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts)
+- from [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors)
+
+## Roadmap
+
+The goal is to provide a full signing and verifying library similar to
+[this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
