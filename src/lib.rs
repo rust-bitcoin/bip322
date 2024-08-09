@@ -1,5 +1,4 @@
 use {
-  // anyhow::{Context, Error},
   bitcoin::{
     absolute::LockTime, blockdata::script, opcodes, psbt::Psbt, script::PushBytes,
     secp256k1::Secp256k1, transaction::Version, Address, Amount, Network, OutPoint, PrivateKey,
