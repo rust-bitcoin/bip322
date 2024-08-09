@@ -23,9 +23,9 @@ For MacOs:
 ```
 brew install llvm
 cargo install wasm-pack
-rustup toolchain install nightly
-rustup target add wasm32-unknown-unknown --toolchain nightly
-rustup default nightly-aarch64-apple-darwin
+rustup target add wasm32-unknown-unknown
 cd www
-AR=/opt/homebrew/opt/llvm/bin/llvm-ar CC=/opt/homebrew/opt/llvm/bin/clang wasm-pack build --target web --no-typescript
+AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
+CC=/opt/homebrew/opt/llvm/bin/clang \
+    wasm-pack build --target web
 ```
