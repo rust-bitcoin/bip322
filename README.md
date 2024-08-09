@@ -4,16 +4,12 @@ Implements
 [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki),
 generic message signing and verification.
 
-
 ## Types of Signatures 
 
 - [x] simple (only witness stack, consensus encoded, base64)
 - [x] full (base64 encoded `to_sign` tx)
 - [ ] proof-of-funds (base64 encoded `to_sign` tx with utxos)
 
-## Test Vectors
-
-https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
 
 ## Compile for WASM (on MacOs)
 
@@ -30,3 +26,7 @@ wasm-pack build \
 ```
 
 The WASM binary and Javascript glue code can then be found in `www/pkg`.
+
+## Test Vectors
+
+https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
