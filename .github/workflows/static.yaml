@@ -46,13 +46,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: |
-            './www'
-            '!**/target'
-            '!**/pkg'
-            '!**/src'
-            '!**/Cargo.toml'
-            '!**/Cargo.lock'
+          path: './www'
 
       - name: Deploy to GitHub Pages
         id: deployment
