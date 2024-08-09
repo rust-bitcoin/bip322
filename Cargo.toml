@@ -4,6 +4,8 @@ version = "0.0.3"
 edition = "2021"
 description = "Implements BIP322 generic message signing"
 license = "CC0-1.0"
+homepage = "https://bip322.rs"
+repository = "https://github.com/raphjaph/bip322"
 
 [dependencies]
 base64 = "0.22.1"
