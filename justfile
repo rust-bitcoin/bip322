@@ -20,6 +20,18 @@ outdated:
 coverage:
   cargo llvm-cov
 
+wasm:
+  AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
+  CC=/opt/homebrew/opt/llvm/bin/clang \
+  wasm-pack build \
+    --target web \
+    --out-name bip322 \
+    www
+  cp www/pkg/bip322.js www/pkg/bip322_bg.wasm www
+
+serve: wasm 
+  python3 -m http.server -b 127.0.0.1 -d www 8080
+
 prepare-release revision='master':
   #!/usr/bin/env bash
   set -euxo pipefail

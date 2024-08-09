@@ -1,4 +1,4 @@
-name: bip322.rs Website
+name: bip322.rs
 
 on:
   push:
@@ -24,12 +24,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          components: wasm-pack
+
+      # - name: Install wasm-pack
+        # run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          cd www
+          wasm-pack build \
+            --target web \
+            --out-name bip322 \
+            www
+          cp www/pkg/bip322.js www/pkg/bip322_bg.wasm www
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './www'
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+    
