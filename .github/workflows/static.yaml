@@ -47,6 +47,12 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: './www'
+          exclude: 
+            - '**/target'
+            - '**/pkg'
+            - '**/src'
+            - '**/Cargo.toml'
+            - '**/Cargo.lock'
 
       - name: Deploy to GitHub Pages
         id: deployment

@@ -7,25 +7,26 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-- simple (only witness stack, consensus encoded, base64)
-- full (base64 encoded `to_sign`)
-- proof-of-funds (add utxos to `to_sign`)
-- No need to implement legacy  
+- [x] simple (only witness stack, consensus encoded, base64)
+- [x] full (base64 encoded `to_sign` tx)
+- [ ] proof-of-funds (base64 encoded `to_sign` tx with utxos)
 
 ## Test Vectors
 
 https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
 
-## Compile for WASM
-
-For MacOs:
+## Compile for WASM (on MacOs)
 
 ```
 brew install llvm
 cargo install wasm-pack
 rustup target add wasm32-unknown-unknown
-cd www
 AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
 CC=/opt/homebrew/opt/llvm/bin/clang \
-    wasm-pack build --target web
+wasm-pack build \
+    --target web \
+    --out-name bip322 \
+    www
 ```
+
+The WASM binary and Javascript glue code can then be found in `www/pkg`.
