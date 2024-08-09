@@ -3,11 +3,6 @@ name: bip322.rs
 on:
   push:
     branches: ["master"]
-  pull_request:
-    branches:
-    - master
-
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,10 +28,9 @@ jobs:
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
-          components: wasm-pack
 
-      # - name: Install wasm-pack
-        # run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build WASM
         run: |
