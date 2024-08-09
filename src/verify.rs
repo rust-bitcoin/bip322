@@ -44,21 +44,19 @@ fn decode_and_verify(
   to_spend: Transaction,
   to_sign: Transaction,
 ) -> Result<()> {
-  let (signature, sighash_type) = if encoded_signature.len() == 65 {
-    (
+  let (signature, sighash_type) = match encoded_signature.len() {
+    65 => (
       Signature::from_slice(&encoded_signature.as_slice()[..64])
         .map_err(|_| Bip322Error::MalformedSignature)?,
       TapSighashType::from_consensus_u8(encoded_signature[64])
         .map_err(|_| Bip322Error::InvalidSigHash)?,
-    )
-  } else if encoded_signature.len() == 64 {
-    (
+    ),
+    64 => (
       Signature::from_slice(encoded_signature.as_slice())
         .map_err(|_| Bip322Error::MalformedSignature)?,
       TapSighashType::Default,
-    )
-  } else {
-    return Err(Bip322Error::MalformedSignature);
+    ),
+    _ => return Err(Bip322Error::MalformedSignature),
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
