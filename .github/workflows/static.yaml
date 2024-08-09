@@ -34,7 +34,6 @@ jobs:
 
       - name: Build WASM
         run: |
-          cd www
           wasm-pack build \
             --target web \
             --out-name bip322 \
