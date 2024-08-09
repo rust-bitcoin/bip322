@@ -8,10 +8,8 @@ homepage = "https://bip322.rs"
 repository = "https://github.com/raphjaph/bip322"
 
 [dependencies]
-anyhow = "1.0.86"
 base64 = "0.22.1"
 bitcoin = { version =  "0.31.2" }
 bitcoin_hashes = "0.14.0"
 hex = "0.4.3"
 miniscript = "11.0.0"
-snafu = "0.8.4"
