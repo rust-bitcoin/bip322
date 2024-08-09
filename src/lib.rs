@@ -7,6 +7,7 @@ use {
   bitcoin_hashes::{sha256, Hash},
 };
 
+mod error;
 mod sign;
 mod verify;
 
