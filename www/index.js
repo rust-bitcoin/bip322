@@ -1,18 +1,7 @@
 import init, { verify } from './bip322.js';
 
-let wasmInitialized = false;
-
-async function initializeWasm() {
-    if (!wasmInitialized) {
-        await init();
-        console.log('WASM module loaded');
-        wasmInitialized = true;
-    }
-}
-
 async function runVerification(event) {
     event.preventDefault();
-    await initializeWasm();
 
     const address = document.getElementById('address').value;
     const message = document.getElementById('message').value;
@@ -51,6 +40,8 @@ function handleKeyPress(event) {
         runVerification(event);
     }
 }
+
+await init();
 
 document.getElementById('bip').addEventListener('click', showForm);
 document.getElementById('verify-form').addEventListener('submit', runVerification);
