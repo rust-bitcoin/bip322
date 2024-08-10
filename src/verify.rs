@@ -127,7 +127,7 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return Err(Error::UnsupportedSigHash {
+    return Err(Error::UnsupportedSigHashType {
       sighash_type: sighash_type.to_string(),
     });
   }

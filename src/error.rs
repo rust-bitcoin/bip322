@@ -43,7 +43,7 @@ pub enum Error {
     source: bitcoin::sighash::InvalidSighashTypeError,
   },
   #[snafu(display("Unsupported sighash type `{sighash_type}`"))]
-  UnsupportedSigHash { sighash_type: String },
+  UnsupportedSigHashType { sighash_type: String },
   #[snafu(display("Not key path spend"))]
   NotKeyPathSpend,
 }
