@@ -199,7 +199,7 @@ mod tests {
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
       ).unwrap_err().to_string(),
-      "Invalid signature because: `malformed signature`"
+      "Invalid signature"
     );
   }
 

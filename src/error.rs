@@ -50,7 +50,7 @@ pub enum Error {
     length: usize,
     encoded_signature: Vec<u8>,
   },
-  #[snafu(display("Invalid signature because: `{}`", source.to_string()))]
+  #[snafu(display("Invalid signature"))]
   SignatureInvalid { source: bitcoin::secp256k1::Error },
   #[snafu(display("Invalid sighash"))]
   SigHashTypeInvalid {
