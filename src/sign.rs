@@ -54,6 +54,22 @@ pub fn sign_full(
   message: &[u8],
   private_key: PrivateKey,
 ) -> Result<Transaction> {
+  if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
+    if witness_program.version().to_num() != 1 {
+      return Err(Error::UnsupportedAddress {
+        address: address.to_string(),
+      });
+    }
+
+    if witness_program.program().len() != 32 {
+      return Err(Error::NotKeyPathSpend);
+    }
+  } else {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  };
+
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 

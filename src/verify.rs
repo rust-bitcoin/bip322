@@ -84,24 +84,19 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
     };
 
   let to_spend = create_to_spend(address, message)?;
+  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
   let to_spend_outpoint = OutPoint {
     txid: to_spend.txid(),
     vout: 0,
   };
 
-  if to_spend_outpoint != to_sign.input[0].previous_output {
-    return Err(Error::Invalid);
-  }
-
-  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
-
   if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
-    return Err(Error::Invalid);
+    return Err(Error::ToSignInvalid);
   }
 
   let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
-    return Err(Error::Invalid);
+    return Err(Error::WitnessEmpty);
   };
 
   let encoded_signature = witness.to_vec()[0].clone();
@@ -149,5 +144,5 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
 
   Secp256k1::verification_only()
     .verify_schnorr(&signature, &message, &pub_key)
-    .map_err(|_| Error::Invalid)
+    .context(error::SignatureInvalid)
 }

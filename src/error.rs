@@ -12,8 +12,6 @@ pub enum Error {
   PrivateKeyParse { source: bitcoin::key::Error },
   #[snafu(display("Unsuported address `{address}`, only P2TR allowed"))]
   UnsupportedAddress { address: String },
-  #[snafu(display("Invalid"))]
-  Invalid,
   #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {
     source: base64::DecodeError,
@@ -30,6 +28,8 @@ pub enum Error {
   TransactionExtract {
     source: bitcoin::psbt::ExtractTxError,
   },
+  #[snafu(display("To sign transaction invalid"))]
+  ToSignInvalid,
   #[snafu(display("PSBT extract error"))]
   PsbtExtract { source: bitcoin::psbt::Error },
   #[snafu(display("Consensu decode error for transaction `{transaction}`"))]
@@ -37,10 +37,12 @@ pub enum Error {
     source: bitcoin::consensus::encode::Error,
     transaction: String,
   },
-  #[snafu(display("Witness signature"))]
+  #[snafu(display("Witness malformed"))]
   WitnessMalformed {
     source: bitcoin::consensus::encode::Error,
   },
+  #[snafu(display("Witness empty"))]
+  WitnessEmpty,
   #[snafu(display("Encode witness error"))]
   WitnessEncoding { source: std::io::Error },
   #[snafu(display("Signature of wrong length `{length}`"))]
