@@ -27,7 +27,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     .assume_checked();
 
   let mut cursor = Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
-    error::TransactionDecode {
+    error::TransactionBase64Decode {
       transaction: to_sign,
     },
   )?);

@@ -17,11 +17,6 @@ pub enum Error {
     source: base64::DecodeError,
     signature: String,
   },
-  #[snafu(display("Base64 decode error for transaction `{transaction}`"))]
-  TransactionDecode {
-    source: base64::DecodeError,
-    transaction: String,
-  },
   #[snafu(display("Transaction encode error"))]
   TransactionEncode { source: std::io::Error },
   #[snafu(display("Transaction extract error"))]
@@ -32,7 +27,12 @@ pub enum Error {
   ToSignInvalid,
   #[snafu(display("PSBT extract error"))]
   PsbtExtract { source: bitcoin::psbt::Error },
-  #[snafu(display("Consensu decode error for transaction `{transaction}`"))]
+  #[snafu(display("Base64 decode error for transaction `{transaction}`"))]
+  TransactionBase64Decode {
+    source: base64::DecodeError,
+    transaction: String,
+  },
+  #[snafu(display("Consensus decode error for transaction `{transaction}`"))]
   TransactionConsensusDecode {
     source: bitcoin::consensus::encode::Error,
     transaction: String,
