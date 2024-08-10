@@ -12,7 +12,7 @@ pub enum Error {
   InvalidAddress,
   #[snafu(display("Invalid"))]
   Invalid,
-  #[snafu(display("Malformed signature `{signature}`"))]
+  #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {
     source: base64::DecodeError,
     signature: String,
