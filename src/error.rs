@@ -37,9 +37,7 @@ pub enum Error {
     encoded_signature: Vec<u8>,
   },
   #[snafu(display("Invalid signature because: `{}`", source.to_string()))]
-  InvalidSignature {
-    source: bitcoin::secp256k1::Error,
-  },
+  InvalidSignature { source: bitcoin::secp256k1::Error },
   #[snafu(display("Invalid sighash"))]
   InvalidSigHash {
     source: bitcoin::sighash::InvalidSighashTypeError,
