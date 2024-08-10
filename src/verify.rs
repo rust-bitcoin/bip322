@@ -1,9 +1,8 @@
 use super::*;
 
-/// This completely outward facing function is meant to be consumed by very naive users like when
-/// compiling this library to WASM, where Javascript has no type safety. If you'd like to use the
-/// more type safe / Rust variant use `fn simple_verify_inner`.
-pub fn simple_verify(address: &str, message: &str, signature: &str) -> Result<()> {
+/// Verifies the BIP-322 simple from encoded values, i.e. address encoding, message string and
+/// signature base64 string
+pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -17,24 +16,12 @@ pub fn simple_verify(address: &str, message: &str, signature: &str) -> Result<()
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::MalformedWitness)?;
 
-  simple_verify_inner(&address, message.as_bytes(), witness)
+  verify_simple(&address, message.as_bytes(), witness)
 }
 
-/// Meant to be consumed by Rust applications
-pub fn simple_verify_inner(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
-  full_verify_inner(
-    address,
-    message,
-    create_to_sign(&create_to_spend(address, message), Some(signature))
-      .extract_tx()
-      .unwrap(),
-  )
-}
-
-/// This completely outward facing function is meant to be consumed by very naive users like when
-/// compiling this library to WASM, where Javascript has no type safety. If you'd like to use the
-/// more type safe / Rust variant use `fn full_verify_inner`.
-pub fn full_verify(address: &str, message: &str, to_sign: &str) -> Result<()> {
+/// Verifies the BIP-322 full from encoded values, i.e. address encoding, message string and
+/// transaction base64 string
+pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -51,11 +38,22 @@ pub fn full_verify(address: &str, message: &str, to_sign: &str) -> Result<()> {
     },
   )?;
 
-  full_verify_inner(&address, message.as_bytes(), to_sign)
+  verify_full(&address, message.as_bytes(), to_sign)
 }
 
-/// Meant to be consumed by Rust applications
-pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
+/// Verifies the BIP-322 simple from proper Rust types
+pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
+  verify_full(
+    address,
+    message,
+    create_to_sign(&create_to_spend(address, message), Some(signature))
+      .extract_tx()
+      .unwrap(),
+  )
+}
+
+/// Verifies the BIP-322 full from proper Rust types
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   if address
     .address_type()
     .is_some_and(|addr| addr != AddressType::P2tr)

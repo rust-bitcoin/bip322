@@ -13,8 +13,7 @@ use {
     secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
     transaction::Version,
-    Address, Amount, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Transaction,
-    TxIn, TxOut, Witness,
+    Address, Amount, OutPoint, PrivateKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
   },
   bitcoin_hashes::{sha256, Hash},
   error::Error,
@@ -27,39 +26,13 @@ mod sign;
 mod verify;
 
 pub use {
-  sign::{full_sign, simple_sign},
-  verify::{full_verify, simple_verify},
+  sign::{sign_full_encoded, sign_simple_encoded},
+  verify::{verify_full, verify_full_encoded, verify_simple, verify_simple_encoded},
 };
 
 const TAG: &str = "BIP0322-signed-message";
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
-
-pub struct Wallet {
-  pub btc_address: Address,
-  pub descriptor: miniscript::Descriptor<PublicKey>,
-  pub ordinal_address: Address,
-  pub private_key: PrivateKey,
-}
-
-impl Wallet {
-  pub fn new(wif_private_key: &str) -> Self {
-    let secp = Secp256k1::new();
-    let private_key = PrivateKey::from_wif(wif_private_key).unwrap();
-    let public_key = private_key.public_key(&secp);
-    let descriptor = miniscript::Descriptor::new_tr(public_key, None).unwrap();
-
-    Self {
-      btc_address: miniscript::Descriptor::new_sh_wpkh(public_key)
-        .unwrap()
-        .address(Network::Regtest)
-        .unwrap(),
-      descriptor: descriptor.clone(),
-      ordinal_address: descriptor.address(Network::Regtest).unwrap(),
-      private_key,
-    }
-  }
-}
 
 // message_hash = sha256(sha256(tag) || sha256(tag) || message); see BIP340
 pub(crate) fn message_hash(message: &[u8]) -> Vec<u8> {
@@ -206,7 +179,7 @@ mod tests {
   #[test]
   fn simple_verify_and_falsify_taproot() {
     assert!(
-      simple_verify(
+      verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World", 
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
@@ -214,7 +187,7 @@ mod tests {
     );
 
     assert_eq!(
-      simple_verify(
+      verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
@@ -225,55 +198,35 @@ mod tests {
 
   #[test]
   fn simple_sign_taproot() {
-    let wallet = Wallet::new(WIF_PRIVATE_KEY);
-
-    let signature = simple_sign(
-      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-      "Hello World",
-      &wallet,
-    );
-
     assert_eq!(
-      signature,
+      sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
       "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
     );
   }
 
   #[test]
   fn roundtrip_taproot_simple() {
-    let wallet = Wallet::new(WIF_PRIVATE_KEY);
-
-    assert!(simple_verify(
+    assert!(verify_simple_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &simple_sign(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-        "Hello World",
-        &wallet
-      )
+      &sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
 
   #[test]
   fn roundtrip_taproot_full() {
-    let wallet = Wallet::new(WIF_PRIVATE_KEY);
-
-    assert!(full_verify(
+    assert!(verify_full_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &full_sign(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
-        "Hello World",
-        &wallet
-      )
+      &sign_full_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
 
   #[test]
   fn invalid_address() {
-    assert_eq!(simple_verify(
+    assert_eq!(verify_simple_encoded(
       "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
@@ -284,7 +237,7 @@ mod tests {
   #[test]
   fn signature_decode_error() {
     assert_eq!(
-      simple_verify(
+      verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World",
         "invalid signature not in base64 encoding"
@@ -295,7 +248,7 @@ mod tests {
     );
 
     assert_eq!(
-      simple_verify(
+      verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World", 
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"

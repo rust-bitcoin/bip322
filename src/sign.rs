@@ -1,5 +1,63 @@
 use super::*;
 
+/// Signs the BIP-322 simple from encoded values, i.e. address encoding, message string and
+/// WIF private key string. Returns a base64 encoded witness stack.
+pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+  let address = Address::from_str(address)
+    .context(error::AddressParse { address })?
+    .assume_checked();
+
+  let private_key = PrivateKey::from_wif(wif_private_key).unwrap();
+
+  let witness = sign_simple(&address, message.as_bytes(), private_key)?;
+
+  let mut buffer = Vec::new();
+  witness.consensus_encode(&mut buffer).unwrap();
+
+  Ok(general_purpose::STANDARD.encode(buffer))
+}
+
+/// Signs the BIP-322 full from encoded values, i.e. address encoding, message string and
+/// WIF private key string. Returns a base64 encoded transaction.
+pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+  let address = Address::from_str(address)
+    .context(error::AddressParse { address })?
+    .assume_checked();
+
+  let private_key = PrivateKey::from_wif(wif_private_key).unwrap();
+
+  let tx = sign_full(&address, message.as_bytes(), private_key)?;
+
+  let mut buffer = Vec::new();
+  tx.consensus_encode(&mut buffer).unwrap();
+
+  Ok(general_purpose::STANDARD.encode(buffer))
+}
+
+/// Signs in the BIP-322 simple format from proper Rust types and returns the witness.
+pub fn sign_simple(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Witness> {
+  Ok(
+    sign_full(&address, message, private_key)?.input[0]
+      .witness
+      .clone(),
+  )
+}
+
+/// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
+pub fn sign_full(
+  address: &Address,
+  message: &[u8],
+  private_key: PrivateKey,
+) -> Result<Transaction> {
+  let to_spend = create_to_spend(&address, message);
+  let mut to_sign = create_to_sign(&to_spend, None);
+
+  let witness = create_message_signature(&to_spend, &to_sign, private_key);
+  to_sign.inputs[0].final_script_witness = Some(witness);
+
+  Ok(to_sign.extract_tx().unwrap())
+}
+
 fn create_message_signature(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
@@ -50,33 +108,4 @@ fn create_message_signature(
   );
 
   witness.to_owned()
-}
-
-pub fn simple_sign(address: &Address, message: &str, wallet: &Wallet) -> String {
-  let to_spend = create_to_spend(address, message.as_bytes());
-  let to_sign = create_to_sign(&to_spend, None);
-
-  let witness = create_message_signature(&to_spend, &to_sign, wallet.private_key);
-
-  let mut buffer = Vec::new();
-  witness.consensus_encode(&mut buffer).unwrap();
-
-  general_purpose::STANDARD.encode(buffer)
-}
-
-pub fn full_sign(address: &Address, message: &str, wallet: &Wallet) -> String {
-  let to_spend = create_to_spend(address, message.as_bytes());
-  let mut to_sign = create_to_sign(&to_spend, None);
-
-  let witness = create_message_signature(&to_spend, &to_sign, wallet.private_key);
-  to_sign.inputs[0].final_script_witness = Some(witness);
-
-  let mut buffer = Vec::new();
-  to_sign
-    .extract_tx()
-    .unwrap()
-    .consensus_encode(&mut buffer)
-    .unwrap();
-
-  general_purpose::STANDARD.encode(buffer)
 }
