@@ -134,7 +134,7 @@ pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -
 
 #[cfg(test)]
 mod tests {
-  use {super::*, error::Error, pretty_assertions::assert_eq};
+  use {super::*, pretty_assertions::assert_eq};
 
   /// From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   /// and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
@@ -218,8 +218,8 @@ mod tests {
         TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      ),
-      Err(Error::Invalid)
+      ).unwrap_err().to_string(),
+      "Invalid"
     );
   }
 
@@ -276,8 +276,8 @@ mod tests {
     assert_eq!(simple_verify(
       "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
-      "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="), 
-    Err(Error::InvalidAddress)
+      "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
+      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR allowed"
     )
   }
 
@@ -288,11 +288,10 @@ mod tests {
         TAPROOT_ADDRESS,
         "Hello World",
         "invalid signature not in base64 encoding"
-      ),
-      Err(Error::SignatureDecode {
-        source: base64::DecodeError::InvalidByte(7, 32,),
-        signature: "invalid signature not in base64 encoding".to_string(),
-      })
+      )
+      .unwrap_err()
+      .to_string(),
+      "Decode error for signature `invalid signature not in base64 encoding`"
     );
 
     assert_eq!(
@@ -300,11 +299,8 @@ mod tests {
         TAPROOT_ADDRESS,
         "Hello World", 
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
-      ),
-      Err(Error::SignatureDecode {
-        source: base64::DecodeError::InvalidPadding,
-        signature: "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH".to_string(),
-    })
+      ).unwrap_err().to_string(),
+      "Decode error for signature `AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH`"
     )
   }
 }

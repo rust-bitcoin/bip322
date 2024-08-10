@@ -14,10 +14,8 @@ pub fn simple_verify(address: &str, message: &str, signature: &str) -> Result<()
       .context(error::SignatureDecode { signature })?,
   );
 
-  let witness = match Witness::consensus_decode_from_finite_reader(&mut cursor) {
-    Ok(witness) => witness,
-    Err(_) => return Err(Error::MalformedSignature),
-  };
+  let witness =
+    Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::MalformedWitness)?;
 
   simple_verify_inner(&address, message.as_bytes(), witness)
 }
@@ -41,14 +39,17 @@ pub fn full_verify(address: &str, message: &str, to_sign: &str) -> Result<()> {
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let mut cursor = Cursor::new(
-    general_purpose::STANDARD
-      .decode(to_sign)
-      .map_err(|_| Error::MalformedSignature)?,
-  );
+  let mut cursor = Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
+    error::TransactionDecode {
+      transaction: to_sign,
+    },
+  )?);
 
-  let to_sign = Transaction::consensus_decode_from_finite_reader(&mut cursor)
-    .map_err(|_| Error::MalformedSignature)?;
+  let to_sign = Transaction::consensus_decode_from_finite_reader(&mut cursor).context(
+    error::TransactionConsensusDecode {
+      transaction: to_sign,
+    },
+  )?;
 
   full_verify_inner(&address, message.as_bytes(), to_sign)
 }
@@ -59,13 +60,17 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
     .address_type()
     .is_some_and(|addr| addr != AddressType::P2tr)
   {
-    return Err(Error::InvalidAddress);
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
   }
 
   let pub_key =
     if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
       if witness_program.version().to_num() != 1 {
-        return Err(Error::InvalidAddress);
+        return Err(Error::UnsupportedAddress {
+          address: address.to_string(),
+        });
       }
 
       if witness_program.program().len() != 32 {
@@ -75,7 +80,9 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
       XOnlyPublicKey::from_slice(witness_program.program().as_bytes())
         .expect("should extract an xonly public key")
     } else {
-      return Err(Error::InvalidAddress);
+      return Err(Error::UnsupportedAddress {
+        address: address.to_string(),
+      });
     };
 
   let to_spend = create_to_spend(address, message);
@@ -104,19 +111,25 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
   let (signature, sighash_type) = match encoded_signature.len() {
     65 => (
       Signature::from_slice(&encoded_signature.as_slice()[..64])
-        .map_err(|_| Error::MalformedSignature)?,
-      TapSighashType::from_consensus_u8(encoded_signature[64])
-        .map_err(|_| Error::InvalidSigHash)?,
+        .context(error::InvalidSignature)?,
+      TapSighashType::from_consensus_u8(encoded_signature[64]).context(error::InvalidSigHash)?,
     ),
     64 => (
-      Signature::from_slice(encoded_signature.as_slice()).map_err(|_| Error::MalformedSignature)?,
+      Signature::from_slice(encoded_signature.as_slice()).context(error::InvalidSignature)?,
       TapSighashType::Default,
     ),
-    _ => return Err(Error::MalformedSignature),
+    _ => {
+      return Err(Error::SignatureLength {
+        length: encoded_signature.len(),
+        encoded_signature,
+      })
+    }
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return Err(Error::InvalidSigHash);
+    return Err(Error::UnsupportedSigHash {
+      sighash_type: sighash_type.to_string(),
+    });
   }
 
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx);
