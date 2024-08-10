@@ -1,8 +1,26 @@
-#[derive(Debug, PartialEq, Eq)]
-pub enum Bip322Error {
-  InvalidAddress, // for legacy addresses 1... (p2pkh) not supported, also any non taproot
-  Invalid,        // Address no key; pubkey not recovered, invalid signature
-  MalformedSignature, // wrong length, etc.
-  InvalidSigHash, // only sighash All and Default supported
-  NotKeyPathSpend, // only single key path spend supported
+use super::*;
+
+#[derive(Debug, Snafu, PartialEq)]
+#[snafu(context(suffix(false)), visibility(pub))]
+pub enum Error {
+  #[snafu(display("Failed to parse address `{address}`"))]
+  AddressParse {
+    source: bitcoin::address::ParseError,
+    address: String,
+  },
+  #[snafu(display("Invalid address"))]
+  InvalidAddress,
+  #[snafu(display("Invalid"))]
+  Invalid,
+  #[snafu(display("Malformed signature `{signature}`"))]
+  SignatureDecode {
+    source: base64::DecodeError,
+    signature: String,
+  },
+  #[snafu(display("Malformed signature"))]
+  MalformedSignature,
+  #[snafu(display("Invalid sighash"))]
+  InvalidSigHash,
+  #[snafu(display("Not key path spend"))]
+  NotKeyPathSpend,
 }

@@ -1,10 +1,25 @@
 use {
+  base64::{engine::general_purpose, Engine},
   bitcoin::{
-    absolute::LockTime, blockdata::script, opcodes, psbt::Psbt, script::PushBytes,
-    secp256k1::Secp256k1, transaction::Version, Address, Amount, Network, OutPoint, PrivateKey,
-    PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime,
+    address::AddressType,
+    blockdata::script,
+    consensus::Decodable,
+    consensus::Encodable,
+    key::{Keypair, TapTweak},
+    opcodes,
+    psbt::Psbt,
+    script::PushBytes,
+    secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
+    sighash::{self, SighashCache, TapSighashType},
+    transaction::Version,
+    Address, Amount, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Transaction,
+    TxIn, TxOut, Witness,
   },
   bitcoin_hashes::{sha256, Hash},
+  error::Error,
+  snafu::{ResultExt, Snafu},
+  std::{io::Cursor, str::FromStr},
 };
 
 mod error;
@@ -15,6 +30,10 @@ pub use {
   sign::{full_sign, simple_sign},
   verify::{full_verify, simple_verify},
 };
+
+const TAG: &str = "BIP0322-signed-message";
+
+type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 pub struct Wallet {
   pub btc_address: Address,
@@ -42,22 +61,18 @@ impl Wallet {
   }
 }
 
-const TAG: &str = "BIP0322-signed-message";
-
-type Result<T = (), E = error::Bip322Error> = std::result::Result<T, E>;
-
 // message_hash = sha256(sha256(tag) || sha256(tag) || message); see BIP340
-fn message_hash(message: &str) -> Vec<u8> {
+pub(crate) fn message_hash(message: &[u8]) -> Vec<u8> {
   let mut tag_hash = sha256::Hash::hash(TAG.as_bytes()).to_byte_array().to_vec();
   tag_hash.extend(tag_hash.clone());
-  tag_hash.extend(message.as_bytes());
+  tag_hash.extend(message);
 
   sha256::Hash::hash(tag_hash.as_slice())
     .to_byte_array()
     .to_vec()
 }
 
-fn create_to_spend(address: &Address, message: &str) -> Transaction {
+pub(crate) fn create_to_spend(address: &Address, message: &[u8]) -> Transaction {
   Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -82,7 +97,7 @@ fn create_to_spend(address: &Address, message: &str) -> Transaction {
   }
 }
 
-fn create_to_sign(to_spend: &Transaction) -> Psbt {
+pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Psbt {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
       txid: to_spend.txid(),
@@ -106,17 +121,20 @@ fn create_to_sign(to_spend: &Transaction) -> Psbt {
   };
 
   let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap(); // TODO
+
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::from_sat(0),
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
+
+  psbt.inputs[0].final_script_witness = witness;
 
   psbt
 }
 
 #[cfg(test)]
 mod tests {
-  use {super::*, error::Bip322Error, pretty_assertions::assert_eq, std::str::FromStr};
+  use {super::*, error::Error, pretty_assertions::assert_eq};
 
   /// From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   /// and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
@@ -129,12 +147,12 @@ mod tests {
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
-      hex::encode(message_hash("")),
+      hex::encode(message_hash("".as_bytes())),
       "c90c269c4f8fcbe6880f72a721ddfbf1914268a794cbb21cfafee13770ae19f1"
     );
 
     assert_eq!(
-      hex::encode(message_hash("Hello World")),
+      hex::encode(message_hash("Hello World".as_bytes())),
       "f0eb03b1a75ac6d9847f55c624a99169b5dccba2a31f5b23bea77ba270de0a7a"
     );
   }
@@ -144,7 +162,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        ""
+        "".as_bytes()
       )
       .txid()
       .to_string(),
@@ -154,7 +172,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "Hello World"
+        "Hello World".as_bytes()
       )
       .txid()
       .to_string(),
@@ -166,9 +184,9 @@ mod tests {
   fn to_sign_txids_correct() {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "",
+      "".as_bytes(),
     );
-    let to_sign = create_to_sign(&to_spend);
+    let to_sign = create_to_sign(&to_spend, None);
     assert_eq!(
       to_sign.unsigned_tx.txid().to_string(),
       "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
@@ -176,9 +194,9 @@ mod tests {
 
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "Hello World",
+      "Hello World".as_bytes(),
     );
-    let to_sign = create_to_sign(&to_spend);
+    let to_sign = create_to_sign(&to_spend, None);
     assert_eq!(
       to_sign.unsigned_tx.txid().to_string(),
       "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
@@ -189,7 +207,7 @@ mod tests {
   fn simple_verify_and_falsify_taproot() {
     assert!(
       simple_verify(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        TAPROOT_ADDRESS,
         "Hello World", 
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
       ).is_ok()
@@ -197,11 +215,11 @@ mod tests {
 
     assert_eq!(
       simple_verify(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
       ),
-      Err(Bip322Error::Invalid)
+      Err(Error::Invalid)
     );
   }
 
@@ -226,7 +244,7 @@ mod tests {
     let wallet = Wallet::new(WIF_PRIVATE_KEY);
 
     assert!(simple_verify(
-      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+      TAPROOT_ADDRESS,
       "Hello World",
       &simple_sign(
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
@@ -242,7 +260,7 @@ mod tests {
     let wallet = Wallet::new(WIF_PRIVATE_KEY);
 
     assert!(full_verify(
-      &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+      TAPROOT_ADDRESS,
       "Hello World",
       &full_sign(
         &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
@@ -256,31 +274,37 @@ mod tests {
   #[test]
   fn invalid_address() {
     assert_eq!(simple_verify(
-      &Address::from_str("3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV").unwrap().assume_checked(), 
+      "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="), 
-    Err(Bip322Error::InvalidAddress)
+    Err(Error::InvalidAddress)
     )
   }
 
   #[test]
-  fn malformed_signature() {
+  fn signature_decode_error() {
     assert_eq!(
       simple_verify(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        TAPROOT_ADDRESS,
         "Hello World",
         "invalid signature not in base64 encoding"
       ),
-      Err(Bip322Error::MalformedSignature)
+      Err(Error::SignatureDecode {
+        source: base64::DecodeError::InvalidByte(7, 32,),
+        signature: "invalid signature not in base64 encoding".to_string(),
+      })
     );
 
     assert_eq!(
       simple_verify(
-        &Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked(),
+        TAPROOT_ADDRESS,
         "Hello World", 
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
       ),
-      Err(Bip322Error::MalformedSignature)
+      Err(Error::SignatureDecode {
+        source: base64::DecodeError::InvalidPadding,
+        signature: "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH".to_string(),
+    })
     )
   }
 }

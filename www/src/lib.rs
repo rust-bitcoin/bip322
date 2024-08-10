@@ -5,12 +5,10 @@ use {
 
 #[wasm_bindgen]
 pub fn verify(address: &str, message: &str, signature: &str) -> bool {
-  bip322::simple_verify(
-    &address
-      .parse::<Address<NetworkUnchecked>>()
-      .unwrap()
-      .assume_checked(),
-    message,
-    signature,
-  )
+  let address = address
+    .parse::<Address<NetworkUnchecked>>()
+    .unwrap()
+    .assume_checked();
+
+  bip322::simple_verify(&address, message, signature)
 }

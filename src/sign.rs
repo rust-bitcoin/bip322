@@ -1,15 +1,4 @@
-use {
-  crate::{create_to_sign, create_to_spend, Wallet},
-  base64::{engine::general_purpose, Engine},
-  bitcoin::{
-    consensus::Encodable,
-    key::{Keypair, TapTweak},
-    psbt::Psbt,
-    secp256k1::{self, Secp256k1, XOnlyPublicKey},
-    sighash::{self, SighashCache, TapSighashType},
-    Address, Amount, PrivateKey, Transaction, TxOut, Witness,
-  },
-};
+use super::*;
 
 fn create_message_signature(
   to_spend_tx: &Transaction,
@@ -64,8 +53,8 @@ fn create_message_signature(
 }
 
 pub fn simple_sign(address: &Address, message: &str, wallet: &Wallet) -> String {
-  let to_spend = create_to_spend(address, message);
-  let to_sign = create_to_sign(&to_spend);
+  let to_spend = create_to_spend(address, message.as_bytes());
+  let to_sign = create_to_sign(&to_spend, None);
 
   let witness = create_message_signature(&to_spend, &to_sign, wallet.private_key);
 
@@ -76,8 +65,8 @@ pub fn simple_sign(address: &Address, message: &str, wallet: &Wallet) -> String 
 }
 
 pub fn full_sign(address: &Address, message: &str, wallet: &Wallet) -> String {
-  let to_spend = create_to_spend(address, message);
-  let mut to_sign = create_to_sign(&to_spend);
+  let to_spend = create_to_spend(address, message.as_bytes());
+  let mut to_sign = create_to_sign(&to_spend, None);
 
   let witness = create_message_signature(&to_spend, &to_sign, wallet.private_key);
   to_sign.inputs[0].final_script_witness = Some(witness);
