@@ -1,13 +1,19 @@
 Changelog
 =========
 
+[0.0.5](https://github.com/raphjaph/bip322/releases/tag/0.0.5) - 2024-08-10
+---------------------------------------------------------------------------
+
+### Added
+- Add Snafu error types and proper Rust typed functions (#21)
+- Add error types (#17)
+
 [0.0.4](https://github.com/raphjaph/bip322/releases/tag/0.0.4) - 2024-08-09
 ---------------------------------------------------------------------------
 
 ### Added
 - Update README (#18)
 - Fix version (#16)
-- Release 0.0.3 (#15)
 
 [0.0.3](https://github.com/raphjaph/bip322/releases/tag/0.0.3) - 2024-08-09
 ---------------------------------------------------------------------------
@@ -19,7 +25,6 @@ Changelog
 - Refine deployment (#11)
 - Compiling to wasm for website (#9)
 - Add landing page (#8)
-- Release 0.0.2 (#7)
 
 [0.0.2](https://github.com/raphjaph/bip322/releases/tag/0.0.2) - 2024-08-02
 ---------------------------------------------------------------------------
