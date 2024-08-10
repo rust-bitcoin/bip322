@@ -1,7 +1,7 @@
 use super::*;
 
 /// Verifies the BIP-322 simple from encoded values, i.e. address encoding, message string and
-/// signature base64 string
+/// signature base64 string.
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -14,13 +14,13 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
   );
 
   let witness =
-    Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::MalformedWitness)?;
+    Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
 
   verify_simple(&address, message.as_bytes(), witness)
 }
 
 /// Verifies the BIP-322 full from encoded values, i.e. address encoding, message string and
-/// transaction base64 string
+/// transaction base64 string.
 pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -41,18 +41,18 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
   verify_full(&address, message.as_bytes(), to_sign)
 }
 
-/// Verifies the BIP-322 simple from proper Rust types
+/// Verifies the BIP-322 simple from proper Rust types.
 pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
   verify_full(
     address,
     message,
-    create_to_sign(&create_to_spend(address, message), Some(signature))
+    create_to_sign(&create_to_spend(address, message)?, Some(signature))?
       .extract_tx()
-      .unwrap(),
+      .context(error::TransactionExtract)?,
   )
 }
 
-/// Verifies the BIP-322 full from proper Rust types
+/// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   if address
     .address_type()
@@ -83,7 +83,7 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
       });
     };
 
-  let to_spend = create_to_spend(address, message);
+  let to_spend = create_to_spend(address, message)?;
 
   let to_spend_outpoint = OutPoint {
     txid: to_spend.txid(),
@@ -94,7 +94,7 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
     return Err(Error::Invalid);
   }
 
-  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()));
+  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
   if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
     return Err(Error::Invalid);
@@ -109,11 +109,12 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
   let (signature, sighash_type) = match encoded_signature.len() {
     65 => (
       Signature::from_slice(&encoded_signature.as_slice()[..64])
-        .context(error::InvalidSignature)?,
-      TapSighashType::from_consensus_u8(encoded_signature[64]).context(error::InvalidSigHash)?,
+        .context(error::SignatureInvalid)?,
+      TapSighashType::from_consensus_u8(encoded_signature[64])
+        .context(error::SigHashTypeInvalid)?,
     ),
     64 => (
-      Signature::from_slice(encoded_signature.as_slice()).context(error::InvalidSignature)?,
+      Signature::from_slice(encoded_signature.as_slice()).context(error::SignatureInvalid)?,
       TapSighashType::Default,
     ),
     _ => {
@@ -125,7 +126,7 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return Err(Error::UnsupportedSigHashType {
+    return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }

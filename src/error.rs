@@ -8,6 +8,8 @@ pub enum Error {
     source: bitcoin::address::ParseError,
     address: String,
   },
+  #[snafu(display("Failed to parse private key"))]
+  PrivateKeyParse { source: bitcoin::key::Error },
   #[snafu(display("Unsuported address `{address}`, only P2TR allowed"))]
   UnsupportedAddress { address: String },
   #[snafu(display("Invalid"))]
@@ -22,28 +24,38 @@ pub enum Error {
     source: base64::DecodeError,
     transaction: String,
   },
+  #[snafu(display("Transaction encode error"))]
+  TransactionEncode { source: std::io::Error },
+  #[snafu(display("Transaction extract error"))]
+  TransactionExtract {
+    source: bitcoin::psbt::ExtractTxError,
+  },
+  #[snafu(display("PSBT extract error"))]
+  PsbtExtract { source: bitcoin::psbt::Error },
   #[snafu(display("Consensu decode error for transaction `{transaction}`"))]
   TransactionConsensusDecode {
     source: bitcoin::consensus::encode::Error,
     transaction: String,
   },
   #[snafu(display("Witness signature"))]
-  MalformedWitness {
+  WitnessMalformed {
     source: bitcoin::consensus::encode::Error,
   },
+  #[snafu(display("Encode witness error"))]
+  WitnessEncoding { source: std::io::Error },
   #[snafu(display("Signature of wrong length `{length}`"))]
   SignatureLength {
     length: usize,
     encoded_signature: Vec<u8>,
   },
   #[snafu(display("Invalid signature because: `{}`", source.to_string()))]
-  InvalidSignature { source: bitcoin::secp256k1::Error },
+  SignatureInvalid { source: bitcoin::secp256k1::Error },
   #[snafu(display("Invalid sighash"))]
-  InvalidSigHash {
+  SigHashTypeInvalid {
     source: bitcoin::sighash::InvalidSighashTypeError,
   },
   #[snafu(display("Unsupported sighash type `{sighash_type}`"))]
-  UnsupportedSigHashType { sighash_type: String },
+  SigHashTypeUnsupported { sighash_type: String },
   #[snafu(display("Not key path spend"))]
   NotKeyPathSpend,
 }

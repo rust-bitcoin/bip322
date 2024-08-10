@@ -7,12 +7,15 @@ pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) 
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_key = PrivateKey::from_wif(wif_private_key).unwrap();
+  let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
   let witness = sign_simple(&address, message.as_bytes(), private_key)?;
 
   let mut buffer = Vec::new();
-  witness.consensus_encode(&mut buffer).unwrap();
+
+  witness
+    .consensus_encode(&mut buffer)
+    .context(error::WitnessEncoding)?;
 
   Ok(general_purpose::STANDARD.encode(buffer))
 }
@@ -24,12 +27,14 @@ pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) ->
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_key = PrivateKey::from_wif(wif_private_key).unwrap();
+  let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
   let tx = sign_full(&address, message.as_bytes(), private_key)?;
 
   let mut buffer = Vec::new();
-  tx.consensus_encode(&mut buffer).unwrap();
+
+  tx.consensus_encode(&mut buffer)
+    .context(error::TransactionEncode)?;
 
   Ok(general_purpose::STANDARD.encode(buffer))
 }
@@ -49,13 +54,13 @@ pub fn sign_full(
   message: &[u8],
   private_key: PrivateKey,
 ) -> Result<Transaction> {
-  let to_spend = create_to_spend(&address, message);
-  let mut to_sign = create_to_sign(&to_spend, None);
+  let to_spend = create_to_spend(&address, message)?;
+  let mut to_sign = create_to_sign(&to_spend, None)?;
 
   let witness = create_message_signature(&to_spend, &to_sign, private_key);
   to_sign.inputs[0].final_script_witness = Some(witness);
 
-  Ok(to_sign.extract_tx().unwrap())
+  Ok(to_sign.extract_tx().context(error::TransactionExtract)?)
 }
 
 fn create_message_signature(

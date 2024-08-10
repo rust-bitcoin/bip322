@@ -26,7 +26,7 @@ mod sign;
 mod verify;
 
 pub use {
-  sign::{sign_full_encoded, sign_simple_encoded},
+  sign::{sign_full, sign_full_encoded, sign_simple, sign_simple_encoded},
   verify::{verify_full, verify_full_encoded, verify_simple, verify_simple_encoded},
 };
 
@@ -34,7 +34,6 @@ const TAG: &str = "BIP0322-signed-message";
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
 
-// message_hash = sha256(sha256(tag) || sha256(tag) || message); see BIP340
 pub(crate) fn message_hash(message: &[u8]) -> Vec<u8> {
   let mut tag_hash = sha256::Hash::hash(TAG.as_bytes()).to_byte_array().to_vec();
   tag_hash.extend(tag_hash.clone());
@@ -45,8 +44,8 @@ pub(crate) fn message_hash(message: &[u8]) -> Vec<u8> {
     .to_vec()
 }
 
-pub(crate) fn create_to_spend(address: &Address, message: &[u8]) -> Transaction {
-  Transaction {
+pub(crate) fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction> {
+  Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
     input: vec![TxIn {
@@ -67,10 +66,10 @@ pub(crate) fn create_to_spend(address: &Address, message: &[u8]) -> Transaction 
       value: Amount::from_sat(0),
       script_pubkey: address.script_pubkey(),
     }],
-  }
+  })
 }
 
-pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Psbt {
+pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
       txid: to_spend.txid(),
@@ -93,7 +92,7 @@ pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -
     }],
   };
 
-  let mut psbt = Psbt::from_unsigned_tx(to_sign).unwrap(); // TODO
+  let mut psbt = Psbt::from_unsigned_tx(to_sign).context(error::PsbtExtract)?;
 
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::from_sat(0),
@@ -102,7 +101,7 @@ pub(crate) fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -
 
   psbt.inputs[0].final_script_witness = witness;
 
-  psbt
+  Ok(psbt)
 }
 
 #[cfg(test)]
@@ -137,6 +136,7 @@ mod tests {
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         "".as_bytes()
       )
+      .unwrap()
       .txid()
       .to_string(),
       "c5680aa69bb8d860bf82d4e9cd3504b55dde018de765a91bb566283c545a99a7"
@@ -147,6 +147,7 @@ mod tests {
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         "Hello World".as_bytes()
       )
+      .unwrap()
       .txid()
       .to_string(),
       "b79d196740ad5217771c1098fc4a4b51e0535c32236c71f1ea4d61a2d603352b"
@@ -158,8 +159,11 @@ mod tests {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
       "".as_bytes(),
-    );
-    let to_sign = create_to_sign(&to_spend, None);
+    )
+    .unwrap();
+
+    let to_sign = create_to_sign(&to_spend, None).unwrap();
+
     assert_eq!(
       to_sign.unsigned_tx.txid().to_string(),
       "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
@@ -168,8 +172,11 @@ mod tests {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
       "Hello World".as_bytes(),
-    );
-    let to_sign = create_to_sign(&to_spend, None);
+    )
+    .unwrap();
+
+    let to_sign = create_to_sign(&to_spend, None).unwrap();
+
     assert_eq!(
       to_sign.unsigned_tx.txid().to_string(),
       "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
