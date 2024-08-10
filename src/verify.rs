@@ -22,6 +22,17 @@ pub fn simple_verify(address: &str, message: &str, signature: &str) -> Result<()
   simple_verify_inner(&address, message.as_bytes(), witness)
 }
 
+/// Meant to be consumed by Rust applications
+pub fn simple_verify_inner(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
+  full_verify_inner(
+    address,
+    message,
+    create_to_sign(&create_to_spend(address, message), Some(signature))
+      .extract_tx()
+      .unwrap(),
+  )
+}
+
 /// This completely outward facing function is meant to be consumed by very naive users like when
 /// compiling this library to WASM, where Javascript has no type safety. If you'd like to use the
 /// more type safe / Rust variant use `fn full_verify_inner`.
@@ -42,16 +53,7 @@ pub fn full_verify(address: &str, message: &str, to_sign: &str) -> Result<()> {
   full_verify_inner(&address, message.as_bytes(), to_sign)
 }
 
-pub fn simple_verify_inner(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
-  full_verify_inner(
-    address,
-    message,
-    create_to_sign(&create_to_spend(address, message), Some(signature))
-      .extract_tx()
-      .unwrap(),
-  )
-}
-
+/// Meant to be consumed by Rust applications
 pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   if address
     .address_type()
@@ -78,8 +80,6 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
 
   let to_spend = create_to_spend(address, message);
 
-  let witness = to_sign.input[0].witness.clone();
-
   let to_spend_outpoint = OutPoint {
     txid: to_spend.txid(),
     vout: 0,
@@ -89,8 +89,7 @@ pub fn full_verify_inner(address: &Address, message: &[u8], to_sign: Transaction
     return Err(Error::Invalid);
   }
 
-  let mut to_sign = create_to_sign(&to_spend, None);
-  to_sign.inputs[0].final_script_witness = Some(witness);
+  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()));
 
   if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
     return Err(Error::Invalid);
