@@ -6,10 +6,23 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-- [x] simple (only witness stack, consensus encoded, base64)
-- [x] full (base64 encoded `to_sign` tx)
-- [ ] proof-of-funds (base64 encoded `to_sign` tx with utxos)
+At the moment this crate supports ONLY `P2TR` addresses. We're looking to
+stabilize the interface before implementing different address types. Feedback
+through issues or PRs is welcome and encouraged. 
 
+- [ ] legacy
+- [x] simple
+- [x] full 
+- [ ] full (proof-of-funds)
+
+The goal is to provide a full signing and verifying library similar to
+[this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
+
+## Test Vectors
+
+- from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)
+- from [bip322-js](https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts)
+- from [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors)
 
 ## Compile for WASM (on MacOs)
 
@@ -25,15 +38,7 @@ wasm-pack build \
     www
 ```
 
-The WASM binary and Javascript glue code can then be found in `www/pkg`.
+The WASM binary and Javascript glue code can then be found in `www/pkg`. The
+[bip322.rs](https://bip322.rs) site also runs a small WASM binary if you'd like
+to check it out.
 
-## Test Vectors
-
-- from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)
-- from [bip322-js](https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts)
-- from [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors)
-
-## Roadmap
-
-The goal is to provide a full signing and verifying library similar to
-[this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
