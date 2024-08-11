@@ -42,6 +42,6 @@ wasm-pack build \
 ```
 
 The WASM binary and Javascript glue code can then be found in `www/pkg`. The
-[bip322.rs](https://bip322.rs) site also runs the wasm if you'd like to check it
-out.
+[bip322.rs](https://bip322.rs) site also runs a small WASM binary if you'd like
+to check it out.
 
