@@ -6,20 +6,16 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-At the moment this crate supports ONLY P2TR addresses.
+At the moment this crate supports ONLY `P2TR` addresses. We're looking to
+stabilize the interface before implementing different address types. Feedback
+through PRs or Issues is welcome and encouraged. 
 
 - [x] simple
 - [x] full 
 - [ ] full (proof-of-funds)
 
-## Roadmap
-
 The goal is to provide a full signing and verifying library similar to
 [this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
-
-At the moment this crate supports ONLY `P2TR` addresses. We're looking to
-stabilize the interface before implementing different address types. Feedback
-through PRs or Issues is welcome and encouraged. 
 
 ## Test Vectors
 
