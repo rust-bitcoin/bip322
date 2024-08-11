@@ -8,7 +8,7 @@ generic message signing and verification.
 
 At the moment this crate supports ONLY `P2TR` addresses. We're looking to
 stabilize the interface before implementing different address types. Feedback
-through PRs or Issues is welcome and encouraged. 
+through issues or PRs is welcome and encouraged. 
 
 - [ ] legacy
 - [x] simple
