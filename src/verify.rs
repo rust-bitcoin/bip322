@@ -1,4 +1,11 @@
+use bitcoin::{EcdsaSighashType, PublicKey};
+
 use super::*;
+
+pub enum CustomPublicKey {
+    P2WPKH(PublicKey),
+    P2TR(XOnlyPublicKey),
+}
 
 /// Verifies the BIP-322 simple from encoded values, i.e. address encoding, message string and
 /// signature base64 string.
@@ -52,37 +59,120 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
   )
 }
 
-/// Verifies the BIP-322 full from proper Rust types.
-pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
-  if address
-    .address_type()
-    .is_some_and(|addr| addr != AddressType::P2tr)
-  {
-    return Err(Error::UnsupportedAddress {
+fn verify_address_type_and_return_pub_key(
+  address: &Address,
+  message: Option<&[u8]>,
+  to_sign: Option<&Transaction>,
+) -> Result<CustomPublicKey, Error> {
+  match (address.address_type(), address.payload()) {
+    (Some(AddressType::P2wpkh), bitcoin::address::Payload::WitnessProgram(wp))
+      if wp.version().to_num() == 0 && wp.program().len() == 20 =>
+    {
+      let to_spend = create_to_spend(address, message.unwrap())?;
+      let to_sign = create_to_sign(&to_spend, Some(to_sign.unwrap().input[0].witness.clone()))?;
+      let pub_key_bytes = &(to_sign.extract_tx().unwrap()).input[0].witness[1];
+
+      let pub_key = PublicKey::from_slice(pub_key_bytes).map_err(|_| Error::InvalidPublicKey)?;
+      Ok(CustomPublicKey::P2WPKH(pub_key))
+    }
+    (Some(AddressType::P2tr), bitcoin::address::Payload::WitnessProgram(wp))
+      if wp.version().to_num() == 1 && wp.program().len() == 32 =>
+    {
+      let pub_key =
+        XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
+        Ok(CustomPublicKey::P2TR(pub_key))
+      }
+    _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
+    }),
+  }
+}
+
+fn verify_full_p2wpkh(
+  address: &Address,
+  message: &[u8],
+  to_sign: Transaction,
+  pub_key: PublicKey,
+) -> Result<()> {
+  let to_spend = create_to_spend(address, message)?;
+  let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
+
+  let to_spend_outpoint = OutPoint {
+    txid: to_spend.txid(),
+    vout: 0,
+  };
+
+  if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
+    return Err(Error::ToSignInvalid);
+  }
+
+  let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
+    return Err(Error::WitnessEmpty);
+  };
+
+  if witness.len() != 2 {
+    return Err(Error::InvalidWitness);
+  }
+
+  let encoded_signature = witness.to_vec()[0].clone();
+  let witness_pub_key = &witness.to_vec()[1];
+
+  if &pub_key.to_bytes() != witness_pub_key {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  let (signature, sighash_type) = match encoded_signature.len() {
+    71 | 72 => {
+      let len = encoded_signature.len();
+      (
+        bitcoin::secp256k1::ecdsa::Signature::from_der_lax(
+          &encoded_signature.as_slice()[..len - 1],
+        )
+        .context(error::SignatureInvalid)?,
+        EcdsaSighashType::from_consensus(encoded_signature[len - 1] as u32),
+      )
+    }
+    _ => {
+      return Err(Error::SignatureLength {
+        length: encoded_signature.len(),
+        encoded_signature,
+      })
+    }
+  };
+
+  if !(sighash_type == EcdsaSighashType::All) {
+    return Err(Error::SigHashTypeUnsupported {
+      sighash_type: sighash_type.to_string(),
     });
   }
 
-  let pub_key =
-    if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
-      if witness_program.version().to_num() != 1 {
-        return Err(Error::UnsupportedAddress {
-          address: address.to_string(),
-        });
-      }
+  let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx);
 
-      if witness_program.program().len() != 32 {
-        return Err(Error::NotKeyPathSpend);
-      }
+  let sighash = sighash_cache
+    .p2wpkh_signature_hash(
+      0,
+      &to_spend.output[0].script_pubkey,
+      to_spend.output[0].value,
+      sighash_type,
+    )
+    .expect("signature hash should compute");
 
-      XOnlyPublicKey::from_slice(witness_program.program().as_bytes())
-        .expect("should extract an xonly public key")
-    } else {
-      return Err(Error::UnsupportedAddress {
-        address: address.to_string(),
-      });
-    };
+  let message =
+    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
+  Secp256k1::verification_only()
+    .verify_ecdsa(&message, &(signature), &pub_key.inner)
+    .context(error::SignatureInvalid)?;
+
+  Ok(())
+}
+
+fn verify_full_p2tr(
+  address: &Address,
+  message: &[u8],
+  to_sign: Transaction,
+  pub_key: XOnlyPublicKey,
+) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
@@ -145,4 +235,17 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
   Secp256k1::verification_only()
     .verify_schnorr(&signature, &message, &pub_key)
     .context(error::SignatureInvalid)
+}
+
+/// Verifies the BIP-322 full from proper Rust types.
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
+  match verify_address_type_and_return_pub_key(address, Some(message), Some(&to_sign)) {
+    Ok(CustomPublicKey::P2TR(pub_key)) => return verify_full_p2tr(address, message, to_sign, pub_key),
+    Ok(CustomPublicKey::P2WPKH(pub_key)) => return verify_full_p2wpkh(address, message, to_sign, pub_key),
+    _ => {
+      return Err(Error::UnsupportedAddress {
+        address: address.to_string(),
+      });
+    }
+  }
 }

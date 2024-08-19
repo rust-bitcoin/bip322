@@ -10,7 +10,7 @@ pub enum Error {
   },
   #[snafu(display("Failed to parse private key"))]
   PrivateKeyParse { source: bitcoin::key::Error },
-  #[snafu(display("Unsuported address `{address}`, only P2TR allowed"))]
+  #[snafu(display("Unsuported address `{address}`, only P2TR or P2WPKH allowed"))]
   UnsupportedAddress { address: String },
   #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {
@@ -60,4 +60,10 @@ pub enum Error {
   SigHashTypeUnsupported { sighash_type: String },
   #[snafu(display("Not key path spend"))]
   NotKeyPathSpend,
+  #[snafu(display("Invalid public key"))]
+  InvalidPublicKey,
+  #[snafu(display("Invalid witness"))]
+  InvalidWitness,
+  #[snafu(display("Public key does not match"))]
+  PublicKeyMismatch,
 }

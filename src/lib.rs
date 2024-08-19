@@ -115,6 +115,7 @@ mod tests {
   const WIF_PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
   const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
   const TAPROOT_ADDRESS: &str = "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3";
+  const SEGWIT_ADDRESS_LOCAL: &str = "bc1qvf8tafcx6yncee9f7jvza5nhnyalp32jjuhw6w";
 
   #[test]
   fn message_hashes_are_correct() {
@@ -237,7 +238,7 @@ mod tests {
       "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR allowed"
+      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR or P2WPKH allowed"
     )
   }
 
@@ -262,5 +263,10 @@ mod tests {
       ).unwrap_err().to_string(),
       "Decode error for signature `AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH`"
     )
+  }
+
+  #[test]
+  fn verify_valid_p2wpkh_signature() {
+    assert!(verify_simple_encoded(SEGWIT_ADDRESS_LOCAL, "Hello World gotcha", "AkcwRAIgJcWpci9gC4x9YMSGReCXx6IrylfHz8LzHrid8QXU4DECICMh74J1qn/XT8BGNCtxsFxa2rX7r02BYsLALYMNnDF0ASECcB+M459ms4JoioDlHLut7acdmMxFdMwsNCTlpoZWS2s=").is_ok())
   }
 }
