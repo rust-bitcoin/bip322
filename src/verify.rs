@@ -3,8 +3,8 @@ use bitcoin::{EcdsaSighashType, PublicKey};
 use super::*;
 
 pub enum CustomPublicKey {
-    P2WPKH(PublicKey),
-    P2TR(XOnlyPublicKey),
+  P2WPKH(PublicKey),
+  P2TR(XOnlyPublicKey),
 }
 
 /// Verifies the BIP-322 simple from encoded values, i.e. address encoding, message string and
@@ -80,8 +80,8 @@ fn verify_address_type_and_return_pub_key(
     {
       let pub_key =
         XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
-        Ok(CustomPublicKey::P2TR(pub_key))
-      }
+      Ok(CustomPublicKey::P2TR(pub_key))
+    }
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
     }),
@@ -240,12 +240,10 @@ fn verify_full_p2tr(
 /// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   match verify_address_type_and_return_pub_key(address, Some(message), Some(&to_sign)) {
-    Ok(CustomPublicKey::P2TR(pub_key)) => return verify_full_p2tr(address, message, to_sign, pub_key),
-    Ok(CustomPublicKey::P2WPKH(pub_key)) => return verify_full_p2wpkh(address, message, to_sign, pub_key),
-    _ => {
-      return Err(Error::UnsupportedAddress {
-        address: address.to_string(),
-      });
-    }
+    Ok(CustomPublicKey::P2TR(pub_key)) => verify_full_p2tr(address, message, to_sign, pub_key),
+    Ok(CustomPublicKey::P2WPKH(pub_key)) => verify_full_p2wpkh(address, message, to_sign, pub_key),
+    _ => Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    }),
   }
 }
