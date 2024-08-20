@@ -121,17 +121,16 @@ fn verify_full_p2wpkh(
     return Err(Error::PublicKeyMismatch);
   }
 
-  let (signature, sighash_type) = match encoded_signature.len() {
-    71 | 72 => {
-      let len = encoded_signature.len();
-      (
-        bitcoin::secp256k1::ecdsa::Signature::from_der_lax(
-          &encoded_signature.as_slice()[..len - 1],
-        )
-        .context(error::SignatureInvalid)?,
-        EcdsaSighashType::from_consensus(encoded_signature[len - 1] as u32),
+  let signature_length = encoded_signature.len();
+
+  let (signature, sighash_type) = match signature_length {
+    71 | 72 => (
+      bitcoin::secp256k1::ecdsa::Signature::from_der(
+        &encoded_signature.as_slice()[..signature_length - 1],
       )
-    }
+      .context(error::SignatureInvalid)?,
+      EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32),
+    ),
     _ => {
       return Err(Error::SignatureLength {
         length: encoded_signature.len(),
@@ -161,7 +160,7 @@ fn verify_full_p2wpkh(
     Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
   Secp256k1::verification_only()
-    .verify_ecdsa(&message, &(signature), &pub_key.inner)
+    .verify_ecdsa(&message, &signature, &pub_key.inner)
     .context(error::SignatureInvalid)?;
 
   Ok(())

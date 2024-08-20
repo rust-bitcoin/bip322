@@ -115,7 +115,6 @@ mod tests {
   const WIF_PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
   const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
   const TAPROOT_ADDRESS: &str = "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3";
-  const SEGWIT_ADDRESS_LOCAL: &str = "bc1qvf8tafcx6yncee9f7jvza5nhnyalp32jjuhw6w";
 
   #[test]
   fn message_hashes_are_correct() {
@@ -266,7 +265,71 @@ mod tests {
   }
 
   #[test]
-  fn verify_valid_p2wpkh_signature() {
-    assert!(verify_simple_encoded(SEGWIT_ADDRESS_LOCAL, "Hello World gotcha", "AkcwRAIgJcWpci9gC4x9YMSGReCXx6IrylfHz8LzHrid8QXU4DECICMh74J1qn/XT8BGNCtxsFxa2rX7r02BYsLALYMNnDF0ASECcB+M459ms4JoioDlHLut7acdmMxFdMwsNCTlpoZWS2s=").is_ok())
+  fn simple_verify_and_falsify_p2wpkh() {
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World - this should fail",
+        "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_err()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "fail",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_err()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "",
+        "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+      ).is_ok()
+    );
+  }
+
+  #[test]
+  fn simple_sign_p2wpkh() {
+    assert_eq!(
+      sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+    );
+  }
+
+  #[test]
+  fn roundtrip_p2wpkh_simple() {
+    assert!(verify_simple_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+    )
+    .is_ok());
   }
 }

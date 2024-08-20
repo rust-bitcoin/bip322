@@ -1,3 +1,5 @@
+use bitcoin::EcdsaSighashType;
+
 use super::*;
 
 /// Signs the BIP-322 simple from encoded values, i.e. address encoding, message string and
@@ -54,40 +56,99 @@ pub fn sign_full(
   message: &[u8],
   private_key: PrivateKey,
 ) -> Result<Transaction> {
-  if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
-    if witness_program.version().to_num() != 1 {
-      return Err(Error::UnsupportedAddress {
-        address: address.to_string(),
-      });
-    }
-
-    if witness_program.program().len() != 32 {
-      return Err(Error::NotKeyPathSpend);
-    }
-  } else {
-    return Err(Error::UnsupportedAddress {
-      address: address.to_string(),
-    });
-  };
-
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 
-  let witness = create_message_signature(&to_spend, &to_sign, private_key);
+  let witness =
+    if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
+      let version = witness_program.version().to_num();
+      let program_len = witness_program.program().len();
+
+      match version {
+        0 => {
+          if program_len != 20 {
+            return Err(Error::NotKeyPathSpend); // TODO
+          }
+          create_message_signature_p2wpkh(&to_spend, &to_sign, private_key)
+        }
+        1 => {
+          if program_len != 32 {
+            return Err(Error::NotKeyPathSpend); // TODO
+          }
+          create_message_signature_taproot(&to_spend, &to_sign, private_key)
+        }
+        _ => {
+          return Err(Error::UnsupportedAddress {
+            address: address.to_string(),
+          })
+        }
+      }
+    } else {
+      return Err(Error::UnsupportedAddress {
+        // TODO maybe rename to addres type?
+        address: address.to_string(),
+      });
+    };
+
+  dbg!(&witness);
+
   to_sign.inputs[0].final_script_witness = Some(witness);
 
   to_sign.extract_tx().context(error::TransactionExtract)
 }
 
-fn create_message_signature(
+fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
   private_key: PrivateKey,
 ) -> Witness {
+  let secp = Secp256k1::new();
+  let sighash_type = EcdsaSighashType::All;
+  let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
+
+  let sighash = sighash_cache
+    .p2wpkh_signature_hash(
+      0,
+      &to_spend_tx.output[0].script_pubkey,
+      to_spend_tx.output[0].value,
+      sighash_type,
+    )
+    .expect("signature hash should compute");
+
+  let sig = secp.sign_ecdsa(
+    &secp256k1::Message::from_digest_slice(sighash.as_ref())
+      .expect("should be cryptographically secure hash"),
+    &private_key.inner,
+  );
+
+  let witness = sighash_cache
+    .witness_mut(0)
+    .expect("getting mutable witness reference should work");
+
+  witness.push(
+    bitcoin::ecdsa::Signature {
+      sig,
+      hash_ty: sighash_type,
+    }
+    .to_vec(),
+  );
+
+  witness.push(private_key.public_key(&secp).to_bytes());
+
+  witness.to_owned()
+}
+
+fn create_message_signature_taproot(
+  to_spend_tx: &Transaction,
+  to_sign: &Psbt,
+  private_key: PrivateKey,
+) -> Witness {
+  println!("here");
   let mut to_sign = to_sign.clone();
 
   let secp = Secp256k1::new();
   let key_pair = Keypair::from_secret_key(&secp, &private_key.inner);
+
   let (x_only_public_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
   to_sign.inputs[0].tap_internal_key = Some(x_only_public_key);
 
