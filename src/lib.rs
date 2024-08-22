@@ -22,7 +22,7 @@ use {
   std::{io::Cursor, str::FromStr},
 };
 
-pub mod error;
+mod error;
 pub mod sign;
 pub mod util;
 pub mod verify;
