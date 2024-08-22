@@ -1,5 +1,3 @@
-use bitcoin::EcdsaSighashType;
-
 use super::*;
 
 /// Signs the BIP-322 simple from encoded values, i.e. address encoding, message string and

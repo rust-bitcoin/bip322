@@ -1,5 +1,3 @@
-use bitcoin::{EcdsaSighashType, PublicKey};
-
 use super::*;
 
 pub enum CustomPublicKey {
