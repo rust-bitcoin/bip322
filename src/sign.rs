@@ -85,8 +85,6 @@ pub fn sign_full(
       });
     };
 
-  dbg!(&witness);
-
   to_sign.inputs[0].final_script_witness = Some(witness);
 
   to_sign.extract_tx().context(error::TransactionExtract)
