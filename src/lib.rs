@@ -2,7 +2,7 @@ use {
   base64::{engine::general_purpose, Engine},
   bitcoin::{
     absolute::LockTime,
-    address::AddressType,
+    address::Payload,
     blockdata::script,
     consensus::Decodable,
     consensus::Encodable,
@@ -13,7 +13,8 @@ use {
     secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
     transaction::Version,
-    Address, Amount, OutPoint, PrivateKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Witness,
   },
   bitcoin_hashes::{sha256, Hash},
   error::Error,
@@ -237,7 +238,7 @@ mod tests {
       "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR allowed"
+      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR or P2WPKH allowed"
     )
   }
 
@@ -262,5 +263,89 @@ mod tests {
       ).unwrap_err().to_string(),
       "Decode error for signature `AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH`"
     )
+  }
+
+  #[test]
+  fn simple_verify_and_falsify_p2wpkh() {
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World - this should fail",
+        "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_err()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_ok()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "fail",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      ).is_err()
+    );
+
+    assert!(
+      verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "",
+        "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+      ).is_ok()
+    );
+  }
+
+  #[test]
+  fn simple_sign_p2wpkh() {
+    assert_eq!(
+      sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+    );
+
+    assert_eq!(
+      sign_simple_encoded(SEGWIT_ADDRESS, "", WIF_PRIVATE_KEY).unwrap(),
+      "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+    );
+  }
+
+  #[test]
+  fn roundtrip_p2wpkh_simple() {
+    assert!(verify_simple_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn roundtrip_p2wpkh_full() {
+    assert!(verify_full_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &sign_full_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+    )
+    .is_ok());
   }
 }
