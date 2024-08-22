@@ -136,7 +136,6 @@ fn create_message_signature_taproot(
   to_sign: &Psbt,
   private_key: PrivateKey,
 ) -> Witness {
-  println!("here");
   let mut to_sign = to_sign.clone();
 
   let secp = Secp256k1::new();
