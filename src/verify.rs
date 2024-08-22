@@ -52,21 +52,15 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
 
 /// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
-  match (address.address_type(), address.payload()) {
-    (Some(AddressType::P2wpkh), bitcoin::address::Payload::WitnessProgram(wp))
-      if wp.version().to_num() == 0 && wp.program().len() == 20 =>
-    {
+  match address.payload() {
+    Payload::WitnessProgram(wp) if wp.version().to_num() == 0 && wp.program().len() == 20 => {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
-
       verify_full_p2wpkh(address, message, to_sign, pub_key)
     }
-    (Some(AddressType::P2tr), bitcoin::address::Payload::WitnessProgram(wp))
-      if wp.version().to_num() == 1 && wp.program().len() == 32 =>
-    {
+    Payload::WitnessProgram(wp) if wp.version().to_num() == 1 && wp.program().len() == 32 => {
       let pub_key =
         XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
-
       verify_full_p2tr(address, message, to_sign, pub_key)
     }
     _ => Err(Error::UnsupportedAddress {

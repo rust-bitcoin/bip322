@@ -1,7 +1,6 @@
 use super::*;
 
-/// Signs the BIP-322 simple from encoded values, i.e. address encoding, message string and
-/// WIF private key string. Returns a base64 encoded witness stack.
+/// Signs the BIP-322 simple from spec-compliant string encodings.
 pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -20,8 +19,7 @@ pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) 
   Ok(general_purpose::STANDARD.encode(buffer))
 }
 
-/// Signs the BIP-322 full from encoded values, i.e. address encoding, message string and
-/// WIF private key string. Returns a base64 encoded transaction.
+/// Signs the BIP-322 full from spec-compliant string encodings.
 pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -65,13 +63,13 @@ pub fn sign_full(
       match version {
         0 => {
           if program_len != 20 {
-            return Err(Error::NotKeyPathSpend); // TODO
+            return Err(Error::NotKeyPathSpend);
           }
           create_message_signature_p2wpkh(&to_spend, &to_sign, private_key)
         }
         1 => {
           if program_len != 32 {
-            return Err(Error::NotKeyPathSpend); // TODO
+            return Err(Error::NotKeyPathSpend);
           }
           create_message_signature_taproot(&to_spend, &to_sign, private_key)
         }
@@ -83,7 +81,6 @@ pub fn sign_full(
       }
     } else {
       return Err(Error::UnsupportedAddress {
-        // TODO maybe rename to addres type?
         address: address.to_string(),
       });
     };

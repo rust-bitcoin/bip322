@@ -2,7 +2,7 @@ use {
   base64::{engine::general_purpose, Engine},
   bitcoin::{
     absolute::LockTime,
-    address::AddressType,
+    address::Payload,
     blockdata::script,
     consensus::Decodable,
     consensus::Encodable,
