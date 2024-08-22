@@ -1,12 +1,6 @@
 use super::*;
 
-pub enum CustomPublicKey {
-  P2WPKH(PublicKey),
-  P2TR(XOnlyPublicKey),
-}
-
-/// Verifies the BIP-322 simple from encoded values, i.e. address encoding, message string and
-/// signature base64 string.
+/// Verifies the BIP-322 simple from spec-compliant string encodings.
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -24,8 +18,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
   verify_simple(&address, message.as_bytes(), witness)
 }
 
-/// Verifies the BIP-322 full from encoded values, i.e. address encoding, message string and
-/// transaction base64 string.
+/// Verifies the BIP-322 full from spec-compliant string encodings.
 pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -57,28 +50,24 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
   )
 }
 
-fn verify_address_type_and_return_pub_key(
-  address: &Address,
-  message: Option<&[u8]>,
-  to_sign: Option<&Transaction>,
-) -> Result<CustomPublicKey, Error> {
+/// Verifies the BIP-322 full from proper Rust types.
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   match (address.address_type(), address.payload()) {
     (Some(AddressType::P2wpkh), bitcoin::address::Payload::WitnessProgram(wp))
       if wp.version().to_num() == 0 && wp.program().len() == 20 =>
     {
-      let to_spend = create_to_spend(address, message.unwrap())?;
-      let to_sign = create_to_sign(&to_spend, Some(to_sign.unwrap().input[0].witness.clone()))?;
-      let pub_key_bytes = &(to_sign.extract_tx().unwrap()).input[0].witness[1];
+      let pub_key =
+        PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
-      let pub_key = PublicKey::from_slice(pub_key_bytes).map_err(|_| Error::InvalidPublicKey)?;
-      Ok(CustomPublicKey::P2WPKH(pub_key))
+      verify_full_p2wpkh(address, message, to_sign, pub_key)
     }
     (Some(AddressType::P2tr), bitcoin::address::Payload::WitnessProgram(wp))
       if wp.version().to_num() == 1 && wp.program().len() == 32 =>
     {
       let pub_key =
         XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
-      Ok(CustomPublicKey::P2TR(pub_key))
+
+      verify_full_p2tr(address, message, to_sign, pub_key)
     }
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
@@ -232,15 +221,4 @@ fn verify_full_p2tr(
   Secp256k1::verification_only()
     .verify_schnorr(&signature, &message, &pub_key)
     .context(error::SignatureInvalid)
-}
-
-/// Verifies the BIP-322 full from proper Rust types.
-pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
-  match verify_address_type_and_return_pub_key(address, Some(message), Some(&to_sign)) {
-    Ok(CustomPublicKey::P2TR(pub_key)) => verify_full_p2tr(address, message, to_sign, pub_key),
-    Ok(CustomPublicKey::P2WPKH(pub_key)) => verify_full_p2wpkh(address, message, to_sign, pub_key),
-    _ => Err(Error::UnsupportedAddress {
-      address: address.to_string(),
-    }),
-  }
 }
