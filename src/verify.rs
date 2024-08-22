@@ -1,7 +1,7 @@
 use super::*;
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
-pub fn simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
+pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -15,11 +15,11 @@ pub fn simple_encoded(address: &str, message: &str, signature: &str) -> Result<(
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
 
-  simple(&address, message.as_bytes(), witness)
+  verify_simple(&address, message.as_bytes(), witness)
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
-pub fn full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
+pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -36,12 +36,12 @@ pub fn full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
     },
   )?;
 
-  full(&address, message.as_bytes(), to_sign)
+  verify_full(&address, message.as_bytes(), to_sign)
 }
 
 /// Verifies the BIP-322 simple from proper Rust types.
-pub fn simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
-  full(
+pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
+  verify_full(
     address,
     message,
     create_to_sign(&create_to_spend(address, message)?, Some(signature))?
@@ -51,17 +51,17 @@ pub fn simple(address: &Address, message: &[u8], signature: Witness) -> Result<(
 }
 
 /// Verifies the BIP-322 full from proper Rust types.
-pub fn full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   match address.payload() {
     Payload::WitnessProgram(wp) if wp.version().to_num() == 0 && wp.program().len() == 20 => {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
-      full_p2wpkh(address, message, to_sign, pub_key)
+      verify_full_p2wpkh(address, message, to_sign, pub_key)
     }
     Payload::WitnessProgram(wp) if wp.version().to_num() == 1 && wp.program().len() == 32 => {
       let pub_key =
         XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
-      full_p2tr(address, message, to_sign, pub_key)
+      verify_full_p2tr(address, message, to_sign, pub_key)
     }
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
@@ -69,7 +69,7 @@ pub fn full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<(
   }
 }
 
-fn full_p2wpkh(
+fn verify_full_p2wpkh(
   address: &Address,
   message: &[u8],
   to_sign: Transaction,
@@ -147,7 +147,7 @@ fn full_p2wpkh(
   Ok(())
 }
 
-fn full_p2tr(
+fn verify_full_p2tr(
   address: &Address,
   message: &[u8],
   to_sign: Transaction,

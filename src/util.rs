@@ -2,6 +2,7 @@ use super::*;
 
 const TAG: &str = "BIP0322-signed-message";
 
+/// Create the tagged message hash.
 pub fn message_hash(message: &[u8]) -> Vec<u8> {
   let mut tag_hash = sha256::Hash::hash(TAG.as_bytes()).to_byte_array().to_vec();
   tag_hash.extend(tag_hash.clone());
@@ -12,6 +13,7 @@ pub fn message_hash(message: &[u8]) -> Vec<u8> {
     .to_vec()
 }
 
+/// Create the `to_spend` transaction.
 pub fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
@@ -37,6 +39,7 @@ pub fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction>
   })
 }
 
+/// Create the `to_sign` transaction.
 pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {

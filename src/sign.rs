@@ -1,14 +1,14 @@
 use super::*;
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
-pub fn simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
 
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
-  let witness = simple(&address, message.as_bytes(), private_key)?;
+  let witness = sign_simple(&address, message.as_bytes(), private_key)?;
 
   let mut buffer = Vec::new();
 
@@ -20,14 +20,14 @@ pub fn simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Re
 }
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
-pub fn full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
 
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
-  let tx = full(&address, message.as_bytes(), private_key)?;
+  let tx = sign_full(&address, message.as_bytes(), private_key)?;
 
   let mut buffer = Vec::new();
 
@@ -38,16 +38,20 @@ pub fn full_encoded(address: &str, message: &str, wif_private_key: &str) -> Resu
 }
 
 /// Signs in the BIP-322 simple format from proper Rust types and returns the witness.
-pub fn simple(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Witness> {
+pub fn sign_simple(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Witness> {
   Ok(
-    full(address, message, private_key)?.input[0]
+    sign_full(address, message, private_key)?.input[0]
       .witness
       .clone(),
   )
 }
 
 /// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
-pub fn full(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Transaction> {
+pub fn sign_full(
+  address: &Address,
+  message: &[u8],
+  private_key: PrivateKey,
+) -> Result<Transaction> {
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 
