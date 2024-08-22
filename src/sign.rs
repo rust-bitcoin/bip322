@@ -47,11 +47,7 @@ pub fn simple(address: &Address, message: &[u8], private_key: PrivateKey) -> Res
 }
 
 /// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
-pub fn full(
-  address: &Address,
-  message: &[u8],
-  private_key: PrivateKey,
-) -> Result<Transaction> {
+pub fn full(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Transaction> {
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 
