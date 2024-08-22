@@ -22,16 +22,12 @@ use {
   std::{io::Cursor, str::FromStr},
 };
 
-mod error;
-mod sign;
-mod util;
-mod verify;
+pub mod error;
+pub mod sign;
+pub mod util;
+pub mod verify;
 
-pub use {
-  sign::{sign_full, sign_full_encoded, sign_simple, sign_simple_encoded},
-  util::{create_to_sign, create_to_spend, message_hash},
-  verify::{verify_full, verify_full_encoded, verify_simple, verify_simple_encoded},
-};
+use util::*;
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
 
@@ -117,7 +113,7 @@ mod tests {
   #[test]
   fn simple_verify_and_falsify_taproot() {
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World", 
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
@@ -125,7 +121,7 @@ mod tests {
     );
 
     assert_eq!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
@@ -137,34 +133,34 @@ mod tests {
   #[test]
   fn simple_sign_taproot() {
     assert_eq!(
-      sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      sign::simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
       "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
     );
   }
 
   #[test]
   fn roundtrip_taproot_simple() {
-    assert!(verify_simple_encoded(
+    assert!(verify::simple_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
 
   #[test]
   fn roundtrip_taproot_full() {
-    assert!(verify_full_encoded(
+    assert!(verify::full_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign_full_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::full_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
 
   #[test]
   fn invalid_address() {
-    assert_eq!(verify_simple_encoded(
+    assert_eq!(verify::simple_encoded(
       "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
@@ -175,7 +171,7 @@ mod tests {
   #[test]
   fn signature_decode_error() {
     assert_eq!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World",
         "invalid signature not in base64 encoding"
@@ -186,7 +182,7 @@ mod tests {
     );
 
     assert_eq!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World", 
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
@@ -198,7 +194,7 @@ mod tests {
   #[test]
   fn simple_verify_and_falsify_p2wpkh() {
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World",
         "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
@@ -206,7 +202,7 @@ mod tests {
     );
 
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World - this should fail",
         "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
@@ -214,7 +210,7 @@ mod tests {
     );
 
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World",
         "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
@@ -222,7 +218,7 @@ mod tests {
     );
 
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "",
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
@@ -230,7 +226,7 @@ mod tests {
     );
 
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "fail",
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
@@ -238,7 +234,7 @@ mod tests {
     );
 
     assert!(
-      verify_simple_encoded(
+      verify::simple_encoded(
         SEGWIT_ADDRESS,
         "",
         "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
@@ -249,32 +245,32 @@ mod tests {
   #[test]
   fn simple_sign_p2wpkh() {
     assert_eq!(
-      sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      sign::simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
       "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
     );
 
     assert_eq!(
-      sign_simple_encoded(SEGWIT_ADDRESS, "", WIF_PRIVATE_KEY).unwrap(),
+      sign::simple_encoded(SEGWIT_ADDRESS, "", WIF_PRIVATE_KEY).unwrap(),
       "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
     );
   }
 
   #[test]
   fn roundtrip_p2wpkh_simple() {
-    assert!(verify_simple_encoded(
+    assert!(verify::simple_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
 
   #[test]
   fn roundtrip_p2wpkh_full() {
-    assert!(verify_full_encoded(
+    assert!(verify::full_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign_full_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::full_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
   }
