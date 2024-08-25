@@ -23,6 +23,8 @@ checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
 [[package]]
 name = "bip322"
 version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0954799d3478f53a7d45e56032cf1f0f89d5cac15f0fa01130d9fc1b3f867235"
 dependencies = [
  "base64",
  "bitcoin",
@@ -289,3 +291,7 @@ dependencies = [
  "bitcoin",
  "wasm-bindgen",
 ]
+
+[[patch.unused]]
+name = "bip322"
+version = "0.0.6"
