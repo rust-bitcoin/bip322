@@ -55,8 +55,8 @@ pub fn sign_full(
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 
-  let witness =
-    if let bitcoin::address::Payload::WitnessProgram(witness_program) = address.payload() {
+  let witness = match address.payload() {
+    Payload::WitnessProgram(witness_program) => {
       let version = witness_program.version().to_num();
       let program_len = witness_program.program().len();
 
@@ -65,7 +65,7 @@ pub fn sign_full(
           if program_len != 20 {
             return Err(Error::NotKeyPathSpend);
           }
-          create_message_signature_p2wpkh(&to_spend, &to_sign, private_key)
+          create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, false)
         }
         1 => {
           if program_len != 32 {
@@ -79,11 +79,16 @@ pub fn sign_full(
           })
         }
       }
-    } else {
+    }
+    Payload::ScriptHash(_) => {
+      create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, true)
+    }
+    _ => {
       return Err(Error::UnsupportedAddress {
         address: address.to_string(),
       });
-    };
+    }
+  };
 
   to_sign.inputs[0].final_script_witness = Some(witness);
 
@@ -94,15 +99,22 @@ fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
   private_key: PrivateKey,
+  is_p2sh: bool,
 ) -> Witness {
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
 
+  let pub_key = private_key.public_key(&secp);
+
   let sighash = sighash_cache
     .p2wpkh_signature_hash(
       0,
-      &to_spend_tx.output[0].script_pubkey,
+      &if is_p2sh {
+        ScriptBuf::new_p2wpkh(&pub_key.wpubkey_hash().unwrap())
+      } else {
+        to_spend_tx.output[0].script_pubkey.clone()
+      },
       to_spend_tx.output[0].value,
       sighash_type,
     )
@@ -126,7 +138,7 @@ fn create_message_signature_p2wpkh(
     .to_vec(),
   );
 
-  witness.push(private_key.public_key(&secp).to_bytes());
+  witness.push(pub_key.to_bytes());
 
   witness.to_owned()
 }

@@ -52,7 +52,7 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
 
 /// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
-  match dbg!(address.payload()) {
+  match address.payload() {
     Payload::WitnessProgram(witness)
       if witness.version().to_num() == 1 && witness.program().len() == 32 =>
     {
