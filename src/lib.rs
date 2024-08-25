@@ -42,6 +42,10 @@ mod tests {
   const WIF_PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
   const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
   const TAPROOT_ADDRESS: &str = "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3";
+  const INVALID_ADDRESS: &str = "14vV3aCHBeStb5bkenkNHbe2YAFinYdXgc";
+
+  const _UNUSED_PRIVATE_KEY: &str = "KwTbAxmBXjoZM3bzbXixEr9nxLhyYSM4vp2swet58i19bw9sqk5z";
+  const NESTED_SEGWIT_ADDRESS: &str = "3HSVzEhCFuH9Z3wvoWTexy7BMVVp3PjS6f";
 
   #[test]
   fn message_hashes_are_correct() {
@@ -161,10 +165,10 @@ mod tests {
   #[test]
   fn invalid_address() {
     assert_eq!(verify::verify_simple_encoded(
-      "3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV",
+      INVALID_ADDRESS,
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      "Unsuported address `3B5fQsEXEaV8v6U3ejYc8XaKXAkyQj2MjV`, only P2TR or P2WPKH allowed"
+      "Unsuported address `14vV3aCHBeStb5bkenkNHbe2YAFinYdXgc`, only P2TR, P2WPKH and P2SH-P2WPKH allowed"
     )
   }
 
@@ -273,5 +277,15 @@ mod tests {
       &sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok());
+  }
+
+  #[test]
+  fn simple_verify_and_falsify_p2sh_p2wpkh() {
+    assert!(verify::verify_simple_encoded(
+        NESTED_SEGWIT_ADDRESS,
+        "Hello World",
+        "AkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
+      ).is_ok()
+    );
   }
 }

@@ -6,9 +6,9 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-At the moment this crate supports `P2TR`, `P2WPKH` and `P2SH-P2WPKH` addresses.
-Feedback through issues or PRs on the interface design and security is welcome
-and encouraged. 
+At the moment this crate supports `P2TR`, `P2WPKH` and `P2SH-P2WPKH` single-sig
+addresses. Feedback through issues or PRs on the interface design and security
+is welcome and encouraged. 
 
 - [x] simple
 - [x] full 
