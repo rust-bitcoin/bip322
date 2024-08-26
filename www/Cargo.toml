@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-bip322 = "0.0.5"
+bip322 = "0.0.7"
 bitcoin = "0.31.2"
 wasm-bindgen = "0.2.92"
 
