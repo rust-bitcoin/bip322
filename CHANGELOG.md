@@ -1,6 +1,14 @@
 Changelog
 =========
 
+[0.0.7](https://github.com/raphjaph/bip322/releases/tag/0.0.7) - 2024-08-26
+---------------------------------------------------------------------------
+
+### Added 
+
+- Sign and verify P2SH-P2WPKH (#32)
+- Add util module (#30)
+
 [0.0.6](https://github.com/raphjaph/bip322/releases/tag/0.0.6) - 2024-08-22
 ---------------------------------------------------------------------------
 

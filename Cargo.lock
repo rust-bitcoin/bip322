@@ -22,7 +22,7 @@ checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
 
 [[package]]
 name = "bip322"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "base64",
  "bitcoin",
