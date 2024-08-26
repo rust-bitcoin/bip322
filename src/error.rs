@@ -10,7 +10,7 @@ pub enum Error {
   },
   #[snafu(display("Failed to parse private key"))]
   PrivateKeyParse { source: bitcoin::key::Error },
-  #[snafu(display("Unsuported address `{address}`, only P2TR or P2WPKH allowed"))]
+  #[snafu(display("Unsuported address `{address}`, only P2TR, P2WPKH and P2SH-P2WPKH allowed"))]
   UnsupportedAddress { address: String },
   #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {

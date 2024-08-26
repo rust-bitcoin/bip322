@@ -53,15 +53,27 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
 /// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   match address.payload() {
-    Payload::WitnessProgram(wp) if wp.version().to_num() == 0 && wp.program().len() == 20 => {
+    Payload::WitnessProgram(witness)
+      if witness.version().to_num() == 1 && witness.program().len() == 32 =>
+    {
+      let pub_key = XOnlyPublicKey::from_slice(witness.program().as_bytes())
+        .map_err(|_| Error::InvalidPublicKey)?;
+
+      verify_full_p2tr(address, message, to_sign, pub_key)
+    }
+    Payload::WitnessProgram(witness)
+      if witness.version().to_num() == 0 && witness.program().len() == 20 =>
+    {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
-      verify_full_p2wpkh(address, message, to_sign, pub_key)
+
+      verify_full_p2wpkh(address, message, to_sign, pub_key, false)
     }
-    Payload::WitnessProgram(wp) if wp.version().to_num() == 1 && wp.program().len() == 32 => {
+    Payload::ScriptHash(_) => {
       let pub_key =
-        XOnlyPublicKey::from_slice(wp.program().as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
-      verify_full_p2tr(address, message, to_sign, pub_key)
+        PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
+
+      verify_full_p2wpkh(address, message, to_sign, pub_key, true)
     }
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
@@ -74,6 +86,7 @@ fn verify_full_p2wpkh(
   message: &[u8],
   to_sign: Transaction,
   pub_key: PublicKey,
+  is_p2sh: bool,
 ) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
@@ -131,7 +144,11 @@ fn verify_full_p2wpkh(
   let sighash = sighash_cache
     .p2wpkh_signature_hash(
       0,
-      &to_spend.output[0].script_pubkey,
+      &if is_p2sh {
+        ScriptBuf::new_p2wpkh(&pub_key.wpubkey_hash().unwrap())
+      } else {
+        to_spend.output[0].script_pubkey.clone()
+      },
       to_spend.output[0].value,
       sighash_type,
     )
