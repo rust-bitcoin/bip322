@@ -100,7 +100,9 @@ fn verify_full_p2wpkh(
     return Err(Error::ToSignInvalid);
   }
 
-  let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
+  let witness = if let Some(witness) = to_sign.inputs[0].final_script_witness.clone() {
+    witness
+  } else {
     return Err(Error::WitnessEmpty);
   };
 
@@ -182,7 +184,9 @@ fn verify_full_p2tr(
     return Err(Error::ToSignInvalid);
   }
 
-  let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
+  let witness = if let Some(witness) = to_sign.inputs[0].final_script_witness.clone() {
+    witness
+  } else {
     return Err(Error::WitnessEmpty);
   };
 
