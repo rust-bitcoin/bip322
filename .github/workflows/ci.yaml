@@ -41,8 +41,8 @@ jobs:
           path: maintainer-tools
       - name: "Select toolchain"
         uses: dtolnay/rust-toolchain@stable
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh stable
 
@@ -66,8 +66,8 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ needs.Prepare.outputs.nightly_version }}
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh nightly
 
@@ -90,8 +90,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.63.0"
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh msrv
 
@@ -117,8 +117,8 @@ jobs:
           toolchain: ${{ needs.Prepare.outputs.nightly_version }}
       - name: Install clippy
         run: rustup component add clippy
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh lint
 
@@ -139,8 +139,8 @@ jobs:
           path: maintainer-tools
       - name: "Select toolchain"
         uses: dtolnay/rust-toolchain@stable
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh docs
 
@@ -164,8 +164,8 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ needs.Prepare.outputs.nightly_version }}
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh docsrs
 
@@ -189,8 +189,8 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ needs.Prepare.outputs.nightly_version }}
-      - name: "Set dependencies"
-        run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
+      # - name: "Set dependencies"
+        # run: cp Cargo-${{ matrix.dep }}.lock Cargo.lock
       - name: "Run test script"
         run: ./maintainer-tools/ci/run_task.sh bench
 
