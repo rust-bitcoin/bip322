@@ -42,3 +42,7 @@ The WASM binary and Javascript glue code can then be found in `www/pkg`. The
 [bip322.rs](https://bip322.rs) site also runs a small WASM binary if you'd like
 to check it out.
 
+## MSRV
+
+At the moment the Minimum Supported Rust Version (MSRV) is 1.63. You can check
+it by running `just msrv`.

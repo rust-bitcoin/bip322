@@ -2,18 +2,19 @@
 name = "bip322"
 version = "0.0.7"
 edition = "2021"
-description = "Implements BIP322 generic message signing"
+description = "Implements BIP322 generic message signing and verification"
 license = "CC0-1.0"
 homepage = "https://bip322.rs"
 repository = "https://github.com/raphjaph/bip322"
+rust-version = "1.63"
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = { version =  "0.31.2" }
+bitcoin = "0.31.2" 
 bitcoin_hashes = "0.14.0"
 hex = "0.4.3"
 miniscript = "11.0.0"
-snafu = "0.8.4"
+snafu = { version =  "0.8.4", default-features = false, features = ["rust_1_61", "std"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

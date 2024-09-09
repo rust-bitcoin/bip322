@@ -20,6 +20,9 @@ outdated:
 coverage:
   cargo llvm-cov
 
+msrv:
+  cargo msrv verify -- rustup run 1.63 cargo check
+
 wasm:
   AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
   CC=/opt/homebrew/opt/llvm/bin/clang \
