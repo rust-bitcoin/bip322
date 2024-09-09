@@ -11,4 +11,4 @@ FEATURES_WITH_STD=""
 FEATURES_WITHOUT_STD=""
 
 # Run these examples.
-EXAMPLES=""
+EXAMPLES="tests:default"
