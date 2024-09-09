@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
       - name: "Read nightly version"
         id: read_toolchain
-        run: echo "nightly_version=$(cat nightly-version)" >> $GITHUB_OUTPUT
+        run: echo "nightly_version=$(cat nightly_version)" >> $GITHUB_OUTPUT
 
   Stable:
     name: Test - stable toolchain
