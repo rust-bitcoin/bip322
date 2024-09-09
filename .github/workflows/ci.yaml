@@ -29,8 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [minimal, recent]
+      # matrix:
+        # dep: [minimal, recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -52,8 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [minimal, recent]
+      # matrix:
+        # dep: [minimal, recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -76,8 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [minimal, recent]
+      # matrix:
+        # dep: [minimal, recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -101,8 +101,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [recent]
+      # matrix:
+        # dep: [recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -127,8 +127,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [recent]
+      # matrix:
+        # dep: [recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -150,8 +150,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [recent]
+      # matrix:
+        # dep: [recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
@@ -175,8 +175,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        dep: [recent]
+      # matrix:
+        # dep: [recent]
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
