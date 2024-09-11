@@ -11,4 +11,4 @@ FEATURES_WITH_STD=""
 FEATURES_WITHOUT_STD=""
 
 # Run these examples.
-EXAMPLES="simple_sign_verify"
+EXAMPLES="simple_sign_verify:default"
