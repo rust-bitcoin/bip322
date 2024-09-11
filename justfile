@@ -7,7 +7,7 @@ clippy:
 ci: clippy 
   cargo fmt -- --check
   cargo test --all
-  cargo run --example simple_sign_verify
+  cargo run --example simple_sign_verify_encoded
 
 fmt:
   cargo fmt --all
