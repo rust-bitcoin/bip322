@@ -7,6 +7,7 @@ clippy:
 ci: clippy 
   cargo fmt -- --check
   cargo test --all
+  cargo run --example simple_sign_verify_encoded
 
 fmt:
   cargo fmt --all
@@ -19,9 +20,6 @@ outdated:
 
 coverage:
   cargo llvm-cov
-
-msrv:
-  cargo msrv verify -- rustup run 1.63 cargo check
 
 wasm:
   AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
