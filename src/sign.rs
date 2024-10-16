@@ -55,8 +55,8 @@ pub fn sign_full(
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
 
-  let witness = match address.payload() {
-    Payload::WitnessProgram(witness_program) => {
+  let witness = match address.to_address_data() {
+    AddressData::Segwit { witness_program } => {
       let version = witness_program.version().to_num();
       let program_len = witness_program.program().len();
 
@@ -80,7 +80,7 @@ pub fn sign_full(
         }
       }
     }
-    Payload::ScriptHash(_) => {
+    AddressData::P2sh { script_hash: _ } => {
       create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, true)
     }
     _ => {
@@ -120,7 +120,7 @@ fn create_message_signature_p2wpkh(
     )
     .expect("signature hash should compute");
 
-  let sig = secp.sign_ecdsa(
+  let signature = secp.sign_ecdsa(
     &secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash"),
     &private_key.inner,
@@ -132,8 +132,8 @@ fn create_message_signature_p2wpkh(
 
   witness.push(
     bitcoin::ecdsa::Signature {
-      sig,
-      hash_ty: sighash_type,
+      signature,
+      sighash_type,
     }
     .to_vec(),
   );
@@ -175,7 +175,7 @@ fn create_message_signature_taproot(
     .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
     .to_inner();
 
-  let sig = secp.sign_schnorr_no_aux_rand(
+  let signature = secp.sign_schnorr_no_aux_rand(
     &secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash"),
     &key_pair,
@@ -187,8 +187,8 @@ fn create_message_signature_taproot(
 
   witness.push(
     bitcoin::taproot::Signature {
-      sig,
-      hash_ty: sighash_type,
+      signature,
+      sighash_type,
     }
     .to_vec(),
   );

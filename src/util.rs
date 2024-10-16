@@ -43,7 +43,7 @@ pub fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction>
 pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
-      txid: to_spend.txid(),
+      txid: to_spend.compute_txid(),
       vout: 0,
     },
     script_sig: ScriptBuf::new(),
