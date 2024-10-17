@@ -33,6 +33,15 @@ wasm:
 serve: wasm 
   python3 -m http.server -b 127.0.0.1 -d www 8080
 
+locks:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  for file in Cargo-minimal.lock Cargo-recent.lock; do
+      cp "$file" Cargo.lock
+      cargo check
+      cp Cargo.lock "$file"
+  done
+
 prepare-release revision='master':
   #!/usr/bin/env bash
   set -euxo pipefail

@@ -6,7 +6,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let mut cursor = Cursor::new(
+  let mut cursor = bitcoin_io::Cursor::new(
     general_purpose::STANDARD
       .decode(signature)
       .context(error::SignatureDecode { signature })?,
@@ -24,7 +24,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let mut cursor = Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
+  let mut cursor = bitcoin_io::Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
     error::TransactionBase64Decode {
       transaction: to_sign,
     },
@@ -52,24 +52,24 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
 
 /// Verifies the BIP-322 full from proper Rust types.
 pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
-  match address.payload() {
-    Payload::WitnessProgram(witness)
-      if witness.version().to_num() == 1 && witness.program().len() == 32 =>
+  match address.to_address_data() {
+    AddressData::Segwit { witness_program }
+      if witness_program.version().to_num() == 1 && witness_program.program().len() == 32 =>
     {
-      let pub_key = XOnlyPublicKey::from_slice(witness.program().as_bytes())
+      let pub_key = XOnlyPublicKey::from_slice(witness_program.program().as_bytes())
         .map_err(|_| Error::InvalidPublicKey)?;
 
       verify_full_p2tr(address, message, to_sign, pub_key)
     }
-    Payload::WitnessProgram(witness)
-      if witness.version().to_num() == 0 && witness.program().len() == 20 =>
+    AddressData::Segwit { witness_program }
+      if witness_program.version().to_num() == 0 && witness_program.program().len() == 20 =>
     {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
       verify_full_p2wpkh(address, message, to_sign, pub_key, false)
     }
-    Payload::ScriptHash(_) => {
+    AddressData::P2sh { script_hash: _ } => {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
@@ -92,7 +92,7 @@ fn verify_full_p2wpkh(
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
   let to_spend_outpoint = OutPoint {
-    txid: to_spend.txid(),
+    txid: to_spend.compute_txid(),
     vout: 0,
   };
 
@@ -176,7 +176,7 @@ fn verify_full_p2tr(
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
   let to_spend_outpoint = OutPoint {
-    txid: to_spend.txid(),
+    txid: to_spend.compute_txid(),
     vout: 0,
   };
 

@@ -2,7 +2,7 @@ use {
   base64::{engine::general_purpose, Engine},
   bitcoin::{
     absolute::LockTime,
-    address::Payload,
+    address::AddressData,
     blockdata::script,
     consensus::Decodable,
     consensus::Encodable,
@@ -19,7 +19,7 @@ use {
   bitcoin_hashes::{sha256, Hash},
   error::Error,
   snafu::{ResultExt, Snafu},
-  std::{io::Cursor, str::FromStr},
+  std::str::FromStr,
 };
 
 mod error;
@@ -69,7 +69,7 @@ mod tests {
         "".as_bytes()
       )
       .unwrap()
-      .txid()
+      .compute_txid()
       .to_string(),
       "c5680aa69bb8d860bf82d4e9cd3504b55dde018de765a91bb566283c545a99a7"
     );
@@ -80,7 +80,7 @@ mod tests {
         "Hello World".as_bytes()
       )
       .unwrap()
-      .txid()
+      .compute_txid()
       .to_string(),
       "b79d196740ad5217771c1098fc4a4b51e0535c32236c71f1ea4d61a2d603352b"
     );
@@ -97,7 +97,7 @@ mod tests {
     let to_sign = create_to_sign(&to_spend, None).unwrap();
 
     assert_eq!(
-      to_sign.unsigned_tx.txid().to_string(),
+      to_sign.unsigned_tx.compute_txid().to_string(),
       "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
     );
 
@@ -110,7 +110,7 @@ mod tests {
     let to_sign = create_to_sign(&to_spend, None).unwrap();
 
     assert_eq!(
-      to_sign.unsigned_tx.txid().to_string(),
+      to_sign.unsigned_tx.compute_txid().to_string(),
       "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
     );
   }
