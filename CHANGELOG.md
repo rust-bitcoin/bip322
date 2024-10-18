@@ -1,11 +1,18 @@
 Changelog
 =========
 
+[0.0.8](https://github.com/raphjaph/bip322/releases/tag/0.0.8) - 2024-10-18
+---------------------------------------------------------------------------
+
+### Added 
+- Update rust-bitcoin (#38)
+- Add rust-bitcoin CI (#37)
+- Add MSRV for 1.63 (#34)
+
 [0.0.7](https://github.com/raphjaph/bip322/releases/tag/0.0.7) - 2024-08-26
 ---------------------------------------------------------------------------
 
 ### Added 
-
 - Sign and verify P2SH-P2WPKH (#32)
 - Add util module (#30)
 
@@ -13,7 +20,6 @@ Changelog
 ---------------------------------------------------------------------------
 
 ### Added
-
 - Sign and verify P2WPKH (#26)
 - Tweak README (#23)
 
