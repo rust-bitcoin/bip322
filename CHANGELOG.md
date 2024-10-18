@@ -1,7 +1,7 @@
 Changelog
 =========
 
-[0.0.8](https://github.com/raphjaph/bip322/releases/tag/0.0.8) - 2024-10-18
+[0.0.8](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.8) - 2024-10-18
 ---------------------------------------------------------------------------
 
 ### Added 
