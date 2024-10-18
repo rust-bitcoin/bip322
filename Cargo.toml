@@ -1,11 +1,11 @@
 [package]
 name = "bip322"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2021"
 description = "Implements BIP322 generic message signing and verification"
 license = "CC0-1.0"
 homepage = "https://bip322.rs"
-repository = "https://github.com/raphjaph/bip322"
+repository = "https://github.com/rust-bitcoin/bip322"
 rust-version = "1.63"
 
 [features]
