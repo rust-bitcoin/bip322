@@ -36,8 +36,6 @@ version = "0.0.7"
 dependencies = [
  "base64",
  "bitcoin",
- "bitcoin-io",
- "bitcoin_hashes",
  "hex",
  "miniscript",
  "pretty_assertions",
