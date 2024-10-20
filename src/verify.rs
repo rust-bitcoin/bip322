@@ -6,7 +6,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let mut cursor = bitcoin_io::Cursor::new(
+  let mut cursor = bitcoin::io::Cursor::new(
     general_purpose::STANDARD
       .decode(signature)
       .context(error::SignatureDecode { signature })?,
@@ -24,7 +24,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let mut cursor = bitcoin_io::Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
+  let mut cursor = bitcoin::io::Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
     error::TransactionBase64Decode {
       transaction: to_sign,
     },

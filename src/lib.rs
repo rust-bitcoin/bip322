@@ -1,5 +1,6 @@
 use {
   base64::{engine::general_purpose, Engine},
+  bitcoin::hashes::{sha256, Hash},
   bitcoin::{
     absolute::LockTime,
     address::AddressData,
@@ -16,7 +17,6 @@ use {
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
   },
-  bitcoin_hashes::{sha256, Hash},
   error::Error,
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
