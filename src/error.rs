@@ -18,7 +18,7 @@ pub enum Error {
     signature: String,
   },
   #[snafu(display("Transaction encode error"))]
-  TransactionEncode { source: bitcoin_io::Error },
+  TransactionEncode { source: bitcoin::io::Error },
   #[snafu(display("Transaction extract error"))]
   TransactionExtract {
     source: bitcoin::psbt::ExtractTxError,
@@ -44,7 +44,7 @@ pub enum Error {
   #[snafu(display("Witness empty"))]
   WitnessEmpty,
   #[snafu(display("Encode witness error"))]
-  WitnessEncoding { source: bitcoin_io::Error },
+  WitnessEncoding { source: bitcoin::io::Error },
   #[snafu(display("Signature of wrong length `{length}`"))]
   SignatureLength {
     length: usize,
