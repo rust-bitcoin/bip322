@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::util::BIP322Result;
+
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
@@ -40,7 +42,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 }
 
 /// Verifies the BIP-322 simple from proper Rust types.
-pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
+pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> BIP322Result<()> {
   verify_full(
     address,
     message,
@@ -51,8 +53,9 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> R
 }
 
 /// Verifies the BIP-322 full from proper Rust types.
-pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> BIP322Result<()> {
   match address.to_address_data() {
+    // Handle P2TR (Taproot) addresses
     AddressData::Segwit { witness_program }
       if witness_program.version().to_num() == 1 && witness_program.program().len() == 32 =>
     {
@@ -61,6 +64,7 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
 
       verify_full_p2tr(address, message, to_sign, pub_key)
     }
+    // Handle P2WPKH addresses
     AddressData::Segwit { witness_program }
       if witness_program.version().to_num() == 0 && witness_program.program().len() == 20 =>
     {
@@ -69,16 +73,43 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
 
       verify_full_p2wpkh(address, message, to_sign, pub_key, false)
     }
+    // Handle P2SH-wrapped segwit addresses
     AddressData::P2sh { script_hash: _ } => {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
       verify_full_p2wpkh(address, message, to_sign, pub_key, true)
     }
+    // All other address types are unsupported
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
     }),
   }
+}
+
+pub fn verify_message_bip322(
+  msg: &[u8],
+  pubkey: [u8; 32],
+  signature: [u8; 64],
+  uses_sighash_all: bool,
+  network: bitcoin::Network,
+) -> BIP322Result<()> {
+  let mut signature = signature.to_vec();
+  println!("signature: {:?}", signature);
+  if uses_sighash_all {
+    signature.push(1);
+  }
+  let mut witness = Witness::new();
+  witness.push(&signature);
+
+  let secp = Secp256k1::new();
+  let xpubk = XOnlyPublicKey::from_slice(&pubkey).unwrap();
+  let address = Address::p2tr(&secp, xpubk, None, network);
+
+  println!("address: {:?}", address);
+  println!("msg: {:?}", msg);
+
+  verify_simple(&address, msg, witness)
 }
 
 fn verify_full_p2wpkh(
@@ -171,7 +202,9 @@ fn verify_full_p2tr(
   message: &[u8],
   to_sign: Transaction,
   pub_key: XOnlyPublicKey,
-) -> Result<()> {
+) -> BIP322Result<()> {
+  use bitcoin::secp256k1::{schnorr::Signature, Message};
+
   let to_spend = create_to_spend(address, message)?;
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
@@ -181,13 +214,11 @@ fn verify_full_p2tr(
   };
 
   if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
-    return Err(Error::ToSignInvalid);
+    return Err(error::Error::ToSignInvalid);
   }
 
-  let witness = if let Some(witness) = to_sign.inputs[0].final_script_witness.clone() {
-    witness
-  } else {
-    return Err(Error::WitnessEmpty);
+  let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
+    return Err(error::Error::WitnessEmpty);
   };
 
   let encoded_signature = witness.to_vec()[0].clone();
@@ -204,7 +235,7 @@ fn verify_full_p2tr(
       TapSighashType::Default,
     ),
     _ => {
-      return Err(Error::SignatureLength {
+      return Err(error::Error::SignatureLength {
         length: encoded_signature.len(),
         encoded_signature,
       })
@@ -212,7 +243,7 @@ fn verify_full_p2tr(
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return Err(Error::SigHashTypeUnsupported {
+    return Err(error::Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }

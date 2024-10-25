@@ -17,6 +17,7 @@ bitcoin = "0.32.3"
 hex = "0.4.3"
 miniscript = "12.2.0"
 snafu = { version =  "0.8.5", default-features = false, features = ["rust_1_61", "std"] }
+secp256k1 = { version = "0.29.1", features = ["global-context", "rand-std"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
