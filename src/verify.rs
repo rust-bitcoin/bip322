@@ -95,7 +95,6 @@ pub fn verify_message_bip322(
   network: bitcoin::Network,
 ) -> BIP322Result<()> {
   let mut signature = signature.to_vec();
-  println!("signature: {:?}", signature);
   if uses_sighash_all {
     signature.push(1);
   }
@@ -105,9 +104,6 @@ pub fn verify_message_bip322(
   let secp = Secp256k1::new();
   let xpubk = XOnlyPublicKey::from_slice(&pubkey).unwrap();
   let address = Address::p2tr(&secp, xpubk, None, network);
-
-  println!("address: {:?}", address);
-  println!("msg: {:?}", msg);
 
   verify_simple(&address, msg, witness)
 }
