@@ -11,7 +11,7 @@ use {
     opcodes,
     psbt::Psbt,
     script::PushBytes,
-    secp256k1::{self, Secp256k1, Message, XOnlyPublicKey},
+    secp256k1::{self, Secp256k1, Message, schnorr::Signature, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
     transaction::Version,
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,

@@ -176,8 +176,6 @@ fn verify_full_p2tr(
   to_sign: Transaction,
   pub_key: XOnlyPublicKey,
 ) -> Result<()> {
-  use bitcoin::secp256k1::{schnorr::Signature, Message};
-
   let to_spend = create_to_spend(address, message)?;
   let to_sign = create_to_sign(&to_spend, Some(to_sign.input[0].witness.clone()))?;
 
@@ -187,11 +185,11 @@ fn verify_full_p2tr(
   };
 
   if to_spend_outpoint != to_sign.unsigned_tx.input[0].previous_output {
-    return Err(error::Error::ToSignInvalid);
+    return Err(Error::ToSignInvalid);
   }
 
   let Some(witness) = to_sign.inputs[0].final_script_witness.clone() else {
-    return Err(error::Error::WitnessEmpty);
+    return Err(Error::WitnessEmpty);
   };
 
   let encoded_signature = witness.to_vec()[0].clone();
@@ -216,7 +214,7 @@ fn verify_full_p2tr(
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return Err(error::Error::SigHashTypeUnsupported {
+    return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
