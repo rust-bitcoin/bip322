@@ -95,6 +95,7 @@ pub fn sign_full(
   to_sign.extract_tx().context(error::TransactionExtract)
 }
 
+/// Sign for segwit inputs
 pub fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
@@ -143,6 +144,7 @@ pub fn create_message_signature_p2wpkh(
   witness.to_owned()
 }
 
+/// Sign for taproot inputs
 pub fn create_message_signature_taproot(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
