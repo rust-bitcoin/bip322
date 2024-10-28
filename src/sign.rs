@@ -218,8 +218,8 @@ fn create_message_signature_taproot(
     .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
     .to_inner();
 
-  let sig = secp.sign_schnorr(
-    &bitcoin::secp256k1::Message::from_digest_slice(sighash.as_ref())
+  let signature = secp.sign_schnorr(
+    &secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash"),
     &key_pair,
   );
@@ -230,7 +230,7 @@ fn create_message_signature_taproot(
 
   witness.push(
     bitcoin::taproot::Signature {
-      signature: sig,
+      signature,
       sighash_type,
     }
     .to_vec(),

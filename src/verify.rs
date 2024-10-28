@@ -231,7 +231,7 @@ fn verify_full_p2tr(
       TapSighashType::Default,
     ),
     _ => {
-      return Err(error::Error::SignatureLength {
+      return Err(Error::SignatureLength {
         length: encoded_signature.len(),
         encoded_signature,
       })
