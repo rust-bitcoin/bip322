@@ -95,49 +95,6 @@ pub fn sign_full(
   to_sign.extract_tx().context(error::TransactionExtract)
 }
 
-pub fn sign_message_bip322(
-  keypair: &UntweakedKeypair,
-  msg: &[u8],
-  network: bitcoin::Network,
-) -> [u8; 64] {
-  let secp = Secp256k1::new();
-  let xpubk = XOnlyPublicKey::from_keypair(keypair).0;
-  let private_key = PrivateKey::new(SecretKey::from_keypair(keypair), network);
-
-  let address = Address::p2tr(&secp, xpubk, None, network);
-
-  let to_spend = create_to_spend(&address, msg).unwrap();
-  let mut to_sign = create_to_sign(&to_spend, None).unwrap();
-
-  let witness = match address.witness_program() {
-    Some(witness_program) => {
-      let version = witness_program.version().to_num();
-      let program_len = witness_program.program().len();
-
-      match version {
-        1 => {
-          if program_len != 32 {
-            panic!("not key spend path");
-          }
-          create_message_signature_taproot(&to_spend, &to_sign, private_key)
-        }
-        _ => {
-          panic!("unsuported address");
-        }
-      }
-    }
-    None => {
-      panic!("unsuported address");
-    }
-  };
-
-  to_sign.inputs[0].final_script_witness = Some(witness);
-
-  let signature = to_sign.extract_tx().unwrap().input[0].witness.clone();
-
-  signature.to_vec()[0][..64].try_into().unwrap()
-}
-
 fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,

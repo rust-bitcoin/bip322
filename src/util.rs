@@ -1,7 +1,5 @@
 use super::*;
 
-pub type BIP322Result<T = (), E = error::Error> = std::result::Result<T, E>;
-
 const TAG: &str = "BIP0322-signed-message";
 
 /// Create the tagged message hash.
@@ -16,7 +14,7 @@ pub fn message_hash(message: &[u8]) -> Vec<u8> {
 }
 
 /// Create the `to_spend` transaction.
-pub fn create_to_spend(address: &Address, message: &[u8]) -> BIP322Result<Transaction> {
+pub fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -42,7 +40,7 @@ pub fn create_to_spend(address: &Address, message: &[u8]) -> BIP322Result<Transa
 }
 
 /// Create the `to_sign` transaction.
-pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> BIP322Result<Psbt> {
+pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
       txid: to_spend.compute_txid(),

@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::util::BIP322Result;
-
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
@@ -42,7 +40,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 }
 
 /// Verifies the BIP-322 simple from proper Rust types.
-pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> BIP322Result<()> {
+pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
   verify_full(
     address,
     message,
@@ -53,7 +51,7 @@ pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> B
 }
 
 /// Verifies the BIP-322 full from proper Rust types.
-pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> BIP322Result<()> {
+pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
   match address.to_address_data() {
     // Handle P2TR (Taproot) addresses
     AddressData::Segwit { witness_program }
@@ -85,27 +83,6 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> B
       address: address.to_string(),
     }),
   }
-}
-
-pub fn verify_message_bip322(
-  msg: &[u8],
-  pubkey: [u8; 32],
-  signature: [u8; 64],
-  uses_sighash_all: bool,
-  network: bitcoin::Network,
-) -> BIP322Result<()> {
-  let mut signature = signature.to_vec();
-  if uses_sighash_all {
-    signature.push(1);
-  }
-  let mut witness = Witness::new();
-  witness.push(&signature);
-
-  let secp = Secp256k1::new();
-  let xpubk = XOnlyPublicKey::from_slice(&pubkey).unwrap();
-  let address = Address::p2tr(&secp, xpubk, None, network);
-
-  verify_simple(&address, msg, witness)
 }
 
 fn verify_full_p2wpkh(
@@ -198,7 +175,7 @@ fn verify_full_p2tr(
   message: &[u8],
   to_sign: Transaction,
   pub_key: XOnlyPublicKey,
-) -> BIP322Result<()> {
+) -> Result<()> {
   use bitcoin::secp256k1::{schnorr::Signature, Message};
 
   let to_spend = create_to_spend(address, message)?;
