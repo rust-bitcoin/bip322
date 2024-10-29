@@ -13,10 +13,10 @@ default = []
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = "0.32.3" 
-hex = "0.4.3"
-miniscript = "12.2.0"
+bitcoin = "0.32.4" 
 snafu = { version =  "0.8.5", default-features = false, features = ["rust_1_61", "std"] }
 
 [dev-dependencies]
+hex = "0.4.3"
 pretty_assertions = "1.4.1"
+rand = "0.8.5"

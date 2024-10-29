@@ -18,6 +18,9 @@ doc:
 outdated:
   cargo outdated -R --workspace
 
+unused:
+  cargo +nightly udeps
+
 coverage:
   cargo llvm-cov
 

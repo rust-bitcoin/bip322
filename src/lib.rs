@@ -33,7 +33,7 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
-  use {super::*, pretty_assertions::assert_eq};
+  use {super::*, pretty_assertions::assert_eq, rand::RngCore};
 
   /// From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   /// and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
@@ -333,5 +333,22 @@ mod tests {
       .unwrap()
     )
     .is_ok());
+  }
+
+  #[test]
+  fn adding_aux_randomness_roundtrips() {
+    let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+    let message = "Hello World with aux randomness".as_bytes();
+    let to_spend = create_to_spend(&address, message).unwrap();
+    let to_sign = create_to_sign(&to_spend, None).unwrap();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let mut aux_rand = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut aux_rand);
+
+    let witness =
+      create_message_signature_taproot(&to_spend, &to_sign, private_key, Some(aux_rand));
+
+    assert!(verify_simple(&address, message, witness).is_ok());
   }
 }
