@@ -71,7 +71,7 @@ pub fn sign_full(
           if program_len != 32 {
             return Err(Error::NotKeyPathSpend);
           }
-          create_message_signature_taproot(&to_spend, &to_sign, private_key)
+          create_message_signature_taproot(&to_spend, &to_sign, private_key, None)
         }
         _ => {
           return Err(Error::UnsupportedAddress {
@@ -95,7 +95,8 @@ pub fn sign_full(
   to_sign.extract_tx().context(error::TransactionExtract)
 }
 
-fn create_message_signature_p2wpkh(
+/// Sign for segwit inputs
+pub fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
   private_key: PrivateKey,
@@ -143,10 +144,12 @@ fn create_message_signature_p2wpkh(
   witness.to_owned()
 }
 
-fn create_message_signature_taproot(
+/// Sign for taproot inputs
+pub fn create_message_signature_taproot(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
   private_key: PrivateKey,
+  aux_rand: Option<[u8; 32]>,
 ) -> Witness {
   let mut to_sign = to_sign.clone();
 
@@ -175,11 +178,20 @@ fn create_message_signature_taproot(
     .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
     .to_inner();
 
-  let signature = secp.sign_schnorr_no_aux_rand(
-    &secp256k1::Message::from_digest_slice(sighash.as_ref())
-      .expect("should be cryptographically secure hash"),
-    &key_pair,
-  );
+  let signature = if let Some(aux_rand) = aux_rand {
+    secp.sign_schnorr_with_aux_rand(
+      &secp256k1::Message::from_digest_slice(sighash.as_ref())
+        .expect("should be cryptographically secure hash"),
+      &key_pair,
+      &aux_rand,
+    )
+  } else {
+    secp.sign_schnorr_no_aux_rand(
+      &secp256k1::Message::from_digest_slice(sighash.as_ref())
+        .expect("should be cryptographically secure hash"),
+      &key_pair,
+    )
+  };
 
   let witness = sighash_cache
     .witness_mut(0)
