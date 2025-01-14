@@ -4,8 +4,8 @@ wasm:
   wasm-pack build \
     --target web \
     --out-name bip322 \
-    www
-  cp www/pkg/bip322.js www/pkg/bip322.d.ts www/pkg/bip322_bg.wasm src
+    verify
+  cp verify/pkg/bip322.js verify/pkg/bip322.d.ts verify/pkg/bip322_bg.wasm src
 
 install:
   npm install
