@@ -35,9 +35,9 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 mod tests {
   use {super::*, pretty_assertions::assert_eq, rand::RngCore};
 
-  /// From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
-  /// and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
-  /// and https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
+  // From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
+  // and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
+  // and https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
 
   const WIF_PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
   const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
