@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLaserEyes, UNISAT, XVERSE } from "@omnisat/lasereyes";
+import { useLaserEyes, XVERSE } from "@omnisat/lasereyes";
 import init, { verify } from "./bip322.js";
 import "./index.css";
 
@@ -14,7 +14,7 @@ function App() {
   const [isWasmInitialized, setWasmInitialized] = useState(false);
 
   // UI state
-  const [showForm, setShowForm] = useState(false);
+  const [_showForm, setShowForm] = useState(false);
   const [verificationResult, setVerificationResult] = useState<string | null>(
     null
   );
@@ -28,7 +28,7 @@ function App() {
   });
 
   // Get LaserEyes wallet functionality
-  const { connect, address, signMessage, hasUnisat } = useLaserEyes();
+  const { connect, address, signMessage } = useLaserEyes();
 
   // Initialize WASM
   useEffect(() => {
