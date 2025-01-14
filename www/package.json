@@ -1,7 +1,7 @@
 {
-  "name": "bip322-react",
+  "name": "bip322-rs",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
