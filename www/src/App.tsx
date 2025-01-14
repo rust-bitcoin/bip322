@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLaserEyes, UNISAT } from "@omnisat/lasereyes";
+import { useLaserEyes, UNISAT, XVERSE } from "@omnisat/lasereyes";
 import init, { verify } from "./bip322.js";
 import "./index.css";
 
@@ -65,7 +65,7 @@ function App() {
   const handleSign = async () => {
     let signature = "";
     try {
-      const connectedWallet = await connect("unisat");
+      const connectedWallet = await connect(XVERSE);
       console.log(connectedWallet);
       signature = await signMessage(formData.message);
       setFormData((prev) => ({

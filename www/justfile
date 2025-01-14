@@ -5,7 +5,7 @@ wasm:
     --target web \
     --out-name bip322 \
     www
-  cp www/pkg/bip322.js www/pkg/bip322_bg.wasm src
+  cp www/pkg/bip322.js www/pkg/bip322.d.ts www/pkg/bip322_bg.wasm src
 
 install:
   npm install
