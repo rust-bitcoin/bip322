@@ -291,6 +291,5 @@ name = "www"
 version = "0.1.0"
 dependencies = [
  "bip322",
- "bitcoin",
  "wasm-bindgen",
 ]
