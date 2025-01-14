@@ -1,0 +1,7 @@
+wasm:
+  AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
+  CC=/opt/homebrew/opt/llvm/bin/clang \
+  wasm-pack build \
+    --target web \
+    --out-name bip322 \
+    www
