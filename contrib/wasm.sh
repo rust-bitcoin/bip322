@@ -10,5 +10,5 @@ set -euox pipefail
 clang --version
 CARGO_TARGET_DIR=wasm cargo install --force wasm-pack
 printf '\n[lib]\ncrate-type = ["cdylib", "rlib"]\n' >> Cargo.toml
-CC=clang wasm-pack build www
+CC=clang wasm-pack build www/verify
 # CC=clang wasm-pack test --node
