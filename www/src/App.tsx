@@ -28,8 +28,7 @@ function App() {
   });
 
   // Get LaserEyes wallet functionality
-  const { connect, connected, address, signMessage, hasUnisat } =
-    useLaserEyes();
+  const { connect, address, signMessage, hasUnisat } = useLaserEyes();
 
   // Initialize WASM
   useEffect(() => {
@@ -62,14 +61,12 @@ function App() {
     }
   };
 
-  // Handle message signing with connected wallet
+  // Handle connecting a wallet and signing
   const handleSign = async () => {
-    if (!connected || !address) {
-      console.error("Wallet not connected");
-      return;
-    }
     let signature = "";
     try {
+      const connectedWallet = await connect("unisat");
+      console.log(connectedWallet);
       signature = await signMessage(formData.message);
       setFormData((prev) => ({
         ...prev,
@@ -118,23 +115,11 @@ function App() {
       <div id="verify">
         <div id="bip" onClick={showVerifyForm}></div>
         <div className="wallet-section">
-          {!connected ? (
-            hasUnisat && (
-              <button
-                className="wallet-connect-button"
-                onClick={() => connect(UNISAT)}
-              >
-                Connect Wallet
-              </button>
-            )
-          ) : (
-            <div className="wallet-info">
-              <span>Connected: {address}</span>
-              <button className="sign-button" onClick={handleSign}>
-                Sign Current Message
-              </button>
-            </div>
-          )}
+          <div className="wallet-info">
+            <button className="sign-button" onClick={handleSign}>
+              Sign Current Message
+            </button>
+          </div>
         </div>
         <form id="verify-form" onSubmit={handleVerification}>
           <input
