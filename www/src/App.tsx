@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLaserEyes, UNISAT } from "@omnisat/lasereyes";
-import init, { verify } from "./wasm/bip322.js";
+import init, { verify } from "./bip322.js";
 import "./index.css";
 
 interface FormData {
