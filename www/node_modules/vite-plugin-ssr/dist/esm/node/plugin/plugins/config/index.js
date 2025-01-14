@@ -1,0 +1,71 @@
+export { resolveVpsConfig };
+import { assertVpsConfig } from './assertVpsConfig.js';
+import { isDev2 } from '../../utils.js';
+import { findConfigVpsFromStemPackages } from './findConfigVpsFromStemPackages.js';
+import { pickFirst } from './pickFirst.js';
+import { resolveExtensions } from './resolveExtensions.js';
+import { resolveBase } from './resolveBase.js';
+import { getVikeConfig } from '../importUserCode/v1-design/getVikeConfig.js';
+import pc from '@brillout/picocolors';
+function resolveVpsConfig(vpsConfig) {
+    return {
+        name: 'vite-plugin-ssr:resolveVpsConfig',
+        enforce: 'pre',
+        async configResolved(config) {
+            const promise = resolveConfig(vpsConfig, config);
+            config.configVpsPromise = promise;
+            await promise;
+        }
+    };
+}
+async function resolveConfig(vpsConfig, config) {
+    const fromPluginOptions = (vpsConfig ?? {});
+    const fromViteConfig = (config.vitePluginSsr ?? {});
+    const fromStemPackages = await findConfigVpsFromStemPackages(config.root);
+    const configs = [fromPluginOptions, ...fromStemPackages, fromViteConfig];
+    const extensions = resolveExtensions(configs, config);
+    const { globalVikeConfig: fromPlusConfigFile } = await getVikeConfig(config.root, isDev2(config), extensions);
+    configs.push(fromPlusConfigFile);
+    assertVpsConfig(fromPlusConfigFile, ({ prop, errMsg }) => {
+        // TODO: add config file path ?
+        return `config ${pc.cyan(prop)} ${errMsg}`;
+    });
+    assertVpsConfig(fromViteConfig, ({ prop, errMsg }) => `vite.config.js#vitePluginSsr.${prop} ${errMsg}`);
+    // TODO/v1-release: deprecate this
+    assertVpsConfig(fromPluginOptions, ({ prop, errMsg }) => `vite.config.js > vite-plugin-ssr option ${prop} ${errMsg}`);
+    const { baseServer, baseAssets } = resolveBase(configs, config);
+    const configVps = {
+        disableAutoFullBuild: pickFirst(configs.map((c) => c.disableAutoFullBuild)) ?? null,
+        extensions,
+        prerender: resolvePrerenderOptions(configs),
+        includeAssetsImportedByServer: pickFirst(configs.map((c) => c.includeAssetsImportedByServer)) ?? true,
+        baseServer,
+        baseAssets,
+        redirects: merge(configs.map((c) => c.redirects)) ?? {},
+        disableUrlNormalization: pickFirst(configs.map((c) => c.disableUrlNormalization)) ?? false,
+        trailingSlash: pickFirst(configs.map((c) => c.trailingSlash)) ?? false
+    };
+    return configVps;
+}
+function resolvePrerenderOptions(configs) {
+    if (!configs.some((c) => c.prerender)) {
+        return false;
+    }
+    const configsPrerender = configs.map((c) => c.prerender).filter(isObject);
+    return {
+        partial: pickFirst(configsPrerender.map((c) => c.partial)) ?? false,
+        noExtraDir: pickFirst(configsPrerender.map((c) => c.noExtraDir)) ?? false,
+        parallel: pickFirst(configsPrerender.map((c) => c.parallel)) ?? true,
+        disableAutoRun: pickFirst(configsPrerender.map((c) => c.disableAutoRun)) ?? false
+    };
+}
+function isObject(p) {
+    return typeof p === 'object';
+}
+function merge(objs) {
+    const obj = {};
+    objs.forEach((e) => {
+        Object.assign(obj, e);
+    });
+    return obj;
+}

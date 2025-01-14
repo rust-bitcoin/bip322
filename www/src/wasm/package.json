@@ -1,0 +1,15 @@
+{
+  "name": "www",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "bip322_bg.wasm",
+    "bip322.js",
+    "bip322.d.ts"
+  ],
+  "main": "bip322.js",
+  "types": "bip322.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

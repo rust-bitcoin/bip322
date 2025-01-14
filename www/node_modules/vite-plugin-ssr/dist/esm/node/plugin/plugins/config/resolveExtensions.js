@@ -1,0 +1,101 @@
+export { resolveExtensions };
+import { assert, assertUsage, getNpmPackageName, toPosixPath, isNpmPackageName, getDependencyRootDir, assertPosixPath } from '../../utils.js';
+import path from 'path';
+import fs from 'fs';
+import { isValidFileType } from '../../../../shared/getPageFiles/fileTypes.js';
+import { createRequire } from 'module';
+import pc from '@brillout/picocolors';
+// @ts-ignore Shimed by dist-cjs-fixup.js for CJS build.
+const importMetaUrl = import.meta.url;
+const require_ = createRequire(importMetaUrl);
+function resolveExtensions(configs, config) {
+    const extensions = configs.map((c) => c.extensions ?? []).flat();
+    return extensions.map((extension) => {
+        const { npmPackageName } = extension;
+        assertUsage(isNpmPackageName(npmPackageName), `vite-plugin-ssr extension ${pc.cyan(npmPackageName)} doesn't seem to be a valid npm package name`);
+        const npmPackageRootDir = getDependencyRootDir(npmPackageName, config.root);
+        assertPosixPath(npmPackageRootDir);
+        const pageConfigsDistFiles = resolvePageFilesDist([
+            ...(extension.pageConfigsDistFiles ?? []),
+            // TODO/v1-release: remove
+            ...(extension.pageFilesDist ?? [])
+        ], npmPackageName, config, npmPackageRootDir);
+        let pageConfigsSrcDirResolved = null;
+        {
+            const pageConfigsSrcDir = extension.pageConfigsSrcDir ?? extension.pageFilesSrc;
+            if (pageConfigsSrcDir) {
+                assertPathProvidedByUser('pageConfigsSrcDir', pageConfigsSrcDir, true);
+                assert(pageConfigsSrcDir.endsWith('*'));
+                pageConfigsSrcDirResolved = path.posix.join(npmPackageRootDir, pageConfigsSrcDir.slice(0, -1));
+            }
+        }
+        assertUsage(pageConfigsSrcDirResolved || pageConfigsDistFiles, `Extension ${npmPackageName} should define either extension[number].pageConfigsDistFiles or extension[number].pageConfigsSrcDir`);
+        assertUsage(!pageConfigsDistFiles || !pageConfigsSrcDirResolved, `Extension ${npmPackageName} shouldn't define extension[number].pageConfigsDistFiles as well extension[number].pageConfigsSrcDir, it should define only one instead`);
+        const assetsDir = (() => {
+            if (!extension.assetsDir) {
+                return null;
+            }
+            assertPathProvidedByUser('assetsDir', extension.assetsDir);
+            assertPosixPath(extension.assetsDir);
+            const assetsDir = path.posix.join(npmPackageRootDir, extension.assetsDir);
+            return assetsDir;
+        })();
+        assertUsage(!(assetsDir && pageConfigsSrcDirResolved), `Extension ${npmPackageName} shouldn't define both extension[number].pageConfigsSrcDir and extension[number].assetsDir`);
+        const extensionResolved = {
+            npmPackageName,
+            npmPackageRootDir,
+            pageConfigsDistFiles,
+            pageConfigsSrcDir: pageConfigsSrcDirResolved,
+            assetsDir
+        };
+        return extensionResolved;
+    });
+}
+function assertPathProvidedByUser(pathName, pathValue, starSuffix) {
+    const errMsg = `extension[number].${pathName} value ${pc.cyan(pathValue)}`;
+    assertUsage(!pathValue.includes('\\'), `${errMsg} shouldn't contain any backward slahes '\' (replace them with forward slahes '/')`);
+    assertUsage(!starSuffix || pathValue.endsWith('/*'), `${errMsg} should end with '/*'`);
+    assertUsage(pathValue.startsWith('/'), `${errMsg} should start with '/'`);
+}
+function resolvePageFilesDist(pageConfigsDistFiles, npmPackageName, config, npmPackageRootDir) {
+    if (!pageConfigsDistFiles || pageConfigsDistFiles.length === 0)
+        return null;
+    const pageConfigsDistFilesResolved = [];
+    pageConfigsDistFiles.forEach((importPath) => {
+        const errPrefix = `The page file ${pc.cyan(importPath)} (provided in extensions[number].pageFiles) should`;
+        assertUsage(npmPackageName === getNpmPackageName(importPath), `${errPrefix} be a ${pc.cyan(npmPackageName)} module (e.g. ${pc.cyan(`${npmPackageName}/renderer/_default.page.server.js`)})`);
+        assertUsage(isValidFileType(importPath), `${errPrefix} end with '.js', '.js', '.cjs', or '.css'`);
+        const filePath = resolveImportPath(importPath, npmPackageName, config, npmPackageRootDir);
+        pageConfigsDistFilesResolved.push({
+            importPath,
+            filePath
+        });
+        const filePathCSS = getPathCSS(filePath);
+        if (filePathCSS !== filePath && fs.existsSync(filePathCSS)) {
+            const importPathCSS = getPathCSS(importPath);
+            assertUsage(filePathCSS === resolveImportPath(importPathCSS, npmPackageName, config, npmPackageRootDir), `The entry package.json#exports["${importPathCSS}"] in the package.json of ${npmPackageName} (${npmPackageRootDir}/package.json) has a wrong value: make sure it resolves to ${filePathCSS}`);
+            pageConfigsDistFilesResolved.push({
+                importPath: importPathCSS,
+                filePath: filePathCSS
+            });
+        }
+    });
+    return pageConfigsDistFilesResolved;
+}
+function resolveImportPath(importPath, npmPackageName, config, npmPackageRootDir) {
+    let filePath;
+    try {
+        filePath = require_.resolve(importPath, { paths: [config.root] });
+    }
+    catch (err) {
+        if (err?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+            assertUsage(false, `Define ${importPath} in the package.json#exports of ${npmPackageName} (${npmPackageRootDir}/package.json) with a Node.js export condition (even if it's a browser file such as CSS)`);
+        }
+        throw err;
+    }
+    filePath = toPosixPath(filePath);
+    return filePath;
+}
+function getPathCSS(filePath) {
+    return filePath.split('.').slice(0, -1).join('.') + '.css';
+}

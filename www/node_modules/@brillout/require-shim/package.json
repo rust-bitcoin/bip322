@@ -1,0 +1,24 @@
+{
+  "name": "@brillout/require-shim",
+  "version": "0.1.2",
+  "dependencies": {},
+  "scripts": {
+    "build": "rm -rf dist/ && tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "pnpm run build",
+    "release": "npm version patch && npm publish && git push && git push --tags"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.9",
+    "typescript": "^4.9.3"
+  },
+  "main": "dist/index.cjs",
+  "files": [
+    "dist/"
+  ],
+  "repository": "github:brillout/require-shim",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

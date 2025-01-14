@@ -1,0 +1,10 @@
+export { injectHtmlTags };
+export { createHtmlHeadIfMissing };
+export { injectAtOpeningTag };
+export { injectAtClosingTag };
+import type { HtmlTag } from './getHtmlTags.js';
+import type { InjectToStream } from '../stream/react-streaming.js';
+declare function injectHtmlTags(htmlString: string, htmlTags: HtmlTag[], injectToStream: null | InjectToStream): string;
+declare function injectAtOpeningTag(tag: 'head' | 'html' | '!doctype', htmlString: string, htmlFragment: string): string;
+declare function injectAtClosingTag(tag: 'body' | 'html', htmlString: string, htmlFragment: string): string;
+declare function createHtmlHeadIfMissing(htmlString: string): string;

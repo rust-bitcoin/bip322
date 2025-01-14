@@ -1,0 +1,84 @@
+/// <reference types="node" resolution-mode="require"/>
+export { processStream };
+export { streamToString };
+export { stampPipe };
+export { pipeStream };
+export { pipeWebStream };
+export { pipeNodeStream };
+export { getStreamReadableNode };
+export { getStreamReadableWeb };
+export { pipeToStreamWritableNode };
+export { pipeToStreamWritableWeb };
+export { isStream };
+export { isStreamPipeWeb };
+export { isStreamPipeNode };
+export { isStreamReadableWeb };
+export { isStreamReadableNode };
+export { getStreamName };
+export { inferStreamName };
+export { streamReadableWebToString };
+export { streamPipeNodeToString };
+export { isStreamWritableWeb };
+export { isStreamWritableNode };
+export type { StreamProviderAny };
+export type { StreamProviderNormalized };
+export type { StreamTypePatch };
+export type { StreamReadableWeb };
+export type { StreamReadableNode };
+export type { StreamWritableWeb };
+export type { StreamWritableNode };
+export type { StreamPipeWeb };
+export type { StreamPipeNode };
+import { HtmlRender } from './renderHtml.js';
+import { StreamReactStreaming } from './stream/react-streaming.js';
+import type { Readable as Readable_, Writable as Writable_ } from 'node:stream';
+type StreamReadableWeb = ReadableStream;
+type StreamReadableNode = Readable_;
+type StreamWritableWeb = WritableStream;
+type StreamWritableNode = Writable_;
+type StreamPipeWeb = (writable: StreamWritableWeb) => void;
+type StreamPipeNode = (writable: StreamWritableNode) => void;
+type StreamProviderNormalized = StreamReadableWeb | StreamReadableNode | StreamPipeWeb | StreamPipeNode;
+type StreamProviderAny = StreamProviderNormalized | StreamReactStreaming | StreamPipeWebWrapped | StreamPipeNodeWrapped;
+type StreamTypePatch = NodeJS.ReadableStream;
+declare function isStreamReadableWeb(thing: unknown): thing is StreamReadableWeb;
+declare function isStreamWritableWeb(thing: unknown): thing is StreamWritableWeb;
+declare function isStreamReadableNode(thing: unknown): thing is StreamReadableNode;
+declare function isStreamWritableNode(thing: unknown): thing is StreamWritableNode;
+declare function streamReadableWebToString(readableWeb: ReadableStream): Promise<string>;
+declare function streamPipeNodeToString(streamPipeNode: StreamPipeNode): Promise<string>;
+declare function getStreamReadableNode(htmlRender: HtmlRender): Promise<null | StreamReadableNode>;
+declare function getStreamReadableWeb(htmlRender: HtmlRender): null | StreamReadableWeb;
+declare function pipeToStreamWritableWeb(htmlRender: HtmlRender, writable: StreamWritableWeb): boolean;
+declare function pipeToStreamWritableNode(htmlRender: HtmlRender, writable: StreamWritableNode): boolean;
+declare function processStream(streamOriginal: StreamProviderAny, { injectStringAtBegin, injectStringAtEnd, onErrorWhileStreaming, enableEagerStreaming }: {
+    injectStringAtBegin?: () => Promise<string>;
+    injectStringAtEnd?: () => Promise<string>;
+    onErrorWhileStreaming: (err: unknown) => void;
+    enableEagerStreaming?: boolean;
+}): Promise<StreamProviderNormalized>;
+declare function isStream(something: unknown): something is StreamProviderAny;
+declare const __streamPipeWeb = "__streamPipeWeb";
+type StreamPipeWebWrapped = {
+    [__streamPipeWeb]: StreamPipeWeb;
+};
+/** @deprecated */
+declare function pipeWebStream(pipe: StreamPipeWeb): StreamPipeWebWrapped;
+declare function isStreamPipeWeb(thing: unknown): thing is StreamPipeWebWrapped | StreamPipeWeb;
+declare const __streamPipeNode = "__streamPipeNode";
+type StreamPipeNodeWrapped = {
+    [__streamPipeNode]: StreamPipeNode;
+};
+/** @deprecated */
+declare function pipeNodeStream(pipe: StreamPipeNode): StreamPipeNodeWrapped;
+declare function isStreamPipeNode(thing: unknown): thing is StreamPipeNodeWrapped | StreamPipeNode;
+declare function stampPipe(pipe: StreamPipeNode | StreamPipeWeb, pipeType: 'web-stream' | 'node-stream'): void;
+type StreamPipe = (writable: StreamWritableNode | StreamWritableWeb) => void;
+declare const __streamPipe = "__streamPipe";
+type StreamPipeWrapped = {
+    [__streamPipe]: StreamPipe;
+};
+declare function pipeStream(pipe: StreamPipe): StreamPipeWrapped;
+declare function streamToString(stream: StreamProviderAny): Promise<string>;
+declare function getStreamName(type: 'pipe' | 'readable' | 'writable', standard: 'web' | 'node'): `a ${string} Stream` | `a ${string} Stream Pipe`;
+declare function inferStreamName(stream: StreamProviderNormalized): `a ${string} Stream` | `a ${string} Stream Pipe`;

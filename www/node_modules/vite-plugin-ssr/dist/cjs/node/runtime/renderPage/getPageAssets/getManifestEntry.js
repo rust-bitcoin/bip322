@@ -1,0 +1,128 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getManifestEntry = void 0;
+const utils_js_1 = require("../../utils.js");
+const assertClientEntryId_js_1 = require("./assertClientEntryId.js");
+const virtualFilePageConfigValuesAll_js_1 = require("../../../shared/virtual-files/virtualFilePageConfigValuesAll.js");
+function getManifestEntry(id, clientManifest, manifestKeyMap) {
+    (0, assertClientEntryId_js_1.assertClientEntryId)(id);
+    const debugInfo = getDebugInfo(id, clientManifest);
+    // VPS client entry
+    if (id.startsWith('@@vite-plugin-ssr/')) {
+        const manifestKeyEnd = (0, utils_js_1.slice)(id, '@@vite-plugin-ssr'.length, 0);
+        const { manifestKey, manifestEntry } = findEntryWithKeyEnd(manifestKeyEnd, clientManifest, id);
+        (0, utils_js_1.assert)(manifestEntry && manifestKey, debugInfo);
+        return { manifestEntry, manifestKey };
+    }
+    // Page code importer
+    if ((0, virtualFilePageConfigValuesAll_js_1.isVirtualFileIdPageConfigValuesAll)(id)) {
+        {
+            const manifestKey = id;
+            const manifestEntry = clientManifest[manifestKey];
+            if (manifestEntry) {
+                return { manifestEntry, manifestKey };
+            }
+        }
+        // Workaround for what seems to be a Vite bug when process.cwd() !== config.root
+        //  - Manifest key is:
+        //       ../../virtual:vite-plugin-ssr:pageConfigValuesAll:client:/pages/index
+        //    But it should be this instead:
+        //      virtual:vite-plugin-ssr:pageConfigValuesAll:client:/pages/index
+        //  - This workaround was implemented to support Vitest runnung /tests/*
+        //    - I don't know whether end users actually need this workaround? (I'm not sure what the bug actually is.)
+        const manifestKeyEnd = id;
+        const { manifestKey, manifestEntry } = getEntryWithKeyEnd(manifestKeyEnd, clientManifest, id);
+        (0, utils_js_1.assert)(manifestEntry, debugInfo);
+        return { manifestEntry, manifestKey };
+    }
+    // User files
+    if (id.startsWith('/')) {
+        const manifestKey = id.slice(1);
+        let manifestEntry = clientManifest[manifestKey];
+        (0, utils_js_1.assert)(manifestEntry, debugInfo);
+        return { manifestEntry, manifestKey };
+    }
+    // extensions[number].pageConfigsDistFiles
+    if ((0, utils_js_1.isNpmPackageImport)(id)) {
+        const manifestKey = manifestKeyMap[id];
+        const debugInfo2 = { ...debugInfo, manifestKey };
+        (0, utils_js_1.assert)(manifestKey, debugInfo2);
+        const manifestEntry = clientManifest[manifestKey];
+        (0, utils_js_1.assert)(manifestEntry, debugInfo2);
+        return { manifestEntry, manifestKey };
+    }
+    // extensions[number].pageConfigsSrcDir
+    if (id.startsWith('/node_modules/') || id.startsWith('/../')) {
+        let manifestKeyEnd = id.split('/node_modules/').slice(-1)[0];
+        (0, utils_js_1.assert)(manifestKeyEnd, debugInfo);
+        (0, utils_js_1.assert)(!manifestKeyEnd.startsWith('/'), debugInfo);
+        manifestKeyEnd = '/' + manifestKeyEnd;
+        {
+            const { manifestEntry, manifestKey } = findEntryWithKeyEnd(manifestKeyEnd, clientManifest, id);
+            if (manifestEntry) {
+                (0, utils_js_1.assert)(manifestKey, debugInfo);
+                return { manifestEntry, manifestKey };
+            }
+        }
+        {
+            (0, utils_js_1.assert)(manifestKeyEnd.startsWith('/'), debugInfo);
+            const dirS = manifestKeyEnd.split('/');
+            (0, utils_js_1.assert)(dirS[0] === '', debugInfo);
+            manifestKeyEnd = '/' + dirS.slice(2).join('/');
+            (0, utils_js_1.assert)(manifestKeyEnd.startsWith('/'), debugInfo);
+        }
+        {
+            const { manifestEntry, manifestKey } = findEntryWithKeyEnd(manifestKeyEnd, clientManifest, id);
+            if (manifestEntry) {
+                (0, utils_js_1.assert)(manifestKey, debugInfo);
+                return { manifestEntry, manifestKey };
+            }
+        }
+        (0, utils_js_1.assert)(false, debugInfo);
+    }
+    (0, utils_js_1.assert)(false, debugInfo);
+}
+exports.getManifestEntry = getManifestEntry;
+function findEntryWithKeyEnd(manifestKeyEnd, clientManifest, id) {
+    const debugInfo = getDebugInfo(id, clientManifest, manifestKeyEnd);
+    (0, utils_js_1.assert)(manifestKeyEnd.startsWith('/'), debugInfo);
+    const manifestKeys = [];
+    for (const manifestKey in clientManifest) {
+        if (manifestKey.endsWith(manifestKeyEnd)) {
+            manifestKeys.push(manifestKey);
+        }
+    }
+    const manifestKeysRelative = manifestKeys.filter((k) => k.startsWith('../'));
+    (0, utils_js_1.assert)(manifestKeysRelative.length <= 1, debugInfo);
+    const manifestKey = manifestKeysRelative[0] ?? manifestKeys[0] ?? null;
+    if (!manifestKey) {
+        return { manifestEntry: null, manifestKey: null };
+    }
+    const manifestEntry = clientManifest[manifestKey];
+    return { manifestEntry, manifestKey };
+}
+function getEntryWithKeyEnd(manifestKeyEnd, clientManifest, id) {
+    const debugInfo = getDebugInfo(id, clientManifest, manifestKeyEnd);
+    const manifestKeys = [];
+    for (const manifestKey in clientManifest) {
+        if (manifestKey.endsWith(manifestKeyEnd)) {
+            manifestKeys.push(manifestKey);
+        }
+    }
+    (0, utils_js_1.assert)(manifestKeys.length <= 1, debugInfo);
+    const manifestKey = manifestKeys[0];
+    if (!manifestKey) {
+        return { manifestEntry: null, manifestKey: null };
+    }
+    const manifestEntry = clientManifest[manifestKey];
+    return { manifestEntry, manifestKey };
+}
+function getDebugInfo(id, clientManifest, manifestKeyEnd) {
+    const manifestKeys = Object.keys(clientManifest);
+    if (manifestKeyEnd === undefined) {
+        return { manifestKeys, id };
+    }
+    else {
+        return { manifestKeys, manifestKeyEnd, id };
+    }
+}

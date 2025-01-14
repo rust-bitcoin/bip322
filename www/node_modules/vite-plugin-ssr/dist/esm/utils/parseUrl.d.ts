@@ -1,0 +1,22 @@
+export { parseUrl };
+export { isParsable };
+export { assertUsageUrl };
+export { isBaseServer };
+export { assertUrlComponents };
+export { createUrlFromComponents };
+declare function isParsable(url: string): boolean;
+declare function assertUsageUrl(url: unknown, errPrefix: string): asserts url is string;
+declare function parseUrl(url: string, baseServer: string): {
+    origin: null | string;
+    pathname: string;
+    pathnameOriginal: string;
+    hasBaseServer: boolean;
+    search: Record<string, string>;
+    searchAll: Record<string, string[]>;
+    searchOriginal: null | string;
+    hash: string;
+    hashOriginal: null | string;
+};
+declare function isBaseServer(baseServer: string): boolean;
+declare function assertUrlComponents(url: string, origin: string | null, pathname: string, searchOriginal: string | null, hashOriginal: string | null): void;
+declare function createUrlFromComponents(origin: string | null, pathname: string, searchOriginal: string | null, hashOriginal: string | null): string;

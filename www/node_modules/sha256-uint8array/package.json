@@ -1,0 +1,70 @@
+{
+  "name": "sha256-uint8array",
+  "description": "Fast SHA-256 digest hash based on Uint8Array, pure JavaScript.",
+  "version": "0.10.7",
+  "author": "Yusuke Kawasaki <u-suke@kawa.net>",
+  "bugs": {
+    "url": "https://github.com/kawanet/sha256-uint8array/issues"
+  },
+  "contributors": [
+    "Yusuke Kawasaki <u-suke@kawa.net>"
+  ],
+  "devDependencies": {
+    "@aws-crypto/sha256-js": "^3.0.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^18.14.0",
+    "browserify": "^17.0.0",
+    "browserify-sed": "^0.8.0",
+    "create-hash": "^1.2.0",
+    "crypto-js": "^4.1.1",
+    "hash.js": "^1.1.7",
+    "jshashes": "^1.0.8",
+    "jssha": "^3.3.1",
+    "mocha": "^10.2.0",
+    "sha.js": "^2.4.11",
+    "terser": "^5.19.2",
+    "typescript": "^5.1.6"
+  },
+  "exports": {
+    ".": {
+      "require": "./lib/sha256-uint8array.js",
+      "import": {
+        "types": "./types/sha256-uint8array.d.ts",
+        "default": "./dist/sha256-uint8array.mjs"
+      }
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "browser/import.js",
+    "dist/*.min.js",
+    "dist/*.mjs",
+    "lib/*.js",
+    "types/sha256-uint8array.d.ts"
+  ],
+  "homepage": "https://github.com/kawanet/sha256-uint8array#readme",
+  "keywords": [
+    "SHA-256",
+    "SHA256",
+    "crypto",
+    "digest",
+    "hash"
+  ],
+  "license": "MIT",
+  "main": "./lib/sha256-uint8array.js",
+  "module": "./dist/sha256-uint8array.mjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kawanet/sha256-uint8array.git"
+  },
+  "scripts": {
+    "build": "make clean all",
+    "fixpack": "fixpack",
+    "prepack": "npm run build && npm test",
+    "test": "REPEAT=1 make test",
+    "test-browser": "make build/test.js && open browser/test.html"
+  },
+  "type": "commonjs",
+  "typings": "./types/sha256-uint8array.d.ts"
+}
