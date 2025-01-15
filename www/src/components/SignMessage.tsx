@@ -1,4 +1,8 @@
 import React from "react";
+import FormWrapper from "./FormWrapper";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 interface SignMessageFormProps {
   address: string;
@@ -15,6 +19,13 @@ interface SignedMessageDisplayProps {
   onReset: () => void;
 }
 
+const inputClass =
+  "font-mono bg-transparent/5 border border-white/80 text-white text-[length:var(--font-x-small)] md:text-[length:var(--font-x-small)] px-4 py-8 backdrop-blur-sm disabled:border-[#cccccc] disabled:text-white/60 disabled:opacity-100 disabled:cursor-pointer";
+const textareaClass =
+  "font-mono bg-transparent/5 border border-white/80 text-white text-[length:var(--font-x-small)] md:text-[length:var(--font-x-small)] px-4 py-4 min-h-[120px] resize-none backdrop-blur-sm disabled:border-[#cccccc] disabled:text-white/60 disabled:opacity-100 disabled:cursor-pointer";
+const buttonClass =
+  "w-full h-auto font-mono border border-white/80 bg-white/90 text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-200 text-[length:var(--font-x-small)] backdrop-blur-sm";
+
 export const SignedMessageDisplay: React.FC<SignedMessageDisplayProps> = ({
   address,
   message,
@@ -22,34 +33,40 @@ export const SignedMessageDisplay: React.FC<SignedMessageDisplayProps> = ({
   onReset,
 }) => {
   return (
-    <div className="form-container">
-      <form id="signed-message-form" className="form-wrapper">
-        <input
+    <FormWrapper title="message signed.">
+      <div className="space-y-6">
+        <Input
           type="text"
           id="address"
           placeholder="address"
           value={address}
           disabled
+          className={inputClass}
         />
-        <input
-          type="text"
+        <Textarea
           id="message"
           placeholder="message"
           value={message}
           disabled
+          className={textareaClass}
         />
-        <input
+        <Input
           type="text"
           id="signature"
           placeholder="signature"
           value={signature}
           disabled
+          className={inputClass}
         />
-      </form>
-      <button className="reset-button" onClick={onReset}>
-        reset
-      </button>
-    </div>
+        <Button
+          variant="ghost"
+          onClick={onReset}
+          className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
+        >
+          reset
+        </Button>
+      </div>
+    </FormWrapper>
   );
 };
 
@@ -61,38 +78,42 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
   onReset,
 }) => {
   return (
-    <div className="form-container">
+    <FormWrapper title="sign message.">
       <form
-        id="sign-message-form"
-        className="form-wrapper"
         onSubmit={(e) => {
           e.preventDefault();
           onSign();
         }}
+        className="space-y-6"
       >
-        <input
+        <Input
           type="text"
           id="connected-wallet"
           placeholder="connected wallet"
           value={address}
           disabled
+          className={inputClass}
         />
-        <input
-          type="text"
+        <Textarea
           id="message"
           placeholder="message"
           value={message}
           onChange={(e) => onMessageChange(e.target.value)}
           required
+          className={textareaClass}
         />
-        <button type="submit" id="sign-button">
+        <Button type="submit" className={buttonClass}>
           sign
-        </button>
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={onReset}
+          className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
+        >
+          reset
+        </Button>
       </form>
-      <button className="reset-button" onClick={onReset}>
-        reset
-      </button>
-    </div>
+    </FormWrapper>
   );
 };
 

@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   SUPPORTED_WALLETS,
   WalletIcon,
@@ -11,6 +13,7 @@ import {
   WIZZ,
   OKX,
 } from "@omnisat/lasereyes";
+import FormWrapper from "./FormWrapper";
 
 interface ConnectWalletFormProps {
   address: string | null;
@@ -32,67 +35,66 @@ interface ConnectWalletFormProps {
   ) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }
-
 const ConnectWalletForm = ({
   address,
   hasWallet,
   onConnect,
   onDisconnect,
 }: ConnectWalletFormProps) => {
+  const baseButtonClass =
+    "w-full h-auto border border-white/80 transition-all duration-200 p-2 hover:bg-white hover:text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] [&_svg]:!w-10 [&_svg]:!h-10";
+
   return (
-    <div className="column">
-      <h2>connect wallet</h2>
-      <div className="buttons-grid">
+    <FormWrapper title="connect wallet">
+      <div className="grid grid-cols-3 gap-4">
         {!address ? (
           Object.values(SUPPORTED_WALLETS).map((wallet) => {
             const isMissingWallet = !hasWallet[wallet.name];
             return (
-              <div key={wallet.name} className="wallet-button-container">
+              <div key={wallet.name} className="w-full">
                 {isMissingWallet ? (
-                  <a
-                    href={wallet.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="wallet-button wallet-button-install"
+                  <Button
+                    asChild
+                    className={`${baseButtonClass} bg-transparent/5 backdrop-blur-sm`}
                   >
-                    <div className="wallet-button-content">
+                    <a
+                      href={wallet.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center"
+                    >
                       <WalletIcon walletName={wallet.name} size={40} />
-                    </div>
-                    {/* <span className="install-text">Install</span> */}
-                  </a>
+                    </a>
+                  </Button>
                 ) : (
-                  <button
-                    type="button"
-                    className="wallet-button wallet-button-installed"
+                  <Button
+                    className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
                     onClick={() => onConnect(wallet.name)}
                   >
-                    <div className="wallet-button-content">
-                      <WalletIcon walletName={wallet.name} size={40} />
-                    </div>
-                  </button>
+                    <WalletIcon walletName={wallet.name} size={40} />
+                  </Button>
                 )}
               </div>
             );
           })
         ) : (
-          <>
-            <input
+          <div className="col-span-3 space-y-3">
+            <Input
               type="text"
               value={`Connected: ${address}`}
               disabled
-              className="connected-address"
+              className="font-mono bg-transparent/5 border border-white/80 text-white text-[length:var(--font-small)] p-3 backdrop-blur-sm"
             />
-            <button
-              type="button"
-              className="wallet-button"
+            <Button
+              className="w-full font-mono border border-white/80 bg-transparent/5 text-white hover:bg-white hover:text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-200 text-[length:var(--font-small)] backdrop-blur-sm"
               onClick={onDisconnect}
             >
               disconnect
-            </button>
-          </>
+            </Button>
+          </div>
         )}
       </div>
-    </div>
+    </FormWrapper>
   );
 };
 

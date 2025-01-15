@@ -18,6 +18,7 @@ import SignMessageForm, {
   SignedMessageDisplay,
 } from "./components/SignMessage";
 import "./index.css";
+import { Button } from "@/components/ui/button";
 
 interface VerifyFormData {
   address: string;
@@ -31,6 +32,9 @@ const defaultVerifyFormData = {
   signature:
     "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ==",
 };
+
+const navLinkClass =
+  "font-mono text-[length:var(--font-x-small)] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)]";
 
 function App() {
   const [isWasmInitialized, setWasmInitialized] = useState(false);
@@ -221,74 +225,91 @@ function App() {
         <h1 onClick={() => window.location.reload()}>bip322</h1>
       </header>
 
-      <section className="action-section">
-        <div className="form-section">
-          {!isConnectWalletVisible ? (
-            <button
-              className="sign-button"
-              onClick={() => setIsConnectWalletVisible(true)}
-            >
-              sign
-            </button>
-          ) : connected && address ? (
-            signedData ? (
-              <SignedMessageDisplay
-                address={signedData.address}
-                message={signedData.message}
-                signature={signedData.signature}
-                onReset={handleSignedMessageFormReset}
-              />
-            ) : (
-              <SignMessageForm
-                address={address}
-                message={messageToSign}
-                onMessageChange={setMessageToSign}
-                onSign={handleMessageSign}
-                onReset={handleSignMessageFormReset}
-              />
-            )
+      <section className="grid grid-cols-[1fr_auto_1fr] gap-8 items-center">
+        {!isConnectWalletVisible ? (
+          <Button
+            className="sign-button h-auto leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
+            variant={"outline"}
+            onClick={() => setIsConnectWalletVisible(true)}
+          >
+            sign
+          </Button>
+        ) : connected && address ? (
+          signedData ? (
+            <SignedMessageDisplay
+              address={signedData.address}
+              message={signedData.message}
+              signature={signedData.signature}
+              onReset={handleSignedMessageFormReset}
+            />
           ) : (
-            <ConnectWalletForm
+            <SignMessageForm
               address={address}
-              provider={provider}
-              hasWallet={hasWallet}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
+              message={messageToSign}
+              onMessageChange={setMessageToSign}
+              onSign={handleMessageSign}
+              onReset={handleSignMessageFormReset}
             />
-          )}
-        </div>
+          )
+        ) : (
+          <ConnectWalletForm
+            address={address}
+            provider={provider}
+            hasWallet={hasWallet}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+          />
+        )}
 
-        <span className="button-separator">/</span>
+        <span className="button-separator text-[length:var(--font-large)] md:text-[length:var(--font-large)] cursor-default mx-4">
+          /
+        </span>
 
-        <div className="form-section">
-          {!isVerifyFormVisible ? (
-            <button
-              className="verify-button"
-              onClick={() => setIsVerifyFormVisible(true)}
-            >
-              verify
-            </button>
-          ) : (
-            <VerifyForm
-              formData={verifyFormData}
-              verificationResult={verificationResult}
-              onSubmit={handleVerification}
-              onInputChange={handleVerifyFormChange}
-              onInputFocus={handleInputFocus}
-              onInputBlur={handleVerifyFormBlur}
-              onReset={handleVerificationFormReset}
-            />
-          )}
-          {/* </div> */}
-        </div>
+        {!isVerifyFormVisible ? (
+          <Button
+            className="verify-button h-auto leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
+            variant={"outline"}
+            onClick={() => setIsVerifyFormVisible(true)}
+          >
+            verify
+          </Button>
+        ) : (
+          <VerifyForm
+            formData={verifyFormData}
+            verificationResult={verificationResult}
+            onSubmit={handleVerification}
+            onInputChange={handleVerifyFormChange}
+            onInputFocus={handleInputFocus}
+            onInputBlur={handleVerifyFormBlur}
+            onReset={handleVerificationFormReset}
+          />
+        )}
       </section>
 
-      <nav className="navbar">
-        <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
-          bip
-        </a>
-        <a href="https://github.com/rust-bitcoin/bip322">github</a>
-        <a href="https://crates.io/crates/bip322">crate</a>
+      <nav className="flex justify-evenly items-center absolute inset-x-0 bottom-0 p-8">
+        <Button
+          asChild
+          variant={"link"}
+          className="text-[length:var(--font-x-small)]"
+        >
+          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
+            bip
+          </a>
+        </Button>
+        <Button
+          asChild
+          variant={"link"}
+          className="text-[length:var(--font-x-small)]"
+        >
+          <a href="https://github.com/rust-bitcoin/bip322">github</a>
+        </Button>
+        <Button
+          asChild
+          variant={"link"}
+          className="text-[length:var(--font-x-small)]"
+        >
+          <a href="https://crates.io/crates/bip322">crate</a>
+        </Button>
       </nav>
     </div>
   );

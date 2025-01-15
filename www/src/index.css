@@ -1,10 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --width-target: calc(100vw / 6);
   --height-target: calc(100vh / 3);
   --size: min(var(--width-target), var(--height-target));
   --margin-horizontal: calc((100vw - var(--size) * 5) / 8);
-  --font-small: calc(var(--size) * 0.15);
-  --font-large: calc(var(--size) * 0.7);
+  --font-x-small: calc(var(--size) * 0.069);
+  --font-small: calc(var(--size) * 0.113);  
+  --font-md: calc(var(--size) * 0.181);    
+  --font-large: calc(var(--size) * 0.292);    
+  --font-x-large: calc(var(--size) * 0.473);
   --common-spacing: 1rem;
   --white-glow: 0 0 5px #fff;
 }
@@ -18,7 +25,7 @@
 
 /* Base styles */
 html {
-  background-color: black;
+  /* background-color: black; */
   color: white;
   overflow: hidden;
   text-align: center;
@@ -33,25 +40,17 @@ body {
 .app-container {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  position: relative;
   min-height: 100vh;
+  width: 100%;
+  max-width: 80vw;
+  margin: auto;
   padding: var(--common-spacing);
 }
 
-.action-section {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  margin: auto;
-}
-
-/* Header */
-.hero {
-  position: relative;
-}
-
 .hero h1 {
-  font-size: calc(var(--size) * 0.3);
+  font-size: var(--font-md);
   text-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
   position: absolute;
   top: var(--common-spacing);
@@ -61,116 +60,6 @@ body {
   cursor: pointer;
 }
 
-h2 {
-  font-size: var(--font-small);
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
-  cursor: default;
-  font-weight: normal;
-  cursor: pointer;
-  margin-bottom: var(--common-spacing);
-}
-
-.column {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Buttons container */
-.button-container {
-  display: flex;
-  gap: 2rem;
-  justify-content: center;
-}
-
-/* Common button styles */
-.sign-button,
-.verify-button,
-.button-separator {
-  font-size: var(--font-large);
-}
-
-.sign-button,
-.verify-button {
-  background: none;
-  border: none;
-  color: white;
-  cursor: pointer;
-  transition: text-shadow 0.2s ease-in-out;
-}
-
-.sign-button:hover,
-.verify-button:hover {
-  text-shadow: var(--white-glow);
-  text-decoration: underline;
-}
-
-.button-separator {
-  margin: 0 0.5rem;
-  cursor: default;
-}
-
-/* Form styles */
-.form-container {
-  position: relative;
-  width: 100%;
-  max-width: 600px;
-}
-
-.form-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: var(--common-spacing);
-}
-
-/* Common input/button styles */
-.form-wrapper input,
-.form-wrapper button,
-.verification-box,
-.reset-button {
-  padding: 0.5rem;
-  font-size: var(--font-small);
-  width: 100%;
-  font-family: monospace;
-  border-radius: 8px;
-}
-
-.form-wrapper input {
-  background-color: transparent;
-  border: 2px solid white;
-  color: white;
-}
-
-.form-wrapper button {
-  background-color: white;
-  border: 2px solid white;
-  color: black;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
-}
-
-.form-wrapper button:hover {
-  box-shadow: 0 0 15px #fff;
-}
-
-/* Verification box */
-.verification-box {
-  border: 2px solid white;
-  transition: all 0.2s ease-in-out;
-  cursor: default;
-}
-
-.verification-true {
-  background-color: white;
-  color: black;
-  box-shadow: 0 0 15px #fff;
-}
-
-.verification-false {
-  background-color: transparent;
-  color: white;
-}
-
-/* Reset button */
 .reset-button {
   position: absolute;
   inset-inline: 0;
@@ -185,115 +74,70 @@ h2 {
   text-decoration: underline;
 }
 
-/* Navigation */
-.navbar {
-  display: flex;
-  justify-content: space-evenly;
-  align-items: center;
-  font-size: var(--font-small);
-  position: fixed;
-  inset-inline: 0;
-  bottom: var(--common-spacing);
-  padding: var(--common-spacing);
-  background-color: rgba(0, 0, 0, 0.8);
-}
-
-.navbar a {
-  color: white;
-  text-decoration: none;
-}
-
-.navbar a:hover {
+nav a:hover {
   text-shadow: var(--white-glow);
-  text-decoration: underline;
 }
 
-.buttons-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--common-spacing);
-  width: 100%;
-  max-width: 600px;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  }
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
 }
-
-/* Wallet button container */
-.wallet-button-container {
-  width: 100%;
-}
-
-/* Wallet button base styles */
-.wallet-button {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  background-color: transparent;
-  border: 2px solid white;
-  color: white;
-  font-family: monospace;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
-  text-decoration: none;
-}
-
-.wallet-button:hover {
-  background-color: white;
-  color: black;
-  box-shadow: 0 0 15px #fff;
-}
-
-/* Wallet button content */
-.wallet-button-content {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-/* Wallet status indicator */
-.wallet-status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: #888;
-  font-size: 0.85em;
-}
-
-.wallet-button:hover .wallet-status {
-  color: black;
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  background-color: #3b82f6;
-  border-radius: 50%;
-}
-
-.wallet-button-installed {
-  background-color: #fff;
-}
-
-.install-text {
-  color: #3b82f6;
-  font-size: 0.85em;
-}
-
-.wallet-button:hover .install-text {
-  color: black;
-}
-
-/* Connected address input */
-.connected-address {
-  background-color: transparent;
-  border: 2px solid white;
-  color: white;
-  padding: 0.75rem 1rem;
-  font-size: var(--font-small);
-  width: 100%;
-  font-family: monospace;
-  border-radius: 8px;
-  margin-bottom: var(--common-spacing);
-  cursor: default;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }

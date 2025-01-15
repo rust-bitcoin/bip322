@@ -1,4 +1,7 @@
 import React from "react";
+import FormWrapper from "./FormWrapper";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface VerifyFormProps {
   formData: {
@@ -14,6 +17,11 @@ interface VerifyFormProps {
   onReset: () => void;
 }
 
+const inputClass =
+  "font-mono bg-transparent/5 border border-white/80 text-white text-[length:var(--font-x-small)] md:text-[length:var(--font-x-small)] px-4 py-8 backdrop-blur-sm disabled:border-[#cccccc] disabled:text-white/60 disabled:opacity-100 disabled:cursor-pointer";
+const buttonClass =
+  "w-full h-auto font-mono border border-white/80 bg-white/90 text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-200 text-[length:var(--font-x-small)] backdrop-blur-sm";
+
 const VerifyForm = ({
   formData,
   verificationResult,
@@ -24,9 +32,9 @@ const VerifyForm = ({
   onReset,
 }: VerifyFormProps) => {
   return (
-    <div className="form-container">
-      <form id="verify-form" className="form-wrapper" onSubmit={onSubmit}>
-        <input
+    <FormWrapper title="verify message.">
+      <form onSubmit={onSubmit} className="space-y-6">
+        <Input
           type="text"
           id="address"
           placeholder="address"
@@ -37,8 +45,9 @@ const VerifyForm = ({
           data-default={formData.address}
           required
           disabled={verificationResult !== null}
+          className={inputClass}
         />
-        <input
+        <Input
           type="text"
           id="message"
           placeholder="message"
@@ -49,8 +58,9 @@ const VerifyForm = ({
           data-default={formData.message}
           required
           disabled={verificationResult !== null}
+          className={inputClass}
         />
-        <input
+        <Input
           type="text"
           id="signature"
           placeholder="signature"
@@ -61,29 +71,36 @@ const VerifyForm = ({
           data-default={formData.signature}
           required
           disabled={verificationResult !== null}
+          className={inputClass}
         />
+
         {verificationResult === null ? (
-          <button type="submit" id="verify-button">
+          <Button type="submit" className={buttonClass}>
             verify
-          </button>
+          </Button>
         ) : (
           <div
-            className={`verification-box ${
+            className={`font-mono border border-white/80 p-3 rounded-md transition-all duration-200 backdrop-blur-sm text-[length:var(--font-x-small)] ${
               verificationResult === "true"
-                ? "verification-true"
-                : "verification-false"
+                ? "bg-white text-black shadow-[0_0_15px_#fff]"
+                : "bg-transparent/5 text-white"
             }`}
           >
             {verificationResult}
           </div>
         )}
+
+        {verificationResult !== null && (
+          <Button
+            variant="ghost"
+            onClick={onReset}
+            className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
+          >
+            reset
+          </Button>
+        )}
       </form>
-      {verificationResult !== null && (
-        <button className="reset-button" onClick={onReset}>
-          reset
-        </button>
-      )}
-    </div>
+    </FormWrapper>
   );
 };
 
