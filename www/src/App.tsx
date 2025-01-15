@@ -1,7 +1,22 @@
 import { useEffect, useState } from "react";
-import { useLaserEyes, XVERSE } from "@omnisat/lasereyes";
+import {
+  useLaserEyes,
+  UNISAT,
+  MAGIC_EDEN,
+  OYL,
+  ORANGE,
+  PHANTOM,
+  LEATHER,
+  XVERSE,
+  WIZZ,
+  OKX,
+} from "@omnisat/lasereyes";
 import init, { verify } from "./bip322.js";
 import VerifyForm from "./components/VerifyForm";
+import ConnectWalletForm from "./components/ConnectWallet";
+import SignMessageForm, {
+  SignedMessageDisplay,
+} from "./components/SignMessage";
 import "./index.css";
 
 interface VerifyFormData {
@@ -22,19 +37,118 @@ function App() {
   const [verificationResult, setVerificationResult] = useState<string | null>(
     null
   );
-
   const [isVerifyFormVisible, setIsVerifyFormVisible] = useState(false);
-
+  const [isConnectWalletVisible, setIsConnectWalletVisible] = useState(false);
   const [verifyFormData, setVerifyFormData] = useState<VerifyFormData>(
     defaultVerifyFormData
   );
+  const [messageToSign, setMessageToSign] = useState("");
+  const [signedData, setSignedData] = useState<VerifyFormData | null>(null);
 
-  const { connect, address, signMessage } = useLaserEyes();
+  const {
+    connect,
+    disconnect,
+    address,
+    provider,
+    hasUnisat,
+    hasXverse,
+    hasOyl,
+    hasMagicEden,
+    hasOkx,
+    hasLeather,
+    hasPhantom,
+    hasWizz,
+    hasOrange,
+    connected,
+    isConnecting,
+    signMessage,
+  } = useLaserEyes();
+
+  // check if any wallet connected
+  useEffect(() => {
+    if (connected && !isConnecting) {
+      console.log("is connected: ", address, hasUnisat, hasXverse);
+    } else {
+      console.log("not connected ", address, hasUnisat, hasXverse);
+    }
+  }, [connect, isConnecting, address]);
+
+  const hasWallet = {
+    unisat: hasUnisat,
+    xverse: hasXverse,
+    oyl: hasOyl,
+    [MAGIC_EDEN]: hasMagicEden,
+    okx: hasOkx,
+    leather: hasLeather,
+    phantom: hasPhantom,
+    wizz: hasWizz,
+    orange: hasOrange,
+  };
+
+  const handleConnect = async (
+    walletName:
+      | typeof UNISAT
+      | typeof MAGIC_EDEN
+      | typeof OYL
+      | typeof ORANGE
+      | typeof PHANTOM
+      | typeof LEATHER
+      | typeof XVERSE
+      | typeof WIZZ
+      | typeof OKX
+  ) => {
+    if (provider === walletName) {
+      await disconnect();
+    } else {
+      await connect(walletName as never);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    try {
+      await disconnect();
+      setIsConnectWalletVisible(false);
+    } catch (error) {
+      console.error("Failed to disconnect wallet:", error);
+    }
+  };
+
+  const handleMessageSign = async () => {
+    if (!connected || !messageToSign) return;
+
+    try {
+      const signature = await signMessage(messageToSign);
+      const newSignedData = {
+        address: address,
+        message: messageToSign,
+        signature,
+      };
+      setSignedData(newSignedData);
+      setVerifyFormData(newSignedData);
+      setIsVerifyFormVisible(true);
+    } catch (error) {
+      console.error("Failed to sign message:", error);
+    }
+  };
 
   useEffect(() => {
     init()
       .then(() => setWasmInitialized(true))
       .catch((error) => console.error("Failed to initialize WASM:", error));
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = async () => {
+      if (connected) {
+        await disconnect();
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, []);
 
   const handleVerification = async (e: React.FormEvent) => {
@@ -52,22 +166,6 @@ function App() {
       setVerificationResult(result.toString());
     } catch (error) {
       console.error("Verification failed:", error);
-    }
-  };
-
-  const handleSign = async () => {
-    try {
-      const connectedWallet = await connect(XVERSE);
-      console.log(connectedWallet);
-      const signature = await signMessage(verifyFormData.message);
-
-      setVerifyFormData((prev) => ({
-        ...prev,
-        signature,
-        address,
-      }));
-    } catch (error) {
-      console.error("Signing failed:", error);
     }
   };
 
@@ -112,37 +210,63 @@ function App() {
       </header>
 
       <section className="action-section">
-        <div className="button-container">
-          <button
-            className="sign-button"
-            onClick={() => {
-              handleSign();
-            }}
-          >
-            sign
-          </button>
-          <span className="button-separator">/</span>
-          {!isVerifyFormVisible && !verificationResult && (
+        <div className="form-section">
+          {!isConnectWalletVisible ? (
+            <button
+              className="sign-button"
+              onClick={() => setIsConnectWalletVisible(true)}
+            >
+              sign
+            </button>
+          ) : connected && address ? (
+            signedData ? (
+              <SignedMessageDisplay
+                address={signedData.address}
+                message={signedData.message}
+                signature={signedData.signature}
+              />
+            ) : (
+              <SignMessageForm
+                address={address}
+                message={messageToSign}
+                onMessageChange={setMessageToSign}
+                onSign={handleMessageSign}
+              />
+            )
+          ) : (
+            <ConnectWalletForm
+              address={address}
+              provider={provider}
+              hasWallet={hasWallet}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+            />
+          )}
+        </div>
+
+        <span className="button-separator">/</span>
+
+        <div className="form-section">
+          {!isVerifyFormVisible ? (
             <button
               className="verify-button"
               onClick={() => setIsVerifyFormVisible(true)}
             >
               verify
             </button>
+          ) : (
+            <VerifyForm
+              formData={verifyFormData}
+              verificationResult={verificationResult}
+              onSubmit={handleVerification}
+              onInputChange={handleVerifyFormChange}
+              onInputFocus={handleInputFocus}
+              onInputBlur={handleVerifyFormBlur}
+              onReset={handleReset}
+            />
           )}
+          {/* </div> */}
         </div>
-
-        {isVerifyFormVisible && (
-          <VerifyForm
-            formData={verifyFormData}
-            verificationResult={verificationResult}
-            onSubmit={handleVerification}
-            onInputChange={handleVerifyFormChange}
-            onInputFocus={handleInputFocus}
-            onInputBlur={handleVerifyFormBlur}
-            onReset={handleReset}
-          />
-        )}
       </section>
 
       <nav className="navbar">
