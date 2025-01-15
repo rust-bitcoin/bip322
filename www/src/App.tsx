@@ -194,7 +194,19 @@ function App() {
     }
   };
 
-  const handleReset = () => {
+  const handleSignedMessageFormReset = () => {
+    // return to sign message form
+    setSignedData(null);
+    setMessageToSign("");
+  };
+
+  const handleSignMessageFormReset = async () => {
+    // return to connect wallet form
+    await disconnect();
+    setMessageToSign("");
+  };
+
+  const handleVerificationFormReset = () => {
     setVerificationResult(null);
     setVerifyFormData(defaultVerifyFormData);
   };
@@ -224,6 +236,7 @@ function App() {
                 address={signedData.address}
                 message={signedData.message}
                 signature={signedData.signature}
+                onReset={handleSignedMessageFormReset}
               />
             ) : (
               <SignMessageForm
@@ -231,6 +244,7 @@ function App() {
                 message={messageToSign}
                 onMessageChange={setMessageToSign}
                 onSign={handleMessageSign}
+                onReset={handleSignMessageFormReset}
               />
             )
           ) : (
@@ -262,7 +276,7 @@ function App() {
               onInputChange={handleVerifyFormChange}
               onInputFocus={handleInputFocus}
               onInputBlur={handleVerifyFormBlur}
-              onReset={handleReset}
+              onReset={handleVerificationFormReset}
             />
           )}
           {/* </div> */}

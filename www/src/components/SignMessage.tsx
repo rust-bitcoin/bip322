@@ -5,23 +5,25 @@ interface SignMessageFormProps {
   message: string;
   onMessageChange: (message: string) => void;
   onSign: () => void;
+  onReset: () => void;
 }
 
 interface SignedMessageDisplayProps {
   address: string;
   message: string;
   signature: string;
+  onReset: () => void;
 }
 
 export const SignedMessageDisplay: React.FC<SignedMessageDisplayProps> = ({
   address,
   message,
   signature,
+  onReset,
 }) => {
   return (
-    <div className="verify-form-container">
-      <div className="verify-form-background" />
-      <form id="signed-message-form">
+    <div className="form-container">
+      <form id="signed-message-form" className="form-wrapper">
         <input
           type="text"
           id="address"
@@ -44,6 +46,9 @@ export const SignedMessageDisplay: React.FC<SignedMessageDisplayProps> = ({
           disabled
         />
       </form>
+      <button className="reset-button" onClick={onReset}>
+        reset
+      </button>
     </div>
   );
 };
@@ -53,12 +58,13 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
   message,
   onMessageChange,
   onSign,
+  onReset,
 }) => {
   return (
-    <div className="verify-form-container">
-      <div className="verify-form-background" />
+    <div className="form-container">
       <form
         id="sign-message-form"
+        className="form-wrapper"
         onSubmit={(e) => {
           e.preventDefault();
           onSign();
@@ -83,6 +89,9 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
           sign
         </button>
       </form>
+      <button className="reset-button" onClick={onReset}>
+        reset
+      </button>
     </div>
   );
 };

@@ -24,9 +24,8 @@ const VerifyForm = ({
   onReset,
 }: VerifyFormProps) => {
   return (
-    <div className="verify-form-container">
-      <div className="verify-form-background" />
-      <form id="verify-form" onSubmit={onSubmit}>
+    <div className="form-container">
+      <form id="verify-form" className="form-wrapper" onSubmit={onSubmit}>
         <input
           type="text"
           id="address"

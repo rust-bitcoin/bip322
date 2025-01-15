@@ -110,21 +110,21 @@ h2 {
 }
 
 /* Form styles */
-.verify-form-container {
+.form-container {
   position: relative;
   width: 100%;
   max-width: 600px;
 }
 
-#verify-form {
+.form-wrapper {
   display: flex;
   flex-direction: column;
   gap: var(--common-spacing);
 }
 
 /* Common input/button styles */
-#verify-form input,
-#verify-form button,
+.form-wrapper input,
+.form-wrapper button,
 .verification-box,
 .reset-button {
   padding: 0.5rem;
@@ -134,13 +134,13 @@ h2 {
   border-radius: 8px;
 }
 
-#verify-form input {
+.form-wrapper input {
   background-color: transparent;
   border: 2px solid white;
   color: white;
 }
 
-#verify-form button {
+.form-wrapper button {
   background-color: white;
   border: 2px solid white;
   color: black;
@@ -148,7 +148,7 @@ h2 {
   transition: all 0.2s ease-in-out;
 }
 
-#verify-form button:hover {
+.form-wrapper button:hover {
   box-shadow: 0 0 15px #fff;
 }
 
