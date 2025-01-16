@@ -1,3 +1,10 @@
+// const defaultVerifyFormData = {
+//   address: "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3",
+//   message: "Hello World",
+//   signature:
+//     "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ==",
+// };
+
 import { useEffect, useState } from "react";
 import {
   useLaserEyes,
@@ -11,43 +18,46 @@ import {
   WIZZ,
   OKX,
 } from "@omnisat/lasereyes";
-import init, { verify } from "./bip322.js";
-import VerifyForm from "./components/VerifyForm";
-import ConnectWalletForm from "./components/ConnectWallet";
-import SignMessageForm, {
-  SignedMessageDisplay,
-} from "./components/SignMessage";
-import "./index.css";
+import init, { verify } from "@/bip322.js";
+import VerifyForm from "@/components/VerifyForm";
+import ConnectWalletForm from "@/components/ConnectWallet";
+import SignMessageForm from "@/components/SignMessage";
+import "@/index.css";
 import { Button } from "@/components/ui/button";
 
-interface VerifyFormData {
+export interface SignMessageState {
+  message: string;
+  signedData: {
+    address: string;
+    message: string;
+    signature: string;
+  } | null;
+}
+
+export interface VerifyFormState {
   address: string;
   message: string;
   signature: string;
+  verificationResult: string | null;
 }
-
-const defaultVerifyFormData = {
-  address: "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3",
-  message: "Hello World",
-  signature:
-    "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ==",
-};
-
-const navLinkClass =
-  "font-mono text-[length:var(--font-x-small)] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)]";
 
 function App() {
   const [isWasmInitialized, setWasmInitialized] = useState(false);
-  const [verificationResult, setVerificationResult] = useState<string | null>(
-    null
-  );
+
+  const [isSignFormVisible, setIsSignFormVisible] = useState(false);
   const [isVerifyFormVisible, setIsVerifyFormVisible] = useState(false);
-  const [isConnectWalletVisible, setIsConnectWalletVisible] = useState(false);
-  const [verifyFormData, setVerifyFormData] = useState<VerifyFormData>(
-    defaultVerifyFormData
-  );
-  const [messageToSign, setMessageToSign] = useState("");
-  const [signedData, setSignedData] = useState<VerifyFormData | null>(null);
+
+  const [signMessageState, setSignMessageState] = useState<SignMessageState>({
+    message: "",
+    signedData: null,
+  });
+
+  const [verifyFormState, setVerifyFormState] = useState<VerifyFormState>({
+    address: "",
+    message: "",
+    signature: "",
+    verificationResult: null,
+  });
 
   const {
     connect,
@@ -64,18 +74,8 @@ function App() {
     hasWizz,
     hasOrange,
     connected,
-    isConnecting,
     signMessage,
   } = useLaserEyes();
-
-  // check if any wallet connected
-  useEffect(() => {
-    if (connected && !isConnecting) {
-      console.log("is connected: ", address, hasUnisat, hasXverse);
-    } else {
-      console.log("not connected ", address, hasUnisat, hasXverse);
-    }
-  }, [connect, isConnecting, address]);
 
   const hasWallet = {
     unisat: hasUnisat,
@@ -111,28 +111,79 @@ function App() {
   const handleDisconnect = async () => {
     try {
       await disconnect();
-      setIsConnectWalletVisible(false);
+      resetSignMessageForm();
     } catch (error) {
       console.error("Failed to disconnect wallet:", error);
     }
   };
 
   const handleMessageSign = async () => {
-    if (!connected || !messageToSign) return;
+    if (!connected || !signMessageState.message) return;
 
     try {
-      const signature = await signMessage(messageToSign);
+      const signature = await signMessage(signMessageState.message);
       const newSignedData = {
         address: address,
-        message: messageToSign,
+        message: signMessageState.message,
         signature,
       };
-      setSignedData(newSignedData);
-      setVerifyFormData(newSignedData);
-      setIsVerifyFormVisible(true);
+
+      setSignMessageState((prev) => ({
+        ...prev,
+        signedData: newSignedData,
+      }));
     } catch (error) {
       console.error("Failed to sign message:", error);
     }
+  };
+
+  const handleVerification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isWasmInitialized) {
+      console.error("WASM not initialized yet");
+      return;
+    }
+
+    try {
+      const result = verify(
+        verifyFormState.address,
+        verifyFormState.message,
+        verifyFormState.signature
+      );
+      setVerifyFormState((prev) => ({
+        ...prev,
+        verificationResult: result.toString(),
+      }));
+    } catch (error) {
+      console.error("Verification failed:", error);
+      setVerifyFormState((prev) => ({
+        ...prev,
+        verificationResult: "Verification failed",
+      }));
+    }
+  };
+
+  const handleVerifyFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setVerifyFormState((prev) => ({
+      ...prev,
+      [e.target.id]: e.target.value,
+    }));
+  };
+
+  const resetSignMessageForm = () => {
+    setSignMessageState({
+      message: "",
+      signedData: null,
+    });
+  };
+
+  const resetVerifyForm = () => {
+    setVerifyFormState({
+      address: "",
+      message: "",
+      signature: "",
+      verificationResult: null,
+    });
   };
 
   useEffect(() => {
@@ -149,71 +200,8 @@ function App() {
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
-  }, []);
-
-  const handleVerification = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isWasmInitialized) {
-      console.error("WASM not initialized yet");
-      return;
-    }
-    try {
-      const result = verify(
-        verifyFormData.address,
-        verifyFormData.message,
-        verifyFormData.signature
-      );
-      setVerificationResult(result.toString());
-    } catch (error) {
-      console.error("Verification failed:", error);
-    }
-  };
-
-  const handleVerifyFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setVerifyFormData((prev) => ({
-      ...prev,
-      [e.target.id]: e.target.value,
-    }));
-  };
-
-  const handleInputFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    const defaultValue = e.target.getAttribute("data-default");
-    if (e.target.value === defaultValue) {
-      e.target.value = "";
-    }
-  };
-
-  const handleVerifyFormBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    if (e.target.value === "") {
-      const defaultValue = e.target.getAttribute("data-default") || "";
-      e.target.value = defaultValue;
-      setVerifyFormData((prev) => ({
-        ...prev,
-        [e.target.id]: defaultValue,
-      }));
-    }
-  };
-
-  const handleSignedMessageFormReset = () => {
-    // return to sign message form
-    setSignedData(null);
-    setMessageToSign("");
-  };
-
-  const handleSignMessageFormReset = async () => {
-    // return to connect wallet form
-    await disconnect();
-    setMessageToSign("");
-  };
-
-  const handleVerificationFormReset = () => {
-    setVerificationResult(null);
-    setVerifyFormData(defaultVerifyFormData);
-  };
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [connected, disconnect]);
 
   if (!isWasmInitialized) {
     return <div>Loading WASM...</div>;
@@ -226,70 +214,70 @@ function App() {
       </header>
 
       <section className="grid grid-cols-[1fr_auto_1fr] gap-8 items-center">
-        {!isConnectWalletVisible ? (
-          <Button
-            className="sign-button h-auto leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
-            variant={"outline"}
-            onClick={() => setIsConnectWalletVisible(true)}
-          >
-            sign
-          </Button>
-        ) : connected && address ? (
-          signedData ? (
-            <SignedMessageDisplay
-              address={signedData.address}
-              message={signedData.message}
-              signature={signedData.signature}
-              onReset={handleSignedMessageFormReset}
-            />
-          ) : (
+        <div className="w-full">
+          {!isSignFormVisible ? (
+            <Button
+              className="sign-button h-auto w-full leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
+              variant="outline"
+              onClick={() => setIsSignFormVisible(true)}
+            >
+              sign
+            </Button>
+          ) : connected && address ? (
             <SignMessageForm
               address={address}
-              message={messageToSign}
-              onMessageChange={setMessageToSign}
+              message={signMessageState.message}
+              signedData={signMessageState.signedData}
+              onMessageChange={(message) =>
+                setSignMessageState((prev) => ({ ...prev, message }))
+              }
               onSign={handleMessageSign}
-              onReset={handleSignMessageFormReset}
+              onReset={resetSignMessageForm}
+              onBack={handleDisconnect}
             />
-          )
-        ) : (
-          <ConnectWalletForm
-            address={address}
-            provider={provider}
-            hasWallet={hasWallet}
-            onConnect={handleConnect}
-            onDisconnect={handleDisconnect}
-          />
-        )}
+          ) : (
+            <ConnectWalletForm
+              provider={provider}
+              hasWallet={hasWallet}
+              onConnect={handleConnect}
+              onDisconnect={() => {
+                handleDisconnect();
+                setIsSignFormVisible(false);
+              }}
+            />
+          )}
+        </div>
 
         <span className="button-separator text-[length:var(--font-large)] md:text-[length:var(--font-large)] cursor-default mx-4">
           /
         </span>
 
-        {!isVerifyFormVisible ? (
-          <Button
-            className="verify-button h-auto leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
-            variant={"outline"}
-            onClick={() => setIsVerifyFormVisible(true)}
-          >
-            verify
-          </Button>
-        ) : (
-          <VerifyForm
-            formData={verifyFormData}
-            verificationResult={verificationResult}
-            onSubmit={handleVerification}
-            onInputChange={handleVerifyFormChange}
-            onInputFocus={handleInputFocus}
-            onInputBlur={handleVerifyFormBlur}
-            onReset={handleVerificationFormReset}
-          />
-        )}
+        <div className="w-full">
+          {!isVerifyFormVisible ? (
+            <Button
+              className="verify-button h-auto w-full leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
+              variant="outline"
+              onClick={() => setIsVerifyFormVisible(true)}
+            >
+              verify
+            </Button>
+          ) : (
+            <VerifyForm
+              formData={verifyFormState}
+              verificationResult={verifyFormState.verificationResult}
+              onSubmit={handleVerification}
+              onInputChange={handleVerifyFormChange}
+              onReset={resetVerifyForm}
+              onBack={() => setIsVerifyFormVisible(false)}
+            />
+          )}
+        </div>
       </section>
 
       <nav className="flex justify-evenly items-center absolute inset-x-0 bottom-0 p-8">
         <Button
           asChild
-          variant={"link"}
+          variant="link"
           className="text-[length:var(--font-x-small)]"
         >
           <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
@@ -298,14 +286,14 @@ function App() {
         </Button>
         <Button
           asChild
-          variant={"link"}
+          variant="link"
           className="text-[length:var(--font-x-small)]"
         >
           <a href="https://github.com/rust-bitcoin/bip322">github</a>
         </Button>
         <Button
           asChild
-          variant={"link"}
+          variant="link"
           className="text-[length:var(--font-x-small)]"
         >
           <a href="https://crates.io/crates/bip322">crate</a>

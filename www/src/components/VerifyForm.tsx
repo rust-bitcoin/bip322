@@ -2,19 +2,15 @@ import React from "react";
 import FormWrapper from "./FormWrapper";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { VerifyFormState } from "@/App";
 
 interface VerifyFormProps {
-  formData: {
-    address: string;
-    message: string;
-    signature: string;
-  };
+  formData: VerifyFormState;
   verificationResult: string | null;
   onSubmit: (e: React.FormEvent) => void;
   onInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onInputFocus: (e: React.FocusEvent<HTMLInputElement>) => void;
-  onInputBlur: (e: React.FocusEvent<HTMLInputElement>) => void;
   onReset: () => void;
+  onBack: () => void;
 }
 
 const inputClass =
@@ -27,12 +23,15 @@ const VerifyForm = ({
   verificationResult,
   onSubmit,
   onInputChange,
-  onInputFocus,
-  onInputBlur,
   onReset,
+  onBack,
 }: VerifyFormProps) => {
   return (
-    <FormWrapper title="verify message.">
+    <FormWrapper
+      title={verificationResult ? "message verified." : "verify message."}
+      onBack={!verificationResult ? onBack : undefined}
+      onReset={verificationResult ? onReset : undefined}
+    >
       <form onSubmit={onSubmit} className="space-y-6">
         <Input
           type="text"
@@ -40,8 +39,6 @@ const VerifyForm = ({
           placeholder="address"
           value={formData.address}
           onChange={onInputChange}
-          onFocus={onInputFocus}
-          onBlur={onInputBlur}
           data-default={formData.address}
           required
           disabled={verificationResult !== null}
@@ -53,8 +50,6 @@ const VerifyForm = ({
           placeholder="message"
           value={formData.message}
           onChange={onInputChange}
-          onFocus={onInputFocus}
-          onBlur={onInputBlur}
           data-default={formData.message}
           required
           disabled={verificationResult !== null}
@@ -66,8 +61,6 @@ const VerifyForm = ({
           placeholder="signature"
           value={formData.signature}
           onChange={onInputChange}
-          onFocus={onInputFocus}
-          onBlur={onInputBlur}
           data-default={formData.signature}
           required
           disabled={verificationResult !== null}
@@ -88,16 +81,6 @@ const VerifyForm = ({
           >
             {verificationResult}
           </div>
-        )}
-
-        {verificationResult !== null && (
-          <Button
-            variant="ghost"
-            onClick={onReset}
-            className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
-          >
-            reset
-          </Button>
         )}
       </form>
     </FormWrapper>

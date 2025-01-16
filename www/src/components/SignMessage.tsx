@@ -7,16 +7,15 @@ import { Textarea } from "@/components/ui/textarea";
 interface SignMessageFormProps {
   address: string;
   message: string;
+  signedData: {
+    address: string;
+    message: string;
+    signature: string;
+  } | null;
   onMessageChange: (message: string) => void;
   onSign: () => void;
   onReset: () => void;
-}
-
-interface SignedMessageDisplayProps {
-  address: string;
-  message: string;
-  signature: string;
-  onReset: () => void;
+  onBack: () => void;
 }
 
 const inputClass =
@@ -26,92 +25,58 @@ const textareaClass =
 const buttonClass =
   "w-full h-auto font-mono border border-white/80 bg-white/90 text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-200 text-[length:var(--font-x-small)] backdrop-blur-sm";
 
-export const SignedMessageDisplay: React.FC<SignedMessageDisplayProps> = ({
-  address,
-  message,
-  signature,
-  onReset,
-}) => {
-  return (
-    <FormWrapper title="message signed.">
-      <div className="space-y-6">
-        <Input
-          type="text"
-          id="address"
-          placeholder="address"
-          value={address}
-          disabled
-          className={inputClass}
-        />
-        <Textarea
-          id="message"
-          placeholder="message"
-          value={message}
-          disabled
-          className={textareaClass}
-        />
-        <Input
-          type="text"
-          id="signature"
-          placeholder="signature"
-          value={signature}
-          disabled
-          className={inputClass}
-        />
-        <Button
-          variant="ghost"
-          onClick={onReset}
-          className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
-        >
-          reset
-        </Button>
-      </div>
-    </FormWrapper>
-  );
-};
-
 const SignMessageForm: React.FC<SignMessageFormProps> = ({
   address,
   message,
+  signedData,
   onMessageChange,
   onSign,
   onReset,
+  onBack,
 }) => {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSign();
+  };
+
   return (
-    <FormWrapper title="sign message.">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSign();
-        }}
-        className="space-y-6"
-      >
+    <FormWrapper
+      title={signedData ? "message signed." : "sign message."}
+      onReset={signedData ? onReset : undefined}
+      onBack={!signedData ? onBack : undefined}
+    >
+      <form onSubmit={handleSubmit} className="space-y-6">
         <Input
           type="text"
           id="connected-wallet"
           placeholder="connected wallet"
-          value={address}
+          value={signedData ? signedData.address : address}
           disabled
           className={inputClass}
         />
         <Textarea
           id="message"
           placeholder="message"
-          value={message}
-          onChange={(e) => onMessageChange(e.target.value)}
+          value={signedData ? signedData.message : message}
+          onChange={(e) => !signedData && onMessageChange(e.target.value)}
           required
+          disabled={signedData !== null}
           className={textareaClass}
         />
-        <Button type="submit" className={buttonClass}>
-          sign
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={onReset}
-          className="inset-x-0 mx-auto w-auto hover:underline text-[length:var(--font-x-small)] font-mono"
-        >
-          reset
-        </Button>
+        {signedData ? (
+          <Input
+            type="text"
+            id="signature"
+            placeholder="signature"
+            value={signedData.signature}
+            disabled
+            className={inputClass}
+          />
+        ) : (
+          <Button type="submit" className={buttonClass}>
+            sign
+          </Button>
+        )}
       </form>
     </FormWrapper>
   );
