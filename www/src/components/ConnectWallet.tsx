@@ -5,11 +5,9 @@ import {
   UNISAT,
   MAGIC_EDEN,
   OYL,
-  ORANGE,
   PHANTOM,
   LEATHER,
   XVERSE,
-  WIZZ,
   OKX,
 } from "@omnisat/lasereyes";
 import FormWrapper from "./FormWrapper";
@@ -24,11 +22,9 @@ interface ConnectWalletFormProps {
       | typeof UNISAT
       | typeof MAGIC_EDEN
       | typeof OYL
-      | typeof ORANGE
       | typeof PHANTOM
       | typeof LEATHER
       | typeof XVERSE
-      | typeof WIZZ
       | typeof OKX
   ) => Promise<void>;
   onDisconnect: () => void;

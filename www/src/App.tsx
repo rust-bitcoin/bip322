@@ -11,11 +11,9 @@ import {
   UNISAT,
   MAGIC_EDEN,
   OYL,
-  ORANGE,
   PHANTOM,
   LEATHER,
   XVERSE,
-  WIZZ,
   OKX,
 } from "@omnisat/lasereyes";
 import init, { verify } from "@/bip322.js";
@@ -72,8 +70,6 @@ function App() {
     hasOkx,
     hasLeather,
     hasPhantom,
-    hasWizz,
-    hasOrange,
     connected,
     signMessage,
   } = useLaserEyes();
@@ -86,8 +82,6 @@ function App() {
     okx: hasOkx,
     leather: hasLeather,
     phantom: hasPhantom,
-    wizz: hasWizz,
-    orange: hasOrange,
   };
 
   const handleConnect = async (
@@ -95,11 +89,9 @@ function App() {
       | typeof UNISAT
       | typeof MAGIC_EDEN
       | typeof OYL
-      | typeof ORANGE
       | typeof PHANTOM
       | typeof LEATHER
       | typeof XVERSE
-      | typeof WIZZ
       | typeof OKX
   ) => {
     if (provider === walletName) {
@@ -214,13 +206,14 @@ function App() {
         <h1 onClick={() => window.location.reload()}>bip322</h1>
       </header>
 
-      <section className="grid grid-cols-[1fr_auto_1fr] gap-8 items-center">
+      <section className="grid grid-cols-2 gap-12 items-center">
         <AnimatedContainer isExpanded={isSignFormVisible}>
           <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${!isSignFormVisible
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+              !isSignFormVisible
                 ? "opacity-0 pointer-events-none"
                 : "opacity-100"
-              }`}
+            }`}
           >
             {connected && address ? (
               <SignMessageForm
@@ -248,13 +241,21 @@ function App() {
           </div>
           <Button
             className={`
-    h-auto w-full leading-relaxed 
-    text-[length:var(--font-large)] 
-    md:text-[length:var(--font-large)]
-    bg-muted backdrop-blur
-    transition-opacity duration-300
-    ${isSignFormVisible ? "opacity-0 pointer-events-none" : "opacity-100"}
-  `}
+            h-[calc(var(--font-large)+3rem)] w-full
+            text-[length:var(--font-md)] 
+            md:text-[length:var(--font-md)]
+            bg-[hsl(var(--light-1))] text-[hsl(var(--dark-1))]
+            [box-shadow:0_0_10px_#fff]
+            hover:bg-[hsl(var(--light-2))]
+            hover:text-[hsl(var(--dark-1))]
+            hover:[box-shadow:0_0_20px_3px_#fff]
+            transition-all duration-300
+              ${
+                isSignFormVisible
+                  ? "opacity-0 pointer-events-none"
+                  : "opacity-100"
+              }
+            `}
             variant="ghost"
             onClick={() => setIsSignFormVisible(true)}
           >
@@ -262,16 +263,13 @@ function App() {
           </Button>
         </AnimatedContainer>
 
-        <span className="button-separator text-[length:var(--font-large)] md:text-[length:var(--font-large)] cursor-default mx-4">
-          /
-        </span>
-
         <AnimatedContainer isExpanded={isVerifyFormVisible}>
           <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${!isVerifyFormVisible
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+              !isVerifyFormVisible
                 ? "opacity-0 pointer-events-none"
                 : "opacity-100"
-              }`}
+            }`}
           >
             <VerifyForm
               formData={verifyFormState}
@@ -284,13 +282,21 @@ function App() {
           </div>
           <Button
             className={`
-      h-auto w-full leading-relaxed 
-      text-[length:var(--font-large)] 
-      md:text-[length:var(--font-large)]
-      bg-muted backdrop-blur
-      transition-opacity duration-300
-      ${isVerifyFormVisible ? "opacity-0 pointer-events-none" : "opacity-100"}
-    `}
+            h-[calc(var(--font-large)+3rem)] w-full
+            text-[length:var(--font-md)] 
+            md:text-[length:var(--font-md)]
+            bg-[hsl(var(--light-1))] text-[hsl(var(--dark-1))]
+            [box-shadow:0_0_10px_#fff]
+            hover:bg-[hsl(var(--light-2))]
+            hover:text-[hsl(var(--dark-1))]
+            hover:[box-shadow:0_0_20px_3px_#fff]
+            transition-all duration-300
+              ${
+                isVerifyFormVisible
+                  ? "opacity-0 pointer-events-none"
+                  : "opacity-100"
+              }
+            `}
             variant="ghost"
             onClick={() => setIsVerifyFormVisible(true)}
           >
@@ -299,25 +305,27 @@ function App() {
         </AnimatedContainer>
       </section>
 
-      <nav className="flex justify-evenly items-center absolute inset-x-0 bottom-0 p-8">
+      <nav className="flex justify-between items-center absolute inset-x-0 bottom-24 py-8">
         <Button
           asChild
           variant="link"
-          className="text-[length:var(--font-x-small)]"
+          className="text-[length:var(--font-small)]"
         >
-          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">bip</a>
+          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
+            bip
+          </a>
         </Button>
         <Button
           asChild
           variant="link"
-          className="text-[length:var(--font-x-small)]"
+          className="text-[length:var(--font-small)]"
         >
           <a href="https://github.com/rust-bitcoin/bip322">github</a>
         </Button>
         <Button
           asChild
           variant="link"
-          className="text-[length:var(--font-x-small)]"
+          className="text-[length:var(--font-small)]"
         >
           <a href="https://crates.io/crates/bip322">crate</a>
         </Button>
