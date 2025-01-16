@@ -1,2 +1,4 @@
 **/target
 www/bip322*
+**/node_modules
+**/dist

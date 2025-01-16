@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --width-target: calc(100vw / 6);
+  --height-target: calc(100vh / 3);
+  --size: min(var(--width-target), var(--height-target));
+  --margin-horizontal: calc((100vw - var(--size) * 5) / 8);
+  --font-x-small: calc(var(--size) * 0.069);
+  --font-small: calc(var(--size) * 0.113);  
+  --font-md: calc(var(--size) * 0.181);    
+  --font-large: calc(var(--size) * 0.292);    
+  --font-x-large: calc(var(--size) * 0.473);
+  --common-spacing: 1rem;
+  --white-glow-small: 0 0 2px rgba(255, 255, 255, 0.7);
+  --white-glow: 0 0 5px rgba(255, 255, 255, 0.7);
+  --white-glow-large: 0 0 10px rgba(255, 255, 255, 0.7);
+  --white-glow-x-large: 0 0 15px rgba(255, 255, 255, 0.7);
+}
+
+/* Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Base styles */
+html {
+  /* background-color: black; */
+  color: white;
+  overflow: hidden;
+  text-align: center;
+  font-family: monospace;
+}
+
+body {
+  margin-inline: var(--margin-horizontal);
+}
+
+/* Layout */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 80vw;
+  margin: auto;
+  padding: var(--common-spacing);
+}
+
+.hero h1 {
+  font-size: var(--font-x-large);
+  text-shadow: var(--white-glow-large);
+  position: absolute;
+  top: calc(var(--common-spacing) * 7.5);
+  inset-inline: 0;
+  cursor: default;
+  font-weight: normal;
+  cursor: pointer;
+  transition: text-shadow 0.3s ease;
+}
+
+.hero h1:hover {
+  text-shadow: var(--white-glow-x-large);
+}
+
+nav a {
+  text-shadow: var(--white-glow);
+  transition: text-shadow 0.3s ease;
+}
+
+nav a:hover {
+  text-shadow: var(--white-glow-large);
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --light-1: 0 0% 90%;        
+    --light-2: 0 0% 95%;       
+    --light-3: 0 0% 100%;    
+    --dark-1: 240 5.9% 10%;
+    --primary: var(--light-1);
+    --primary-foreground: var(--dark-1);
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+  }
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

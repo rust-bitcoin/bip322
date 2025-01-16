@@ -1,5 +1,5 @@
 [package]
-name = "www"
+name = "verify"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,11 +7,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-bip322 = { version = "0.0.9", path = "../" }
+bip322 = { version = "0.0.9", path = "../.." }
 wasm-bindgen = "0.2.95"
-
-[patch.crates-io]
-bip322 = { path = '../' }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wasm_bindgen_unstable_test_coverage)'] }

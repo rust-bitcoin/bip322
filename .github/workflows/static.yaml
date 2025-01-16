@@ -23,22 +23,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+     
+      - name: Install dependencies
+        uses: bahmutov/npm-install@v1
         with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
+          working-directory: www
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build WASM
-        run: |
-          wasm-pack build \
-            --target web \
-            --out-name bip322 \
-            www
-          cp www/pkg/bip322.js www/pkg/bip322_bg.wasm www
+      - name: Build project
+        with:
+          working-directory: www
+        run: npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -46,7 +42,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './www'
+          path: './www/dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
