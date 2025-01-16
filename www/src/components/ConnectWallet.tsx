@@ -31,7 +31,7 @@ interface ConnectWalletFormProps {
       | typeof WIZZ
       | typeof OKX
   ) => Promise<void>;
-  onDisconnect: () => Promise<void>;
+  onDisconnect: () => void;
 }
 const ConnectWalletForm = ({
   hasWallet,

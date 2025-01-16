@@ -103,7 +103,7 @@ function App() {
       | typeof OKX
   ) => {
     if (provider === walletName) {
-      await disconnect();
+      disconnect();
     } else {
       await connect(walletName as never);
     }
@@ -111,7 +111,7 @@ function App() {
 
   const handleDisconnect = async () => {
     try {
-      await disconnect();
+      disconnect();
       resetSignMessageForm();
     } catch (error) {
       console.error("Failed to disconnect wallet:", error);
@@ -196,7 +196,7 @@ function App() {
   useEffect(() => {
     const handleBeforeUnload = async () => {
       if (connected) {
-        await disconnect();
+        disconnect();
       }
     };
 
@@ -217,11 +217,10 @@ function App() {
       <section className="grid grid-cols-[1fr_auto_1fr] gap-8 items-center">
         <AnimatedContainer isExpanded={isSignFormVisible}>
           <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
-              !isSignFormVisible
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${!isSignFormVisible
                 ? "opacity-0 pointer-events-none"
                 : "opacity-100"
-            }`}
+              }`}
           >
             {connected && address ? (
               <SignMessageForm
@@ -269,11 +268,10 @@ function App() {
 
         <AnimatedContainer isExpanded={isVerifyFormVisible}>
           <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
-              !isVerifyFormVisible
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${!isVerifyFormVisible
                 ? "opacity-0 pointer-events-none"
                 : "opacity-100"
-            }`}
+              }`}
           >
             <VerifyForm
               formData={verifyFormState}
@@ -307,9 +305,7 @@ function App() {
           variant="link"
           className="text-[length:var(--font-x-small)]"
         >
-          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
-            bip
-          </a>
+          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">bip</a>
         </Button>
         <Button
           asChild
