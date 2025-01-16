@@ -19,7 +19,7 @@ const AnimatedContainer = ({ children, isExpanded }) => {
 
   return (
     <div
-      className="w-full transition-all duration-300 ease-in-out bg-primary/5 border-border/40 backdrop-blur rounded-md"
+      className="w-full transition-all duration-300 ease-in-out bg-primary/5 border-border/40 backdrop-blur rounded-xl"
       style={{ height }}
     >
       <div ref={contentRef} className="relative w-full flex items-center">

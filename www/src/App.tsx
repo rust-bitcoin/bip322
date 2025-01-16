@@ -245,11 +245,14 @@ function App() {
             text-[length:var(--font-md)] 
             md:text-[length:var(--font-md)]
             bg-[hsl(var(--light-1))] text-[hsl(var(--dark-1))]
-            [box-shadow:0_0_10px_#fff]
+            [box-shadow:0_0_7px_#fff]
             hover:bg-[hsl(var(--light-2))]
             hover:text-[hsl(var(--dark-1))]
-            hover:[box-shadow:0_0_20px_3px_#fff]
+            hover:[box-shadow:0_0_15px_3px_#fff]
+            rounded-xl
             transition-all duration-300
+            [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2),0_0_12px_rgba(0,0,0,0.1)]
+            hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3),0_0_18px_rgba(0,0,0,0.2)]
               ${
                 isSignFormVisible
                   ? "opacity-0 pointer-events-none"
@@ -290,7 +293,10 @@ function App() {
             hover:bg-[hsl(var(--light-2))]
             hover:text-[hsl(var(--dark-1))]
             hover:[box-shadow:0_0_20px_3px_#fff]
+            rounded-xl
             transition-all duration-300
+            [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2),0_0_12px_rgba(0,0,0,0.1)]
+            hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3),0_0_18px_rgba(0,0,0,0.2)]
               ${
                 isVerifyFormVisible
                   ? "opacity-0 pointer-events-none"
@@ -305,7 +311,7 @@ function App() {
         </AnimatedContainer>
       </section>
 
-      <nav className="flex justify-between items-center absolute inset-x-0 bottom-24 py-8">
+      <nav className="flex justify-between items-center absolute inset-x-0 bottom-28 py-18 mb-20">
         <Button
           asChild
           variant="link"

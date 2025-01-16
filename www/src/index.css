@@ -13,7 +13,10 @@
   --font-large: calc(var(--size) * 0.292);    
   --font-x-large: calc(var(--size) * 0.473);
   --common-spacing: 1rem;
-  --white-glow: 0 0 5px #fff;
+  --white-glow-small: 0 0 2px rgba(255, 255, 255, 0.7);
+  --white-glow: 0 0 5px rgba(255, 255, 255, 0.7);
+  --white-glow-large: 0 0 10px rgba(255, 255, 255, 0.7);
+  --white-glow-x-large: 0 0 15px rgba(255, 255, 255, 0.7);
 }
 
 /* Reset */
@@ -51,25 +54,27 @@ body {
 
 .hero h1 {
   font-size: var(--font-x-large);
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
+  text-shadow: var(--white-glow-large);
   position: absolute;
-  top: calc(var(--common-spacing) * 6);
+  top: calc(var(--common-spacing) * 7.5);
   inset-inline: 0;
   cursor: default;
   font-weight: normal;
   cursor: pointer;
+  transition: text-shadow 0.3s ease;
+}
+
+.hero h1:hover {
+  text-shadow: var(--white-glow-x-large);
+}
+
+nav a {
+  text-shadow: var(--white-glow);
+  transition: text-shadow 0.3s ease;
 }
 
 nav a:hover {
-  text-shadow: var(--white-glow);
-}
-
-.btn-glow {
-  box-shadow: 0 0 20px #fff;
-}
-
-.btn-glow:hover {
-  box-shadow: 0 0 30px 3px #fff;
+  text-shadow: var(--white-glow-large);
 }
 
 @layer base {
