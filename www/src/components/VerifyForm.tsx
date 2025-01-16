@@ -28,7 +28,7 @@ const VerifyForm = ({
 }: VerifyFormProps) => {
   return (
     <FormWrapper
-      title={verificationResult ? "message verified." : "verify message."}
+      title="verify message"
       onBack={!verificationResult ? onBack : undefined}
       onReset={verificationResult ? onReset : undefined}
     >

@@ -43,7 +43,7 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
 
   return (
     <FormWrapper
-      title={signedData ? "message signed." : "sign message."}
+      title="sign message"
       onReset={signedData ? onReset : undefined}
       onBack={!signedData ? onBack : undefined}
     >

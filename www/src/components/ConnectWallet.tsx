@@ -41,7 +41,7 @@ const ConnectWalletForm = ({
   const baseButtonClass =
     "w-full h-auto border border-white/80 transition-all duration-200 p-2 hover:bg-white hover:text-black [&_svg]:!w-10 [&_svg]:!h-10";
   return (
-    <FormWrapper title="connect wallet." onBack={onDisconnect}>
+    <FormWrapper title="connect wallet" onBack={onDisconnect}>
       <div className="grid grid-cols-3 gap-4">
         {Object.values(SUPPORTED_WALLETS).map((wallet) => {
           const isMissingWallet = !hasWallet[wallet.name];
