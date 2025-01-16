@@ -39,8 +39,7 @@ const ConnectWalletForm = ({
   onDisconnect,
 }: ConnectWalletFormProps) => {
   const baseButtonClass =
-    "w-full h-auto border border-white/80 transition-all duration-200 p-2 hover:bg-white hover:text-black hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] [&_svg]:!w-10 [&_svg]:!h-10";
-
+    "w-full h-auto border border-white/80 transition-all duration-200 p-2 hover:bg-white hover:text-black [&_svg]:!w-10 [&_svg]:!h-10";
   return (
     <FormWrapper title="connect wallet." onBack={onDisconnect}>
       <div className="grid grid-cols-3 gap-4">

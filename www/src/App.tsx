@@ -24,6 +24,7 @@ import ConnectWalletForm from "@/components/ConnectWallet";
 import SignMessageForm from "@/components/SignMessage";
 import "@/index.css";
 import { Button } from "@/components/ui/button";
+import AnimatedContainer from "./components/AnimatedContainer";
 
 export interface SignMessageState {
   message: string;
@@ -214,54 +215,66 @@ function App() {
       </header>
 
       <section className="grid grid-cols-[1fr_auto_1fr] gap-8 items-center">
-        <div className="w-full">
-          {!isSignFormVisible ? (
-            <Button
-              className="sign-button h-auto w-full leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
-              variant="outline"
-              onClick={() => setIsSignFormVisible(true)}
-            >
-              sign
-            </Button>
-          ) : connected && address ? (
-            <SignMessageForm
-              address={address}
-              message={signMessageState.message}
-              signedData={signMessageState.signedData}
-              onMessageChange={(message) =>
-                setSignMessageState((prev) => ({ ...prev, message }))
-              }
-              onSign={handleMessageSign}
-              onReset={resetSignMessageForm}
-              onBack={handleDisconnect}
-            />
-          ) : (
-            <ConnectWalletForm
-              provider={provider}
-              hasWallet={hasWallet}
-              onConnect={handleConnect}
-              onDisconnect={() => {
-                handleDisconnect();
-                setIsSignFormVisible(false);
-              }}
-            />
-          )}
-        </div>
+        <AnimatedContainer isExpanded={isSignFormVisible}>
+          <div
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+              !isSignFormVisible
+                ? "opacity-0 pointer-events-none"
+                : "opacity-100"
+            }`}
+          >
+            {connected && address ? (
+              <SignMessageForm
+                address={address}
+                message={signMessageState.message}
+                signedData={signMessageState.signedData}
+                onMessageChange={(message) =>
+                  setSignMessageState((prev) => ({ ...prev, message }))
+                }
+                onSign={handleMessageSign}
+                onReset={resetSignMessageForm}
+                onBack={handleDisconnect}
+              />
+            ) : (
+              <ConnectWalletForm
+                provider={provider}
+                hasWallet={hasWallet}
+                onConnect={handleConnect}
+                onDisconnect={() => {
+                  handleDisconnect();
+                  setIsSignFormVisible(false);
+                }}
+              />
+            )}
+          </div>
+          <Button
+            className={`
+    h-auto w-full leading-relaxed 
+    text-[length:var(--font-large)] 
+    md:text-[length:var(--font-large)]
+    bg-muted backdrop-blur
+    transition-opacity duration-300
+    ${isSignFormVisible ? "opacity-0 pointer-events-none" : "opacity-100"}
+  `}
+            variant="ghost"
+            onClick={() => setIsSignFormVisible(true)}
+          >
+            sign
+          </Button>
+        </AnimatedContainer>
 
         <span className="button-separator text-[length:var(--font-large)] md:text-[length:var(--font-large)] cursor-default mx-4">
           /
         </span>
 
-        <div className="w-full">
-          {!isVerifyFormVisible ? (
-            <Button
-              className="verify-button h-auto w-full leading-relaxed text-[length:var(--font-large)] md:text-[length:var(--font-large)]"
-              variant="outline"
-              onClick={() => setIsVerifyFormVisible(true)}
-            >
-              verify
-            </Button>
-          ) : (
+        <AnimatedContainer isExpanded={isVerifyFormVisible}>
+          <div
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+              !isVerifyFormVisible
+                ? "opacity-0 pointer-events-none"
+                : "opacity-100"
+            }`}
+          >
             <VerifyForm
               formData={verifyFormState}
               verificationResult={verifyFormState.verificationResult}
@@ -270,8 +283,22 @@ function App() {
               onReset={resetVerifyForm}
               onBack={() => setIsVerifyFormVisible(false)}
             />
-          )}
-        </div>
+          </div>
+          <Button
+            className={`
+      h-auto w-full leading-relaxed 
+      text-[length:var(--font-large)] 
+      md:text-[length:var(--font-large)]
+      bg-muted backdrop-blur
+      transition-opacity duration-300
+      ${isVerifyFormVisible ? "opacity-0 pointer-events-none" : "opacity-100"}
+    `}
+            variant="ghost"
+            onClick={() => setIsVerifyFormVisible(true)}
+          >
+            verify
+          </Button>
+        </AnimatedContainer>
       </section>
 
       <nav className="flex justify-evenly items-center absolute inset-x-0 bottom-0 p-8">

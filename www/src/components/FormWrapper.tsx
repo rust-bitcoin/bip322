@@ -19,7 +19,7 @@ const FormWrapper = ({
   onReset,
 }: FormWrapperProps) => {
   return (
-    <Card className={`bg-muted border-border/40 backdrop-blur ${className}`}>
+    <Card className={`bg-transparent border-0 shadow-none ${className}`}>
       {title && (
         <CardHeader className="pb-6 relative">
           <div className="flex items-center justify-center relative">
