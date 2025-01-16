@@ -122,7 +122,7 @@ function App() {
     if (!connected || !signMessageState.message) return;
 
     try {
-      const signature = await signMessage(signMessageState.message);
+      const signature = await signMessage(signMessageState.message, address);
       const newSignedData = {
         address: address,
         message: signMessageState.message,
