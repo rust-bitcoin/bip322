@@ -1,14 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  useLaserEyes,
-  UNISAT,
-  MAGIC_EDEN,
-  OYL,
-  PHANTOM,
-  LEATHER,
-  XVERSE,
-  OKX,
-} from "@omnisat/lasereyes";
+import { useLaserEyes, MAGIC_EDEN, ProviderType } from "@omnisat/lasereyes";
 import init, { verify } from "@/bip322.js";
 import VerifyForm from "@/components/VerifyForm";
 import ConnectWalletForm from "@/components/ConnectWallet";
@@ -77,16 +68,7 @@ function App() {
     phantom: hasPhantom,
   };
 
-  const handleConnect = async (
-    walletName:
-      | typeof UNISAT
-      | typeof MAGIC_EDEN
-      | typeof OYL
-      | typeof PHANTOM
-      | typeof LEATHER
-      | typeof XVERSE
-      | typeof OKX
-  ) => {
+  const handleConnect = async (walletName: ProviderType) => {
     if (provider === walletName) {
       disconnect();
     } else {
