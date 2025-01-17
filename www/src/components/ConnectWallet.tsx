@@ -48,35 +48,40 @@ const ConnectWalletForm = ({
   return (
     <FormWrapper title="connect wallet" onBack={onDisconnect}>
       <div className="grid grid-cols-3 gap-4">
-        {Object.values(SUPPORTED_WALLETS).map((wallet) => {
-          const isMissingWallet = !hasWallet[wallet.name];
-          return (
-            <div key={wallet.name} className="w-full">
-              {isMissingWallet ? (
-                <Button
-                  asChild
-                  className={`${baseButtonClass} bg-transparent/5 backdrop-blur-sm`}
-                >
-                  <a
-                    href={wallet.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center"
+        {Object.values(SUPPORTED_WALLETS)
+          .filter(
+            (wallet) => wallet.name !== "op_net" && wallet.name !== "wizz"
+          )
+          .map((wallet) => {
+            console.log(wallet);
+            const isMissingWallet = !hasWallet[wallet.name];
+            return (
+              <div key={wallet.name} className="w-full">
+                {isMissingWallet ? (
+                  <Button
+                    asChild
+                    className={`${baseButtonClass} bg-transparent/5 backdrop-blur-sm`}
+                  >
+                    <a
+                      href={wallet.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center"
+                    >
+                      <WalletIcon walletName={wallet.name} size={40} />
+                    </a>
+                  </Button>
+                ) : (
+                  <Button
+                    className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
+                    onClick={() => onConnect(wallet.name)}
                   >
                     <WalletIcon walletName={wallet.name} size={40} />
-                  </a>
-                </Button>
-              ) : (
-                <Button
-                  className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
-                  onClick={() => onConnect(wallet.name)}
-                >
-                  <WalletIcon walletName={wallet.name} size={40} />
-                </Button>
-              )}
-            </div>
-          );
-        })}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
       </div>
     </FormWrapper>
   );
