@@ -74,6 +74,7 @@ const ConnectWalletForm = ({
                 ) : (
                   <Button
                     className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
+                    // @ts-ignore
                     onClick={() => onConnect(wallet.name)}
                   >
                     <WalletIcon walletName={wallet.name} size={40} />
