@@ -1,15 +1,5 @@
 import { Button } from "@/components/ui/button";
-import {
-  SUPPORTED_WALLETS,
-  WalletIcon,
-  UNISAT,
-  MAGIC_EDEN,
-  OYL,
-  PHANTOM,
-  LEATHER,
-  XVERSE,
-  OKX,
-} from "@omnisat/lasereyes";
+import { SUPPORTED_WALLETS, WalletIcon } from "@omnisat/lasereyes";
 import FormWrapper from "./FormWrapper";
 
 interface ConnectWalletFormProps {
@@ -18,14 +8,7 @@ interface ConnectWalletFormProps {
     [key: string]: boolean;
   };
   onConnect: (
-    walletName:
-      | typeof UNISAT
-      | typeof MAGIC_EDEN
-      | typeof OYL
-      | typeof PHANTOM
-      | typeof LEATHER
-      | typeof XVERSE
-      | typeof OKX
+    walletName: (typeof SUPPORTED_WALLETS)[keyof typeof SUPPORTED_WALLETS]["name"]
   ) => Promise<void>;
   onDisconnect: () => void;
 }
