@@ -1,10 +1,3 @@
-// const defaultVerifyFormData = {
-//   address: "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3",
-//   message: "Hello World",
-//   signature:
-//     "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ==",
-// };
-
 import { useEffect, useState } from "react";
 import {
   useLaserEyes,

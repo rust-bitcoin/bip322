@@ -25,7 +25,7 @@ jobs:
 
       - name: Setup Node
         uses: actions/setup-node@v4
-     
+
       - name: Install dependencies
         uses: bahmutov/npm-install@v1
         with:
@@ -41,9 +41,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './www/dist'
+          path: "./www/dist"
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-    
