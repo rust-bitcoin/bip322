@@ -35,6 +35,7 @@ const inputClass = `
   disabled:opacity-100 
   disabled:cursor-pointer
   transition-[all,box-shadow] duration-300
+  w-full
 `;
 
 const textareaClass = `
@@ -43,7 +44,7 @@ const textareaClass = `
   text-[length:var(--font-x-small)] 
   md:text-[length:var(--font-x-small)] 
   px-4 py-4 
-  min-h-[120px] 
+  h-40
   resize-none 
   border-[0.5px] border-white/80 
   rounded-xl
@@ -56,10 +57,11 @@ const textareaClass = `
   disabled:opacity-100 
   disabled:cursor-pointer
   transition-[all,box-shadow] duration-300
+  w-full
 `;
 
 const buttonClass = `
-  w-full h-auto 
+  w-full
   font-mono 
   border-[0.5px] border-white/80 
   hover:bg-white hover:text-black 
@@ -70,6 +72,7 @@ const buttonClass = `
   hover:[box-shadow:var(--white-glow-large)]
   [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2)]
   hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3)]
+  py-8
 `;
 
 const SignMessageForm: React.FC<SignMessageFormProps> = ({
@@ -92,7 +95,7 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
       onReset={signedData ? onReset : undefined}
       onBack={!signedData ? onBack : undefined}
     >
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-6 h-full">
         <Input
           type="text"
           id="connected-wallet"

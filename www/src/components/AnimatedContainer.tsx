@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import React from "react";
 
 interface AnimatedContainerProps {
   children: React.ReactNode;
@@ -9,30 +9,22 @@ const AnimatedContainer: React.FC<AnimatedContainerProps> = ({
   children,
   isExpanded,
 }) => {
-  const contentRef = useRef() as React.MutableRefObject<HTMLDivElement>;
-  const [height, setHeight] = useState("calc(var(--font-large) + 3rem)");
-
-  useEffect(() => {
-    const rafId = requestAnimationFrame(() => {
-      if (contentRef.current) {
-        const newHeight = contentRef.current?.scrollHeight;
-        setHeight(
-          isExpanded ? `${newHeight}px` : "calc(var(--font-large) + 3rem)"
-        );
-      }
-    });
-
-    return () => cancelAnimationFrame(rafId);
-  }, [isExpanded, children]);
+  const [formContent, button] = React.Children.toArray(children);
 
   return (
-    <div
-      className="w-full transition-all duration-300 ease-in-out bg-primary/5 border-border/40 backdrop-blur rounded-xl"
-      style={{ height }}
-    >
-      <div ref={contentRef} className="relative w-full flex items-center">
-        {children}
+    <div className="w-full">
+      <div
+        className={`
+        w-full relative
+        transition-all duration-300 ease-in-out 
+        bg-primary/5 border-border/40 backdrop-blur rounded-xl
+        ${isExpanded ? "h-auto" : "h-0"}
+        overflow-hidden mb-0
+      `}
+      >
+        {formContent}
       </div>
+      {isExpanded ? null : button}
     </div>
   );
 };

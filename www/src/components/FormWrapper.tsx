@@ -14,12 +14,11 @@ interface FormWrapperProps {
 const FormWrapper = ({
   children,
   title,
-  className = "",
   onBack,
   onReset,
 }: FormWrapperProps) => {
   return (
-    <Card className={`bg-transparent border-0 shadow-none ${className}`}>
+    <Card className="bg-transparent border-0 shadow-none w-full">
       {title && (
         <CardHeader className="pb-6 relative">
           <div className="flex items-center justify-center relative">
@@ -44,7 +43,7 @@ const FormWrapper = ({
                 </Button>
               )
             )}
-            <CardTitle className="font-mono font-normal text-[length:var(--font-small)] opacity-90 tracking-wider [text-shadow:var(--white-glow)]">
+            <CardTitle className="font-mono font-normal text-[length:var(--font-x-small)] opacity-90 tracking-wider [text-shadow:var(--white-glow)]">
               {title}
             </CardTitle>
           </div>
