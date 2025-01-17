@@ -2,14 +2,21 @@ import { Button } from "@/components/ui/button";
 import { SUPPORTED_WALLETS, WalletIcon } from "@omnisat/lasereyes";
 import FormWrapper from "./FormWrapper";
 
+type WalletName =
+  | "unisat"
+  | "magic-eden"
+  | "oyl"
+  | "phantom"
+  | "leather"
+  | "xverse"
+  | "okx";
+
 interface ConnectWalletFormProps {
   provider: string | null;
   hasWallet: {
     [key: string]: boolean;
   };
-  onConnect: (
-    walletName: (typeof SUPPORTED_WALLETS)[keyof typeof SUPPORTED_WALLETS]["name"]
-  ) => Promise<void>;
+  onConnect: (walletName: WalletName) => Promise<void>;
   onDisconnect: () => void;
 }
 const ConnectWalletForm = ({
@@ -57,7 +64,7 @@ const ConnectWalletForm = ({
                 ) : (
                   <Button
                     className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
-                    onClick={() => onConnect(wallet.name)}
+                    onClick={() => onConnect(wallet.name as WalletName)}
                   >
                     <WalletIcon walletName={wallet.name} size={40} />
                   </Button>
