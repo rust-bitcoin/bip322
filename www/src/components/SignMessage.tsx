@@ -1,8 +1,8 @@
 import React from "react";
-import FormWrapper from "./FormWrapper";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import FormWrapper from "@/components/FormWrapper";
+import { BaseInput } from "@/components/ui/base-input";
+import { BaseButton } from "@/components/ui/base-button";
+import { BaseTextarea } from "@/components/ui/base-textarea";
 
 interface SignMessageFormProps {
   address: string;
@@ -17,63 +17,6 @@ interface SignMessageFormProps {
   onReset: () => void;
   onBack: () => void;
 }
-
-const inputClass = `
-  font-mono 
-  text-white 
-  text-[length:var(--font-x-small)] 
-  md:text-[length:var(--font-x-small)] 
-  px-4 py-8 
-  border-[0.5px] border-white/80
-  rounded-xl
-  [box-shadow:var(--white-glow)]
-  hover:[box-shadow:var(--white-glow-large)]
-  focus-visible:[box-shadow:var(--white-glow-large)]
-  focus:[box-shadow:var(--white-glow-large)]
-  [text-shadow:var(--white-glow-small)]
-  disabled:text-white/60 
-  disabled:opacity-100 
-  disabled:cursor-pointer
-  transition-[all,box-shadow] duration-300
-  w-full
-`;
-
-const textareaClass = `
-  font-mono 
-  text-white 
-  text-[length:var(--font-x-small)] 
-  md:text-[length:var(--font-x-small)] 
-  px-4 py-4 
-  h-40
-  resize-none 
-  border-[0.5px] border-white/80 
-  rounded-xl
-  [box-shadow:var(--white-glow)]
-  hover:[box-shadow:var(--white-glow-large)]
-  focus-visible:[box-shadow:var(--white-glow-large)]
-  focus:[box-shadow:var(--white-glow-large)]
-  [text-shadow:var(--white-glow-small)]
-  disabled:text-white/60 
-  disabled:opacity-100 
-  disabled:cursor-pointer
-  transition-[all,box-shadow] duration-300
-  w-full
-`;
-
-const buttonClass = `
-  w-full
-  font-mono 
-  border-[0.5px] border-white/80 
-  hover:bg-white hover:text-black 
-  transition-[all,box-shadow,text-shadow] duration-300
-  text-[length:var(--font-x-small)]
-  rounded-xl
-  [box-shadow:var(--white-glow)]
-  hover:[box-shadow:var(--white-glow-large)]
-  [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2)]
-  hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3)]
-  py-8
-`;
 
 const SignMessageForm: React.FC<SignMessageFormProps> = ({
   address,
@@ -95,37 +38,37 @@ const SignMessageForm: React.FC<SignMessageFormProps> = ({
       onReset={signedData ? onReset : undefined}
       onBack={!signedData ? onBack : undefined}
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-6 h-full">
-        <Input
+      <form
+        onSubmit={handleSubmit}
+        className="flex flex-col gap-[calc(var(--size)*0.06)] h-full"
+      >
+        <BaseInput
           type="text"
           id="connected-wallet"
           placeholder="connected wallet"
           value={signedData ? signedData.address : address}
           disabled
-          className={inputClass}
         />
-        <Textarea
+        <BaseTextarea
           id="message"
           placeholder="message"
           value={signedData ? signedData.message : message}
           onChange={(e) => !signedData && onMessageChange(e.target.value)}
           required
           disabled={signedData !== null}
-          className={textareaClass}
         />
         {signedData ? (
-          <Input
+          <BaseInput
             type="text"
             id="signature"
             placeholder="signature"
             value={signedData.signature}
             disabled
-            className={inputClass}
           />
         ) : (
-          <Button type="submit" className={buttonClass}>
+          <BaseButton variant="default" type="submit">
             sign
-          </Button>
+          </BaseButton>
         )}
       </form>
     </FormWrapper>

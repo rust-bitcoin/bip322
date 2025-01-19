@@ -1,7 +1,7 @@
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { ChevronLeft, RotateCcw } from "lucide-react";
+import { BaseButton } from "@/components/ui/base-button";
 
 interface FormWrapperProps {
   children: React.ReactNode;
@@ -20,36 +20,32 @@ const FormWrapper = ({
   return (
     <Card className="bg-transparent border-0 shadow-none w-full">
       {title && (
-        <CardHeader className="pb-6 relative">
+        <CardHeader className="relative py-[calc(var(--size)*0.06)]">
           <div className="flex items-center justify-center relative">
             {onReset ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onReset}
-                className="absolute left-0 p-0 text-[length:var(--font-small)] hover:bg-transparent hover:opacity-90 cursor-pointer transition-[opacity,color,text-shadow] duration-300 ease-in-out [&_svg]:!w-6 [&_svg]:!h-6 mx-1 [&_svg]:filter [&_svg]:drop-shadow-[0_0_5px_rgba(255,255,255,0.7)] hover:[&_svg]:drop-shadow-[0_0_10px_rgba(255,255,255,0.7)] [text-shadow:var(--white-glow)] hover:[text-shadow:var(--white-glow-large)] text-white/80 hover:text-white"
-              >
+              <BaseButton variant="iconControl" onClick={onReset}>
                 <RotateCcw className="opacity-90" />
-              </Button>
+              </BaseButton>
             ) : (
               onBack && (
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <BaseButton
+                  variant="iconControl"
                   onClick={onBack}
-                  className="absolute left-0 p-0 text-[length:var(--font-small)] hover:bg-transparent hover:opacity-90 cursor-pointer transition-[opacity,color,text-shadow] duration-300 ease-in-out [&_svg]:!w-6 [&_svg]:!h-6 mx-1 [&_svg]:filter [&_svg]:drop-shadow-[0_0_5px_rgba(255,255,255,0.7)] hover:[&_svg]:drop-shadow-[0_0_10px_rgba(255,255,255,0.7)] [text-shadow:var(--white-glow)] hover:[text-shadow:var(--white-glow-large)] text-white/80 hover:text-white"
+                  className="absolute left-0 p-0 text-[length:var(--font-sm)]"
                 >
                   <ChevronLeft className="opacity-90" />
-                </Button>
+                </BaseButton>
               )
             )}
-            <CardTitle className="font-mono font-normal text-[length:var(--font-x-small)] opacity-90 tracking-wider [text-shadow:var(--white-glow)]">
+            <CardTitle className="font-mono font-normal text-[length:var(--font-sm)] opacity-90 tracking-wider [text-shadow:var(--glow)]">
               {title}
             </CardTitle>
           </div>
         </CardHeader>
       )}
-      <CardContent className="space-y-6 pb-8">{children}</CardContent>
+      <CardContent className="pt-[calc(var(--size)*0.02)] pb-[calc(var(--size)*0.08)]">
+        {children}
+      </CardContent>
     </Card>
   );
 };
