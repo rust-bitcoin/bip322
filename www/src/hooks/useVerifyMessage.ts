@@ -9,7 +9,7 @@ export interface VerifyFormState {
 }
 
 interface VerifyMessageActions {
-  handleChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   handleVerify: (e: React.FormEvent) => void;
   reset: () => void;
 }
@@ -22,7 +22,7 @@ export const useVerifyMessage = (): [VerifyFormState, VerifyMessageActions] => {
     verificationResult: null,
   });
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setState(prev => ({
       ...prev,
       [e.target.id]: e.target.value,

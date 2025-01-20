@@ -38,8 +38,8 @@ function App() {
 
       <main className="w-full">
         <div className="w-[95%] md:w-[65vw] mx-auto">
-          <div className="flex flex-col lg:flex-row gap-[calc(var(--size)*0.1)] min-h-[50vh] items-center">
-            <div className="flex-1 w-full flex justify-center items-center">
+          <div className="flex flex-col lg:flex-row gap-[calc(var(--size)*0.2)] lg:gap-[calc(var(--size)*0.1)] min-h-[50vh] items-center">
+            <div className="flex-1 w-full flex justify-center items-end lg:items-center">
               <SignMessageForm
                 message={signState.message}
                 signedData={signState.signedData}
@@ -54,7 +54,7 @@ function App() {
               />
             </div>
 
-            <div className="flex-1 w-full flex justify-center items-center">
+            <div className="flex-1 w-full flex justify-center items-start lg:items-center">
               <VerifyForm
                 formData={verifyState}
                 verificationResult={verifyState.verificationResult}

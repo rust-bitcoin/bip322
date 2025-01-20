@@ -72,6 +72,7 @@ const SignMessageForm = ({
                 disabled
                 tooltipLabel="address"
               />
+
               <BaseTextarea
                 placeholder="message"
                 value={signedData ? signedData.message : message}
@@ -79,7 +80,9 @@ const SignMessageForm = ({
                 required
                 disabled={signedData !== null}
                 tooltipLabel="message"
+                variant="three-lines"
               />
+
               {signedData ? (
                 <BaseInput
                   type="text"

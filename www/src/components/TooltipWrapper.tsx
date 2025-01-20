@@ -56,32 +56,28 @@ export const TooltipWrapper = ({
   return (
     <TooltipProvider>
       <Tooltip open={isTooltipOpen} onOpenChange={setIsTooltipOpen}>
-        <div className="relative w-full">
-          <TooltipTrigger
-            className="w-full"
-            onClick={(e) => {
-              e.preventDefault();
-              if (clickToCopy) handleCopy();
-            }}
+        <TooltipTrigger
+          asChild
+          onClick={(e) => {
+            e.preventDefault();
+            if (clickToCopy) handleCopy();
+          }}
+        >
+          <div
+            className={`tooltip-wrapper ${clickToCopy ? "cursor-pointer" : ""}`}
           >
             <div
-              className={`tooltip-wrapper ${
-                clickToCopy ? "cursor-pointer" : ""
+              className={`tooltip-wrapper-inner ${
+                clickToCopy ? "copy-enabled" : ""
               }`}
             >
-              <div
-                className={`tooltip-wrapper-inner ${
-                  clickToCopy ? "copy-enabled" : ""
-                }`}
-              >
-                {children}
-              </div>
+              {children}
             </div>
-          </TooltipTrigger>
-          <TooltipContent sideOffset={5}>
-            <p className="tooltip-text">{getTooltipText()}</p>
-          </TooltipContent>
-        </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent sideOffset={5}>
+          <p className="text-xs">{getTooltipText()}</p>
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

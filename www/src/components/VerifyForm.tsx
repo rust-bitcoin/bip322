@@ -3,12 +3,15 @@ import FormWrapper from "@/components/FormWrapper";
 import { BaseInput } from "@/components/ui/base-input";
 import { BaseButton } from "@/components/ui/base-button";
 import type { VerifyFormState } from "@/hooks/useVerifyMessage";
+import { BaseTextarea } from "./ui/base-textarea";
 
 interface VerifyFormProps {
   formData: VerifyFormState;
   verificationResult: string | null;
   onSubmit: (e: React.FormEvent) => void;
-  onInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onInputChange: (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => void;
   onReset: () => void;
 }
 
@@ -53,8 +56,7 @@ const VerifyForm = ({
               tooltipLabel="address"
             />
 
-            <BaseInput
-              type="text"
+            <BaseTextarea
               id="message"
               placeholder="message"
               value={formData.message}
@@ -63,6 +65,7 @@ const VerifyForm = ({
               required
               disabled={verificationResult !== null}
               tooltipLabel="message"
+              variant="two-lines"
             />
 
             <BaseInput

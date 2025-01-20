@@ -183,7 +183,7 @@ body {
 .button-icon {
   background-color: transparent;
   aspect-ratio: 1;
-  padding: calc(var(--font-sm) * 1.2);
+  padding: calc(var(--font-sm) * 1.8) calc(var(--font-sm) * 1.2);
   transition: all 0.3s ease;
   background-color: hsl(var(--primary) / 0.05) !important;
 }
@@ -194,8 +194,8 @@ body {
 }
 
 .button-icon svg {
-  width: calc(var(--font-md) * 1.1) !important;
-  height: calc(var(--font-md) * 1.1) !important;
+  width: calc(var(--font-md) * 1.4) !important;
+  height: calc(var(--font-md) * 1.4) !important;
 }
 
 
@@ -233,11 +233,20 @@ body {
 .common-textarea {
   resize: none;
   font-size: var(--font-xs) !important;
-  height: calc(var(--font-sm) * 6);
   padding: calc(var(--font-sm) * 0.8) calc(var(--font-sm) * 0.6);
   color: hsl(var(--primary) / 0.8);
   text-shadow: var(--glow-sm);
 }  
+
+.common-textarea.two-lines {
+  height: calc(var(--font-sm) * 6);
+  min-height: calc(var(--font-sm) * 6);
+}
+
+.common-textarea.three-lines {
+  height: calc(var(--font-sm) * 9.2);
+  min-height: calc(var(--font-sm) * 9.2);
+}
 
 .verification-input {
   text-align: center;
