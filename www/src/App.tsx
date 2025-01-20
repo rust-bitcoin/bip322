@@ -1,316 +1,89 @@
-import { useEffect, useState } from "react";
-import { useLaserEyes, MAGIC_EDEN, ProviderType } from "@omnisat/lasereyes";
-import init, { verify } from "@/bip322.js";
+import { useEffect } from "react";
 import VerifyForm from "@/components/VerifyForm";
-import ConnectWalletForm from "@/components/ConnectWallet";
 import SignMessageForm from "@/components/SignMessage";
-import "@/index.css";
-import { Button } from "@/components/ui/button";
-import AnimatedContainer from "./components/AnimatedContainer";
-
-export interface SignMessageState {
-  message: string;
-  signedData: {
-    address: string;
-    message: string;
-    signature: string;
-  } | null;
-}
-
-export interface VerifyFormState {
-  address: string;
-  message: string;
-  signature: string;
-  verificationResult: string | null;
-}
+import { BaseButton } from "@/components/ui/base-button";
+import { useWasmInit } from "@/hooks/useWasmInit";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
+import { useSignMessage } from "@/hooks/useSignMessage";
+import { useVerifyMessage } from "@/hooks/useVerifyMessage";
 
 function App() {
-  const [isWasmInitialized, setWasmInitialized] = useState(false);
-
-  const [isSignFormVisible, setIsSignFormVisible] = useState(false);
-  const [isVerifyFormVisible, setIsVerifyFormVisible] = useState(false);
-
-  const [signMessageState, setSignMessageState] = useState<SignMessageState>({
-    message: "",
-    signedData: null,
-  });
-
-  const [verifyFormState, setVerifyFormState] = useState<VerifyFormState>({
-    address: "",
-    message: "",
-    signature: "",
-    verificationResult: null,
-  });
-
-  const {
-    connect,
-    disconnect,
-    address,
-    provider,
-    hasUnisat,
-    hasXverse,
-    hasOyl,
-    hasMagicEden,
-    hasOkx,
-    hasLeather,
-    hasPhantom,
-    connected,
-    signMessage,
-  } = useLaserEyes();
-
-  const hasWallet = {
-    unisat: hasUnisat,
-    xverse: hasXverse,
-    oyl: hasOyl,
-    [MAGIC_EDEN]: hasMagicEden,
-    okx: hasOkx,
-    leather: hasLeather,
-    phantom: hasPhantom,
-  };
-
-  const handleConnect = async (walletName: ProviderType) => {
-    if (provider === walletName) {
-      disconnect();
-    } else {
-      await connect(walletName as never);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    try {
-      disconnect();
-      resetSignMessageForm();
-    } catch (error) {
-      console.error("Failed to disconnect wallet:", error);
-    }
-  };
-
-  const handleMessageSign = async () => {
-    if (!connected || !signMessageState.message) return;
-
-    try {
-      const signature = await signMessage(signMessageState.message, address);
-      const newSignedData = {
-        address: address,
-        message: signMessageState.message,
-        signature,
-      };
-
-      setSignMessageState((prev) => ({
-        ...prev,
-        signedData: newSignedData,
-      }));
-    } catch (error) {
-      console.error("Failed to sign message:", error);
-    }
-  };
-
-  const handleVerification = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isWasmInitialized) {
-      console.error("WASM not initialized yet");
-      return;
-    }
-
-    try {
-      const result = verify(
-        verifyFormState.address,
-        verifyFormState.message,
-        verifyFormState.signature
-      );
-      setVerifyFormState((prev) => ({
-        ...prev,
-        verificationResult: result.toString(),
-      }));
-    } catch (error) {
-      console.error("Verification failed:", error);
-      setVerifyFormState((prev) => ({
-        ...prev,
-        verificationResult: "Verification failed",
-      }));
-    }
-  };
-
-  const handleVerifyFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setVerifyFormState((prev) => ({
-      ...prev,
-      [e.target.id]: e.target.value,
-    }));
-  };
-
-  const resetSignMessageForm = () => {
-    setSignMessageState({
-      message: "",
-      signedData: null,
-    });
-  };
-
-  const resetVerifyForm = () => {
-    setVerifyFormState({
-      address: "",
-      message: "",
-      signature: "",
-      verificationResult: null,
-    });
-  };
+  const { wasmError } = useWasmInit();
+  const [walletState, walletActions] = useWalletConnection();
+  const [signState, signActions] = useSignMessage();
+  const [verifyState, verifyActions] = useVerifyMessage();
 
   useEffect(() => {
-    init()
-      .then(() => setWasmInitialized(true))
-      .catch((error) => console.error("Failed to initialize WASM:", error));
-  }, []);
-
-  useEffect(() => {
-    const handleBeforeUnload = async () => {
-      if (connected) {
-        disconnect();
+    const handleBeforeUnload = () => {
+      if (walletState.isConnected) {
+        walletActions.handleDisconnect();
       }
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [connected, disconnect]);
+  }, [walletState.isConnected, walletActions]);
 
-  if (!isWasmInitialized) {
-    return <div>Loading WASM...</div>;
+  if (wasmError) {
+    return <div>Failed to initialize WASM: {wasmError.message}</div>;
   }
 
   return (
-    <div className="app-container">
-      <header className="hero">
-        <h1 onClick={() => window.location.reload()}>bip322</h1>
+    <div className="min-h-screen w-full flex flex-col justify-center">
+      <header className="hero h-[calc(var(--size)*0.50)] flex justify-center w-full">
+        <div className="w-[95%] md:w-[80vw] mx-auto">
+          <h1 onClick={() => window.location.reload()}>bip322</h1>
+        </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-12 items-center">
-        <AnimatedContainer isExpanded={isSignFormVisible}>
-          <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
-              !isSignFormVisible
-                ? "opacity-0 pointer-events-none"
-                : "opacity-100"
-            }`}
-          >
-            {connected && address ? (
+      <main className="w-full">
+        <div className="w-[95%] md:w-[65vw] mx-auto">
+          <div className="flex flex-col lg:flex-row gap-[calc(var(--size)*0.2)] lg:gap-[calc(var(--size)*0.1)] min-h-[50vh] items-center">
+            <div className="flex-1 w-full flex justify-center items-end lg:items-center">
               <SignMessageForm
-                address={address}
-                message={signMessageState.message}
-                signedData={signMessageState.signedData}
-                onMessageChange={(message) =>
-                  setSignMessageState((prev) => ({ ...prev, message }))
+                message={signState.message}
+                signedData={signState.signedData}
+                onMessageChange={signActions.setMessage}
+                onSign={() =>
+                  signActions.handleSign(
+                    walletState.address!,
+                    walletActions.signMessage
+                  )
                 }
-                onSign={handleMessageSign}
-                onReset={resetSignMessageForm}
-                onBack={handleDisconnect}
+                onReset={signActions.reset}
               />
-            ) : (
-              <ConnectWalletForm
-                provider={provider}
-                hasWallet={hasWallet}
-                onConnect={handleConnect}
-                onDisconnect={() => {
-                  handleDisconnect();
-                  setIsSignFormVisible(false);
-                }}
+            </div>
+
+            <div className="flex-1 w-full flex justify-center items-start lg:items-center">
+              <VerifyForm
+                formData={verifyState}
+                verificationResult={verifyState.verificationResult}
+                onSubmit={verifyActions.handleVerify}
+                onInputChange={verifyActions.handleChange}
+                onReset={verifyActions.reset}
               />
-            )}
+            </div>
           </div>
-          <Button
-            className={`
-            h-[calc(var(--font-large)+3rem)] w-full
-            text-[length:var(--font-md)] 
-            md:text-[length:var(--font-md)]
-            bg-[hsl(var(--light-1))] text-[hsl(var(--dark-1))]
-            [box-shadow:0_0_7px_#fff]
-            hover:bg-[hsl(var(--light-2))]
-            hover:text-[hsl(var(--dark-1))]
-            hover:[box-shadow:0_0_15px_3px_#fff]
-            rounded-xl
-            transition-all duration-300
-            [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2),0_0_12px_rgba(0,0,0,0.1)]
-            hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3),0_0_18px_rgba(0,0,0,0.2)]
-              ${
-                isSignFormVisible
-                  ? "opacity-0 pointer-events-none"
-                  : "opacity-100"
-              }
-            `}
-            variant="ghost"
-            onClick={() => setIsSignFormVisible(true)}
-          >
-            sign
-          </Button>
-        </AnimatedContainer>
+        </div>
+      </main>
 
-        <AnimatedContainer isExpanded={isVerifyFormVisible}>
-          <div
-            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
-              !isVerifyFormVisible
-                ? "opacity-0 pointer-events-none"
-                : "opacity-100"
-            }`}
-          >
-            <VerifyForm
-              formData={verifyFormState}
-              verificationResult={verifyFormState.verificationResult}
-              onSubmit={handleVerification}
-              onInputChange={handleVerifyFormChange}
-              onReset={resetVerifyForm}
-              onBack={() => setIsVerifyFormVisible(false)}
-            />
+      <footer className="flex h-[calc(var(--size)*0.40)] items-center w-full">
+        <nav className="w-[95%] md:w-[80%] mx-auto">
+          <div className="flex justify-between gap-4 lg:gap-8">
+            <BaseButton variant="nav" asChild>
+              <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
+                bip
+              </a>
+            </BaseButton>
+            <BaseButton variant="nav" asChild>
+              <a href="https://github.com/rust-bitcoin/bip322">github</a>
+            </BaseButton>
+            <BaseButton variant="nav" asChild>
+              <a href="https://crates.io/crates/bip322">crate</a>
+            </BaseButton>
           </div>
-          <Button
-            className={`
-            h-[calc(var(--font-large)+3rem)] w-full
-            text-[length:var(--font-md)] 
-            md:text-[length:var(--font-md)]
-            bg-[hsl(var(--light-1))] text-[hsl(var(--dark-1))]
-            [box-shadow:0_0_10px_#fff]
-            hover:bg-[hsl(var(--light-2))]
-            hover:text-[hsl(var(--dark-1))]
-            hover:[box-shadow:0_0_20px_3px_#fff]
-            rounded-xl
-            transition-all duration-300
-            [text-shadow:0_0_4px_rgba(0,0,0,0.3),0_0_8px_rgba(0,0,0,0.2),0_0_12px_rgba(0,0,0,0.1)]
-            hover:[text-shadow:0_0_6px_rgba(0,0,0,0.4),0_0_12px_rgba(0,0,0,0.3),0_0_18px_rgba(0,0,0,0.2)]
-              ${
-                isVerifyFormVisible
-                  ? "opacity-0 pointer-events-none"
-                  : "opacity-100"
-              }
-            `}
-            variant="ghost"
-            onClick={() => setIsVerifyFormVisible(true)}
-          >
-            verify
-          </Button>
-        </AnimatedContainer>
-      </section>
-
-      <nav className="flex justify-between items-center absolute inset-x-0 bottom-28 py-18 mb-20">
-        <Button
-          asChild
-          variant="link"
-          className="text-[length:var(--font-small)]"
-        >
-          <a href="https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki">
-            bip
-          </a>
-        </Button>
-        <Button
-          asChild
-          variant="link"
-          className="text-[length:var(--font-small)]"
-        >
-          <a href="https://github.com/rust-bitcoin/bip322">github</a>
-        </Button>
-        <Button
-          asChild
-          variant="link"
-          className="text-[length:var(--font-small)]"
-        >
-          <a href="https://crates.io/crates/bip322">crate</a>
-        </Button>
-      </nav>
+        </nav>
+      </footer>
     </div>
   );
 }

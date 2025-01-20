@@ -5,76 +5,284 @@
 :root {
   --width-target: calc(100vw / 6);
   --height-target: calc(100vh / 3);
-  --size: min(var(--width-target), var(--height-target));
+  --size: calc((var(--width-target) + var(--height-target)) / 2);
   --margin-horizontal: calc((100vw - var(--size) * 5) / 8);
-  --font-x-small: calc(var(--size) * 0.069);
-  --font-small: calc(var(--size) * 0.113);  
-  --font-md: calc(var(--size) * 0.181);    
-  --font-large: calc(var(--size) * 0.292);    
-  --font-x-large: calc(var(--size) * 0.473);
-  --common-spacing: 1rem;
-  --white-glow-small: 0 0 2px rgba(255, 255, 255, 0.7);
-  --white-glow: 0 0 5px rgba(255, 255, 255, 0.7);
-  --white-glow-large: 0 0 10px rgba(255, 255, 255, 0.7);
-  --white-glow-x-large: 0 0 15px rgba(255, 255, 255, 0.7);
+  
+  --font-xs: calc(var(--size) * 0.029);  
+  --font-xs: calc(var(--size) * 0.045);  
+  --font-sm: calc(var(--size) * 0.073);   
+  --font-md: calc(var(--size) * 0.118);   
+  --font-lg: calc(var(--size) * 0.191);   
+  --font-xl: calc(var(--size) * 0.309);  
+  
+  --glow-size: calc(var(--size) * 0.005);
+  --glow-sm: 0 0 calc(var(--glow-size) * 2) rgba(255, 255, 255, 0.7);
+  --glow: 0 0 calc(var(--glow-size) * 5) rgba(255, 255, 255, 0.7);
+  --glow-lg: 0 0 calc(var(--glow-size) * 10) rgba(255, 255, 255, 0.7);
+  --glow-xl: 0 0 calc(var(--glow-size) * 15) rgba(255, 255, 255, 0.7);
+
+  --fuzz: 
+    0 0 calc(var(--size) * 0.008) rgba(0,0,0,0.3),
+    0 0 calc(var(--size) * 0.016) rgba(0,0,0,0.2),
+    0 0 calc(var(--size) * 0.024) rgba(0,0,0,0.1);
+
+  --fuzz-lg: 
+    0 0 calc(var(--size) * 0.012) rgba(0,0,0,0.4),
+    0 0 calc(var(--size) * 0.024) rgba(0,0,0,0.3),
+    0 0 calc(var(--size) * 0.036) rgba(0,0,0,0.2);
+
+  --radius: calc(var(--size) * 0.02);
+  --radius-lg: calc(var(--size) * 0.04);
 }
 
-/* Reset */
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-/* Base styles */
 html {
-  /* background-color: black; */
   color: white;
-  overflow: hidden;
   text-align: center;
   font-family: monospace;
 }
 
 body {
-  margin-inline: var(--margin-horizontal);
-}
-
-/* Layout */
-.app-container {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  position: relative;
-  min-height: 100vh;
-  width: 100%;
-  max-width: 80vw;
-  margin: auto;
-  padding: var(--common-spacing);
+  margin:0;
 }
 
 .hero h1 {
-  font-size: var(--font-x-large);
-  text-shadow: var(--white-glow-large);
-  position: absolute;
-  top: calc(var(--common-spacing) * 7.5);
+  font-size: var(--font-xl);
+  text-shadow: var(--glow-lg);
   inset-inline: 0;
-  cursor: default;
   font-weight: normal;
   cursor: pointer;
   transition: text-shadow 0.3s ease;
 }
 
 .hero h1:hover {
-  text-shadow: var(--white-glow-x-large);
+  text-shadow: var(--glow-xl);
 }
 
-nav a {
-  text-shadow: var(--white-glow);
+.common-component {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  border-radius: var(--radius);
+  transition-property: all, box-shadow, text-shadow;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  border: 0.5px solid hsl(var(--primary) / 0.8);
+  box-shadow: var(--glow);
+  font-size: var(--font-xs);
+  background-color: hsl(var(--dark-1) / 0.05);
+  backdrop-filter: blur(8px);
+}
+
+.common-component:hover {
+  box-shadow: var(--glow-lg);
+}
+
+.common-component:disabled {
+  color: hsl(var(--primary) / 0.8);
+  opacity: 0.9;
+  cursor: pointer;
+  background-color: hsl(var(--dark-1) / 0.1);
+  text-shadow: var(--glow-sm);
+}
+
+.common-component:disabled:hover {
+  box-shadow: var(--glow-lg);
+}
+
+.common-input {
+  font-size: var(--font-xs) !important;
+  padding: calc(var(--font-sm) * 1.2) calc(var(--font-sm) * 0.6);
+  color: hsl(var(--primary));
+  text-shadow: var(--glow-sm);
+
+  &:-webkit-autofill,
+  &:-webkit-autofill:hover,
+  &:-webkit-autofill:focus {
+    -webkit-text-fill-color: hsl(var(--primary));
+    transition: background-color 5000s ease-in-out 0s;
+    background-color: transparent !important;
+  }
+}
+
+.tooltip-wrapper {
+  width: 100%;
+}
+
+.tooltip-wrapper-inner {
+  width: 100%;
+}
+
+.tooltip-wrapper-inner.copy-enabled > * {
+  pointer-events: none;
+}
+
+.tooltip-wrapper.cursor-pointer:hover .common-component {
+  box-shadow: var(--glow-lg);
+}
+
+.tooltip-text {
+  font-size: var(--font-xxs);
+}
+
+.input-placeholder {
+  padding: calc(var(--font-sm) * 1.6);
+}
+
+.button-large {
+  font-size: var(--font-lg);
+  padding: calc(var(--font-lg) * 0.8);
+  min-width: calc(var(--size) * 1);
+  background: hsl(var(--light-1));
+  border-radius: var(--radius-lg);
+  color: hsl(var(--dark-1));
+  box-shadow: var(--glow-lg);
+  text-shadow: var(--fuzz);
+  transition-property: all, box-shadow, text-shadow;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.button-large:hover {
+  background: hsl(var(--light-3)) !important;
+  color: hsl(var(--dark-1)) !important;
+  box-shadow: var(--glow-xl);
+  text-shadow: var(--fuzz-lg);
+}
+
+.button-default {
+  color: hsl(var(--primary) / 0.8);
+  font-size: var(--font-sm);
+  padding: calc(var(--font-sm) * 1.2);
+  text-shadow: var(--glow);
+}
+
+.button-default:hover {
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+  text-shadow: var(--fuzz);
+}
+
+.button-nav {
+  text-align: center;
+  font-size: var(--font-md);
+  text-shadow: var(--glow);
   transition: text-shadow 0.3s ease;
+  min-width: calc(var(--size) * 0.4);
 }
 
-nav a:hover {
-  text-shadow: var(--white-glow-large);
+.button-nav:hover {
+  text-shadow: var(--glow-lg);
+}
+
+.button-icon {
+  background-color: transparent;
+  aspect-ratio: 1;
+  padding: calc(var(--font-sm) * 1.8) calc(var(--font-sm) * 1.2);
+  transition: all 0.3s ease;
+  background-color: hsl(var(--primary) / 0.05) !important;
+}
+
+.button-icon:hover {
+  background-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+
+.button-icon svg {
+  width: calc(var(--font-md) * 1.4) !important;
+  height: calc(var(--font-md) * 1.4) !important;
+}
+
+
+.wallet-button-available {
+  background-color: hsl(var(--light-1)) !important;
+  color: hsl(var(--dark-1)) !important;
+}
+
+.button-control {
+  position: absolute;
+  left: 0;
+  padding: 0;
+  color: hsl(var(--primary) / 0.8);
+  font-size: var(--font-sm);
+  transition: opacity 0.3s ease, color 0.3s ease, text-shadow 0.3s ease;
+}
+
+.button-control:hover {
+  background-color: transparent !important;
+  opacity: 0.9;
+  color: hsl(var(--primary));
+}
+
+.button-control svg {
+  width: calc(var(--font-sm) * 1.2) !important;
+  height: calc(var(--font-sm) * 1.2) !important;
+  filter: drop-shadow(var(--glow-sm));
+  transition: all 0.3s ease;
+}
+
+.button-control:hover svg {
+  filter: drop-shadow(var(--glow));
+}
+
+.common-textarea {
+  resize: none;
+  font-size: var(--font-xs) !important;
+  padding: calc(var(--font-sm) * 0.8) calc(var(--font-sm) * 0.6);
+  color: hsl(var(--primary) / 0.8);
+  text-shadow: var(--glow-sm);
+}  
+
+.common-textarea.two-lines {
+  height: calc(var(--font-sm) * 6);
+  min-height: calc(var(--font-sm) * 6);
+}
+
+.common-textarea.three-lines {
+  height: calc(var(--font-sm) * 9.2);
+  min-height: calc(var(--font-sm) * 9.2);
+}
+
+.verification-input {
+  text-align: center;
+  cursor: default;
+  font-size: var(--font-sm) !important;
+  padding-block: calc(var(--font-sm) * 1.2);
+  text-shadow: var(--glow-sm);
+  transition: all 0.3s ease;
+}
+
+.verification-input:hover {
+  cursor: default;
+}
+
+.verification-input-success {
+  background-color: hsl(var(--success));
+  color: hsl(var(--primary) / 0.8);
+  border-color: hsl(var(--success) / 0.4);
+  box-shadow: 0 0 calc(var(--glow-size) * 5) hsl(var(--success));
+}
+
+.verification-input-success:hover {
+  border-color: hsl(var(--success) / 0.6);
+  box-shadow: 0 0 calc(var(--glow-size) * 5) hsl(var(--success));
+}
+
+.verification-input-error {
+  background-color: hsl(var(--error-foreground) / 0.3);
+  color: hsl(var(--primary) / 0.8);
+  border-color: hsl(var(--error) / 0.4);
+  box-shadow: 0 0 calc(var(--glow-size) * 5) hsl(var(--error));
+}
+
+.verification-input-error:hover {
+  border-color: hsl(var(--error) / 0.6);
+  box-shadow: 0 0 calc(var(--glow-size) * 5) hsl(var(--error));
 }
 
 @layer base {
@@ -128,6 +336,10 @@ nav a:hover {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    --success: 142 84% 55%;
+    --success-foreground: 142 76% 36%;
+    --error: 0 84% 60%;
+    --error-foreground: 0 76% 36%;
   }
 }
 @layer base {

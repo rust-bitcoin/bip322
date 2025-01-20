@@ -1,51 +1,31 @@
-import { Button } from "@/components/ui/button";
-import {
-  ProviderType,
-  SUPPORTED_WALLETS,
-  WalletIcon,
-} from "@omnisat/lasereyes";
-import FormWrapper from "./FormWrapper";
+import { SUPPORTED_WALLETS, WalletIcon } from "@omnisat/lasereyes";
+import FormWrapper from "@/components/FormWrapper";
+import { BaseButton } from "@/components/ui/base-button";
+import { useWalletConnection } from "@/hooks/useWalletConnection";
 
 interface ConnectWalletFormProps {
-  provider: string | null;
-  hasWallet: {
-    [key: string]: boolean;
-  };
-  onConnect: (walletName: ProviderType) => Promise<void>;
-  onDisconnect: () => void;
+  onBack: () => void;
 }
-const ConnectWalletForm = ({
-  hasWallet,
-  onConnect,
-  onDisconnect,
-}: ConnectWalletFormProps) => {
-  const baseButtonClass = `
-    w-full h-auto 
-    border border-white/80 
-    transition-[all,box-shadow] duration-300 
-    p-2 
-    hover:bg-white hover:text-black 
-    [&_svg]:!w-10 [&_svg]:!h-10
-    rounded-xl
-    [box-shadow:var(--white-glow)]
-    hover:[box-shadow:var(--white-glow-large)]
-  `;
+
+const ConnectWalletForm = ({ onBack }: ConnectWalletFormProps) => {
+  const [walletState, walletActions] = useWalletConnection();
+
   return (
-    <FormWrapper title="connect wallet" onBack={onDisconnect}>
-      <div className="grid grid-cols-3 gap-4">
+    <FormWrapper title="connect wallet" onBack={onBack}>
+      <div className="grid grid-cols-3 gap-[calc(var(--size)*0.06)]">
         {Object.values(SUPPORTED_WALLETS)
           .filter(
             (wallet) => wallet.name !== "op_net" && wallet.name !== "wizz"
           )
           .map((wallet) => {
-            console.log(wallet);
-            const isMissingWallet = !hasWallet[wallet.name];
+            const isMissingWallet = !walletState.hasWallet[wallet.name];
             return (
               <div key={wallet.name} className="w-full">
                 {isMissingWallet ? (
-                  <Button
+                  <BaseButton
+                    variant="icon"
                     asChild
-                    className={`${baseButtonClass} bg-transparent/5 backdrop-blur-sm`}
+                    className="bg-transparent/5 backdrop-blur-sm"
                   >
                     <a
                       href={wallet.url}
@@ -53,21 +33,23 @@ const ConnectWalletForm = ({
                       rel="noopener noreferrer"
                       className="flex items-center justify-center"
                     >
-                      <WalletIcon walletName={wallet.name} size={40} />
+                      <WalletIcon walletName={wallet.name} size={32} />
                     </a>
-                  </Button>
+                  </BaseButton>
                 ) : (
-                  <Button
-                    className={`${baseButtonClass} bg-white/90 text-black backdrop-blur-sm`}
-                    onClick={() => onConnect(wallet.name)}
+                  <BaseButton
+                    variant="icon"
+                    className="wallet-button-available"
+                    onClick={() => walletActions.handleConnect(wallet.name)}
                   >
-                    <WalletIcon walletName={wallet.name} size={40} />
-                  </Button>
+                    <WalletIcon walletName={wallet.name} size={32} />
+                  </BaseButton>
                 )}
               </div>
             );
           })}
       </div>
+      <div className="input-placeholder" />
     </FormWrapper>
   );
 };
