@@ -59,7 +59,7 @@ const SignMessageForm = ({
                 e.preventDefault();
                 onSign();
               }}
-              className="flex flex-col gap-6"
+              className="flex flex-col gap-[calc(var(--size)*0.06)]"
             >
               <BaseInput
                 type="text"
@@ -70,6 +70,7 @@ const SignMessageForm = ({
                     : walletState.address ?? ""
                 }
                 disabled
+                tooltipLabel="address"
               />
               <BaseTextarea
                 placeholder="message"
@@ -77,6 +78,7 @@ const SignMessageForm = ({
                 onChange={(e) => !signedData && onMessageChange(e.target.value)}
                 required
                 disabled={signedData !== null}
+                tooltipLabel="message"
               />
               {signedData ? (
                 <BaseInput
@@ -84,6 +86,7 @@ const SignMessageForm = ({
                   placeholder="signature"
                   value={signedData.signature}
                   disabled
+                  tooltipLabel="signature"
                 />
               ) : (
                 <BaseButton variant="default" type="submit">

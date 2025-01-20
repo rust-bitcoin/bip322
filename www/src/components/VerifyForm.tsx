@@ -50,6 +50,7 @@ const VerifyForm = ({
               data-default={formData.address}
               required
               disabled={verificationResult !== null}
+              tooltipLabel="address"
             />
 
             <BaseInput
@@ -61,6 +62,7 @@ const VerifyForm = ({
               data-default={formData.message}
               required
               disabled={verificationResult !== null}
+              tooltipLabel="message"
             />
 
             <BaseInput
@@ -72,6 +74,7 @@ const VerifyForm = ({
               data-default={formData.signature}
               required
               disabled={verificationResult !== null}
+              tooltipLabel="signature"
             />
 
             {verificationResult === null ? (

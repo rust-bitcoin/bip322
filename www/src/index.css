@@ -109,18 +109,19 @@ body {
   }
 }
 
-
-.common-input:disabled,
-.common-textarea:disabled {
-  background-color: hsl(var(--dark-1) / 0.1);
-  color: hsl(var(--primary));
-  border-color: hsl(var(--primary));
-  text-shadow: var(--glow-sm);
+.tooltip-wrapper {
+  width: 100%;
 }
 
-.common-input:disabled:hover,
-.common-textarea:disabled:hover {
-  cursor: pointer;
+.tooltip-wrapper-inner {
+  width: 100%;
+}
+
+.tooltip-wrapper-inner.copy-enabled > * {
+  pointer-events: none;
+}
+
+.tooltip-wrapper.cursor-pointer:hover .common-component {
   box-shadow: var(--glow-lg);
 }
 
