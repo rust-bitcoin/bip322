@@ -22,39 +22,30 @@ const ConnectWalletForm = ({ onBack }: ConnectWalletFormProps) => {
             const isMissingWallet = !walletState.hasWallet[wallet.name];
             return (
               <div key={wallet.name} className="w-full">
-                <TooltipWrapper
-                  showTooltip
-                  tooltipLabel={
-                    isMissingWallet
-                      ? `install ${wallet.name}`
-                      : `connect ${wallet.name}`
-                  }
-                >
-                  {isMissingWallet ? (
-                    <BaseButton
-                      variant="icon"
-                      asChild
-                      className="bg-transparent/5 backdrop-blur-sm"
-                    >
-                      <a
-                        href={wallet.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center justify-center"
-                      >
-                        <WalletIcon walletName={wallet.name} size={32} />
-                      </a>
-                    </BaseButton>
-                  ) : (
-                    <BaseButton
-                      variant="icon"
-                      className="wallet-button-available"
-                      onClick={() => walletActions.handleConnect(wallet.name)}
+                {isMissingWallet ? (
+                  <BaseButton
+                    variant="icon"
+                    asChild
+                    className="bg-transparent/5 backdrop-blur-sm"
+                  >
+                    <a
+                      href={wallet.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center"
                     >
                       <WalletIcon walletName={wallet.name} size={32} />
-                    </BaseButton>
-                  )}
-                </TooltipWrapper>
+                    </a>
+                  </BaseButton>
+                ) : (
+                  <BaseButton
+                    variant="icon"
+                    className="wallet-button-available"
+                    onClick={() => walletActions.handleConnect(wallet.name)}
+                  >
+                    <WalletIcon walletName={wallet.name} size={32} />
+                  </BaseButton>
+                )}
               </div>
             );
           })}
