@@ -2,7 +2,6 @@ import { SUPPORTED_WALLETS, WalletIcon } from "@omnisat/lasereyes";
 import FormWrapper from "@/components/FormWrapper";
 import { BaseButton } from "@/components/ui/base-button";
 import { useWalletConnection } from "@/hooks/useWalletConnection";
-import { TooltipWrapper } from "@/components/TooltipWrapper";
 
 interface ConnectWalletFormProps {
   onBack: () => void;
