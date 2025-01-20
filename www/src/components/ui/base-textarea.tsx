@@ -41,7 +41,5 @@ const BaseTextarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
   }
 );
 
-BaseTextarea.displayName = "BaseTextarea";
-
 export { BaseTextarea };
 export type { BaseTextareaProps, TextareaVariant };
