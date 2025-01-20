@@ -28,10 +28,6 @@ function App() {
     return <div>Failed to initialize WASM: {wasmError.message}</div>;
   }
 
-  if (!isWasmInitialized) {
-    return <div>Loading WASM...</div>;
-  }
-
   return (
     <div className="min-h-screen w-full flex flex-col justify-center">
       <header className="hero h-[calc(var(--size)*0.50)] flex justify-center w-full">
