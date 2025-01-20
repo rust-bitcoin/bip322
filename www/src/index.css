@@ -8,6 +8,7 @@
   --size: calc((var(--width-target) + var(--height-target)) / 2);
   --margin-horizontal: calc((100vw - var(--size) * 5) / 8);
   
+  --font-xs: calc(var(--size) * 0.029);  
   --font-xs: calc(var(--size) * 0.045);  
   --font-sm: calc(var(--size) * 0.073);   
   --font-md: calc(var(--size) * 0.118);   
@@ -87,7 +88,7 @@ body {
   opacity: 0.9;
   cursor: pointer;
   background-color: hsl(var(--dark-1) / 0.1);
-  text-shadow: var(--glow);
+  text-shadow: var(--glow-sm);
 }
 
 .common-component:disabled:hover {
@@ -123,6 +124,10 @@ body {
 
 .tooltip-wrapper.cursor-pointer:hover .common-component {
   box-shadow: var(--glow-lg);
+}
+
+.tooltip-text {
+  font-size: var(--font-xxs);
 }
 
 .input-placeholder {

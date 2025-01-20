@@ -79,7 +79,7 @@ export const TooltipWrapper = ({
             </div>
           </TooltipTrigger>
           <TooltipContent sideOffset={5}>
-            <p className="text-xs">{getTooltipText()}</p>
+            <p className="tooltip-text">{getTooltipText()}</p>
           </TooltipContent>
         </div>
       </Tooltip>
