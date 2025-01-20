@@ -3,13 +3,19 @@ import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import { TooltipWrapper } from "@/components/TooltipWrapper";
 
+type TextareaVariant = "default" | "two-lines" | "three-lines";
+
 interface BaseTextareaProps
   extends React.ComponentPropsWithoutRef<typeof Textarea> {
+  variant?: TextareaVariant;
   tooltipLabel?: string;
 }
 
 const BaseTextarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
-  ({ className, tooltipLabel, disabled, ...props }, ref) => {
+  (
+    { className, variant = "default", tooltipLabel, disabled, ...props },
+    ref
+  ) => {
     return (
       <TooltipWrapper
         value={props.value}
@@ -21,6 +27,8 @@ const BaseTextarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
           className={cn(
             "common-component",
             "common-textarea",
+            variant === "two-lines" && "two-lines",
+            variant === "three-lines" && "three-lines",
             disabled && "pointer-events-none cursor-pointer",
             className
           )}
@@ -36,4 +44,4 @@ const BaseTextarea = React.forwardRef<HTMLTextAreaElement, BaseTextareaProps>(
 BaseTextarea.displayName = "BaseTextarea";
 
 export { BaseTextarea };
-export type { BaseTextareaProps };
+export type { BaseTextareaProps, TextareaVariant };
