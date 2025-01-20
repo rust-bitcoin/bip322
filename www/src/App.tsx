@@ -8,7 +8,7 @@ import { useSignMessage } from "@/hooks/useSignMessage";
 import { useVerifyMessage } from "@/hooks/useVerifyMessage";
 
 function App() {
-  const { isWasmInitialized, wasmError } = useWasmInit();
+  const { wasmError } = useWasmInit();
   const [walletState, walletActions] = useWalletConnection();
   const [signState, signActions] = useSignMessage();
   const [verifyState, verifyActions] = useVerifyMessage();
