@@ -14,7 +14,7 @@ pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
 }
 
 /// Create the `to_spend` transaction.
-pub fn create_to_spend(address: &Address, message: &[u8]) -> Result<Transaction> {
+pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,

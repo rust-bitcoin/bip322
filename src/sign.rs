@@ -8,7 +8,7 @@ pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) 
 
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
-  let witness = sign_simple(&address, message.as_bytes(), private_key)?;
+  let witness = sign_simple(&address, message, private_key)?;
 
   let mut buffer = Vec::new();
 
@@ -27,7 +27,7 @@ pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) ->
 
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
-  let tx = sign_full(&address, message.as_bytes(), private_key)?;
+  let tx = sign_full(&address, message, private_key)?;
 
   let mut buffer = Vec::new();
 
@@ -38,7 +38,11 @@ pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) ->
 }
 
 /// Signs in the BIP-322 simple format from proper Rust types and returns the witness.
-pub fn sign_simple(address: &Address, message: &[u8], private_key: PrivateKey) -> Result<Witness> {
+pub fn sign_simple(
+  address: &Address,
+  message: impl AsRef<[u8]>,
+  private_key: PrivateKey,
+) -> Result<Witness> {
   Ok(
     sign_full(address, message, private_key)?.input[0]
       .witness
@@ -49,7 +53,7 @@ pub fn sign_simple(address: &Address, message: &[u8], private_key: PrivateKey) -
 /// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
 pub fn sign_full(
   address: &Address,
-  message: &[u8],
+  message: impl AsRef<[u8]>,
   private_key: PrivateKey,
 ) -> Result<Transaction> {
   let to_spend = create_to_spend(address, message)?;

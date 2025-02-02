@@ -15,7 +15,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
 
-  verify_simple(&address, message.as_bytes(), witness)
+  verify_simple(&address, message, witness)
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
@@ -36,22 +36,30 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     },
   )?;
 
-  verify_full(&address, message.as_bytes(), to_sign)
+  verify_full(&address, message, to_sign)
 }
 
 /// Verifies the BIP-322 simple from proper Rust types.
-pub fn verify_simple(address: &Address, message: &[u8], signature: Witness) -> Result<()> {
+pub fn verify_simple(
+  address: &Address,
+  message: impl AsRef<[u8]>,
+  signature: Witness,
+) -> Result<()> {
   verify_full(
     address,
-    message,
-    create_to_sign(&create_to_spend(address, message)?, Some(signature))?
+    &message,
+    create_to_sign(&create_to_spend(address, &message)?, Some(signature))?
       .extract_tx()
       .context(error::TransactionExtract)?,
   )
 }
 
 /// Verifies the BIP-322 full from proper Rust types.
-pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> Result<()> {
+pub fn verify_full(
+  address: &Address,
+  message: impl AsRef<[u8]>,
+  to_sign: Transaction,
+) -> Result<()> {
   match address.to_address_data() {
     AddressData::Segwit { witness_program }
       if witness_program.version().to_num() == 1 && witness_program.program().len() == 32 =>
@@ -83,7 +91,7 @@ pub fn verify_full(address: &Address, message: &[u8], to_sign: Transaction) -> R
 
 fn verify_full_p2wpkh(
   address: &Address,
-  message: &[u8],
+  message: impl AsRef<[u8]>,
   to_sign: Transaction,
   pub_key: PublicKey,
   is_p2sh: bool,
@@ -168,7 +176,7 @@ fn verify_full_p2wpkh(
 
 fn verify_full_p2tr(
   address: &Address,
-  message: &[u8],
+  message: impl AsRef<[u8]>,
   to_sign: Transaction,
   pub_key: XOnlyPublicKey,
 ) -> Result<()> {

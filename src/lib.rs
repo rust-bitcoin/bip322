@@ -66,7 +66,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "".as_bytes()
+        ""
       )
       .unwrap()
       .compute_txid()
@@ -77,7 +77,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "Hello World".as_bytes()
+        "Hello World"
       )
       .unwrap()
       .compute_txid()
@@ -90,7 +90,7 @@ mod tests {
   fn to_sign_txids_correct() {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "".as_bytes(),
+      "",
     )
     .unwrap();
 
@@ -103,7 +103,7 @@ mod tests {
 
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "Hello World".as_bytes(),
+      "Hello World",
     )
     .unwrap();
 
@@ -338,13 +338,13 @@ mod tests {
   #[test]
   fn adding_aux_randomness_roundtrips() {
     let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
-    let message = "Hello World with aux randomness".as_bytes();
+    let message = "Hello World with aux randomness";
     let to_spend = create_to_spend(&address, message).unwrap();
     let to_sign = create_to_sign(&to_spend, None).unwrap();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
     let mut aux_rand = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut aux_rand);
+    rand::rng().fill_bytes(&mut aux_rand);
 
     let witness =
       create_message_signature_taproot(&to_spend, &to_sign, private_key, Some(aux_rand));
