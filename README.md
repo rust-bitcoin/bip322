@@ -24,24 +24,6 @@ The goal is to provide a full signing and verifying library similar to
 - from [bip322-js](https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts)
 - from [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors)
 
-## Compile for WASM (on MacOs)
-
-```
-brew install llvm
-cargo install wasm-pack
-rustup target add wasm32-unknown-unknown
-AR=/opt/homebrew/opt/llvm/bin/llvm-ar \
-CC=/opt/homebrew/opt/llvm/bin/clang \
-wasm-pack build \
-    --target web \
-    --out-name bip322 \
-    www
-```
-
-The WASM binary and Javascript glue code can then be found in `www/pkg`. The
-[bip322.rs](https://bip322.rs) site also runs a small WASM binary if you'd like
-to check it out.
-
 ## MSRV
 
 At the moment the Minimum Supported Rust Version (MSRV) is 1.63. You can check
