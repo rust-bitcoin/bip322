@@ -1,6 +1,5 @@
 use {
   base64::{engine::general_purpose, Engine},
-  bitcoin::hashes::{sha256, Hash},
   bitcoin::{
     absolute::LockTime,
     address::AddressData,
@@ -18,6 +17,7 @@ use {
     Transaction, TxIn, TxOut, Witness,
   },
   error::Error,
+  sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
 };
@@ -51,12 +51,12 @@ mod tests {
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
-      hex::encode(message_hash("".as_bytes())),
+      hex::encode(tagged_hash(BIP322_TAG, "")),
       "c90c269c4f8fcbe6880f72a721ddfbf1914268a794cbb21cfafee13770ae19f1"
     );
 
     assert_eq!(
-      hex::encode(message_hash("Hello World".as_bytes())),
+      hex::encode(tagged_hash(BIP322_TAG, "Hello World")),
       "f0eb03b1a75ac6d9847f55c624a99169b5dccba2a31f5b23bea77ba270de0a7a"
     );
   }
@@ -66,7 +66,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "".as_bytes()
+        ""
       )
       .unwrap()
       .compute_txid()
@@ -77,7 +77,7 @@ mod tests {
     assert_eq!(
       create_to_spend(
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-        "Hello World".as_bytes()
+        "Hello World"
       )
       .unwrap()
       .compute_txid()
@@ -90,7 +90,7 @@ mod tests {
   fn to_sign_txids_correct() {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "".as_bytes(),
+      "",
     )
     .unwrap();
 
@@ -103,7 +103,7 @@ mod tests {
 
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
-      "Hello World".as_bytes(),
+      "Hello World",
     )
     .unwrap();
 
@@ -338,13 +338,13 @@ mod tests {
   #[test]
   fn adding_aux_randomness_roundtrips() {
     let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
-    let message = "Hello World with aux randomness".as_bytes();
+    let message = "Hello World with aux randomness";
     let to_spend = create_to_spend(&address, message).unwrap();
     let to_sign = create_to_sign(&to_spend, None).unwrap();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
     let mut aux_rand = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut aux_rand);
+    rand::rng().fill_bytes(&mut aux_rand);
 
     let witness =
       create_message_signature_taproot(&to_spend, &to_sign, private_key, Some(aux_rand));
