@@ -5,7 +5,7 @@ on:
     branches: ["master"]
 
 permissions:
-  contents: read
+  contents: write  # Updated to write permission
   pages: write
   id-token: write
 
@@ -46,3 +46,19 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit changes
+        run: |
+          git add .
+          git commit -m "Automated commit by GitHub Actions"
+
+      - name: Push changes
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: |
+          git push https://x-access-token:${{ secrets.PAT }}@github.com/${{ github.repository }}.git master
