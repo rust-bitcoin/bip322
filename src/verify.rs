@@ -1,6 +1,7 @@
 use super::*;
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
+#[allow(clippy::result_large_err)]
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -19,6 +20,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
+#[allow(clippy::result_large_err)]
 pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -40,6 +42,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 }
 
 /// Verifies the BIP-322 simple from proper Rust types.
+#[allow(clippy::result_large_err)]
 pub fn verify_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -55,6 +58,7 @@ pub fn verify_simple(
 }
 
 /// Verifies the BIP-322 full from proper Rust types.
+#[allow(clippy::result_large_err)]
 pub fn verify_full(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -89,6 +93,7 @@ pub fn verify_full(
   }
 }
 
+#[allow(clippy::result_large_err)]
 fn verify_full_p2wpkh(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -174,6 +179,7 @@ fn verify_full_p2wpkh(
   Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn verify_full_p2tr(
   address: &Address,
   message: impl AsRef<[u8]>,
