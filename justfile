@@ -28,9 +28,8 @@ locks:
   #!/usr/bin/env bash
   set -euo pipefail
   for file in Cargo-minimal.lock Cargo-recent.lock; do
-      cp "$file" Cargo.lock
-      cargo check
       cp Cargo.lock "$file"
+      cargo check
   done
 
 prepare-release revision='master':
@@ -59,4 +58,3 @@ publish-release revision='master':
   cargo publish
   cd ../..
   rm -rf tmp/release
-
