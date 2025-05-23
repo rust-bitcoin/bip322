@@ -14,6 +14,7 @@ pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
 }
 
 /// Create the `to_spend` transaction.
+#[allow(clippy::result_large_err)]
 pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
@@ -45,6 +46,7 @@ pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<T
 }
 
 /// Create the `to_sign` transaction.
+#[allow(clippy::result_large_err)]
 pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {

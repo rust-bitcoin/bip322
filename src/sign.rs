@@ -1,6 +1,7 @@
 use super::*;
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
+#[allow(clippy::result_large_err)]
 pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -20,6 +21,7 @@ pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) 
 }
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
+#[allow(clippy::result_large_err)]
 pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -38,6 +40,7 @@ pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) ->
 }
 
 /// Signs in the BIP-322 simple format from proper Rust types and returns the witness.
+#[allow(clippy::result_large_err)]
 pub fn sign_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -51,6 +54,7 @@ pub fn sign_simple(
 }
 
 /// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
+#[allow(clippy::result_large_err)]
 pub fn sign_full(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -180,7 +184,7 @@ pub fn create_message_signature_taproot(
 
   let key_pair = key_pair
     .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
-    .to_inner();
+    .to_keypair();
 
   let signature = if let Some(aux_rand) = aux_rand {
     secp.sign_schnorr_with_aux_rand(
