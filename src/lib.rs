@@ -16,11 +16,11 @@ use {
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
   },
-  error::Error,
   sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
 };
+pub use error::Error;
 
 mod error;
 mod sign;
