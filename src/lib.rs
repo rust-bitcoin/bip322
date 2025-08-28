@@ -27,7 +27,7 @@ mod sign;
 mod util;
 mod verify;
 
-pub use {sign::*, util::*, verify::*};
+pub use {sign::*, util::*, verify::*, error::Error};
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
 
