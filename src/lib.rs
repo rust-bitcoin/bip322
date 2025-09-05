@@ -1,3 +1,4 @@
+pub use error::Error;
 use {
   base64::{engine::general_purpose, Engine},
   bitcoin::{
@@ -20,7 +21,6 @@ use {
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
 };
-pub use error::Error;
 
 mod error;
 mod sign;
