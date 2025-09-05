@@ -16,7 +16,6 @@ use {
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
   },
-  error::Error,
   sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
@@ -27,7 +26,7 @@ mod sign;
 mod util;
 mod verify;
 
-pub use {sign::*, util::*, verify::*};
+pub use {error::Error, sign::*, util::*, verify::*};
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
 
