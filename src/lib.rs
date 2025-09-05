@@ -28,8 +28,7 @@ mod verify;
 
 pub use {error::Error, sign::*, util::*, verify::*};
 
-t    git push origin HEAD:refs/pull/61/head
-ype Result<T = (), E = Error> = std::result::Result<T, E>;
+type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
