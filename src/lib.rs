@@ -1,4 +1,3 @@
-pub use error::Error;
 use {
   base64::{engine::general_purpose, Engine},
   bitcoin::{
@@ -27,9 +26,10 @@ mod sign;
 mod util;
 mod verify;
 
-pub use {sign::*, util::*, verify::*};
+pub use {error::Error, sign::*, util::*, verify::*};
 
-type Result<T = (), E = Error> = std::result::Result<T, E>;
+t    git push origin HEAD:refs/pull/61/head
+ype Result<T = (), E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
