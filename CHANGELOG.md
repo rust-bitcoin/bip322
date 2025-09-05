@@ -1,6 +1,25 @@
 Changelog
 =========
 
+[0.0.10](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.10) - 2025-09-05
+---------------------------------------------------------------------------------
+
+### Changed 
+- Make Error enum public (#63)
+- Check bounds in verify_full function to prevent panics (#62)
+- Update deps (#57)
+- Clean up tagged hash function (#55)
+
+### Misc
+- Remove website code (#53)
+- Fixing responsive layout (#52)
+- Remove theme picker (#50)
+- Remove some wallets from website (#49)
+- Fix static deploy (#48)
+- New landing page (#47)
+- Update Bitcoin crate (#46)
+- Fix publish recipe (#45)
+
 [0.0.9](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.9) - 2024-10-18
 -------------------------------------------------------------------------------
 
