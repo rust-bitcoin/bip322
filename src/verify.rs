@@ -74,14 +74,19 @@ pub fn verify_full(
       verify_full_p2tr(address, message, to_sign, pub_key)
     }
     AddressData::Segwit { witness_program }
-      if witness_program.version().to_num() == 0 && witness_program.program().len() == 20 =>
+      if witness_program.version().to_num() == 0
+        && witness_program.program().len() == 20
+        && to_sign.input.len() > 0
+        && to_sign.input[0].witness.len() > 1 =>
     {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
       verify_full_p2wpkh(address, message, to_sign, pub_key, false)
     }
-    AddressData::P2sh { script_hash: _ } => {
+    AddressData::P2sh { script_hash: _ }
+      if to_sign.input.len() > 0 && to_sign.input[0].witness.len() > 1 =>
+    {
       let pub_key =
         PublicKey::from_slice(&to_sign.input[0].witness[1]).map_err(|_| Error::InvalidPublicKey)?;
 
