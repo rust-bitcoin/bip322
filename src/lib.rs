@@ -137,7 +137,7 @@ mod tests {
   #[test]
   fn simple_sign_taproot() {
     assert_eq!(
-      sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap(),
       "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
     );
   }
@@ -147,7 +147,7 @@ mod tests {
     assert!(verify::verify_simple_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
     )
     .is_ok());
   }
@@ -157,7 +157,7 @@ mod tests {
     assert!(verify::verify_full_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign::sign_full_encoded(TAPROOT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::sign_full_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
     )
     .is_ok());
   }
@@ -249,12 +249,12 @@ mod tests {
   #[test]
   fn simple_sign_p2wpkh() {
     assert_eq!(
-      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap(),
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap(),
       "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
     );
 
     assert_eq!(
-      sign::sign_simple_encoded(SEGWIT_ADDRESS, "", WIF_PRIVATE_KEY).unwrap(),
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "", &[WIF_PRIVATE_KEY], None).unwrap(),
       "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
     );
   }
@@ -264,7 +264,7 @@ mod tests {
     assert!(verify::verify_simple_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
     )
     .is_ok());
   }
@@ -274,7 +274,7 @@ mod tests {
     assert!(verify::verify_full_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+      &sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
     )
     .is_ok());
   }
@@ -299,7 +299,7 @@ mod tests {
   #[test]
   fn simple_sign_p2sh_p2wpkh() {
     assert_eq!(
-      sign::sign_simple_encoded(NESTED_SEGWIT_ADDRESS, "Hello World", NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap(),
+      sign::sign_simple_encoded(NESTED_SEGWIT_ADDRESS, "Hello World", &[NESTED_SEGWIT_WIF_PRIVATE_KEY], None).unwrap(),
       "AkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
     );
   }
@@ -312,7 +312,8 @@ mod tests {
       &sign::sign_simple_encoded(
         NESTED_SEGWIT_ADDRESS,
         "Hello World",
-        NESTED_SEGWIT_WIF_PRIVATE_KEY
+        &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
+        None
       )
       .unwrap()
     )
@@ -326,8 +327,8 @@ mod tests {
       "Hello World",
       &sign::sign_full_encoded(
         NESTED_SEGWIT_ADDRESS,
-        "Hello World",
-        NESTED_SEGWIT_WIF_PRIVATE_KEY
+        "Hello World"
+        , &[NESTED_SEGWIT_WIF_PRIVATE_KEY], None
       )
       .unwrap()
     )
@@ -346,7 +347,7 @@ mod tests {
     rand::rng().fill_bytes(&mut aux_rand);
 
     let witness =
-      create_message_signature_taproot(&to_spend, &to_sign, private_key, Some(aux_rand));
+      create_message_signature_taproot(&to_spend, &to_sign, &private_key, Some(aux_rand));
 
     assert!(verify_simple(&address, message, witness).is_ok());
   }

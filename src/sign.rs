@@ -2,14 +2,26 @@ use super::*;
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
-pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+pub fn sign_simple_encoded(
+  address: &str,
+  message: &str,
+  wif_private_keys: &[impl AsRef<str>],
+  witness_script_hex: Option<&str>,
+) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
+  let private_keys: &[PrivateKey] = &wif_private_keys
+    .iter()
+    .map(|private_key| PrivateKey::from_wif(private_key.as_ref()).context(error::PrivateKeyParse))
+    .collect::<Result<Vec<_>>>()?;
 
-  let witness = sign_simple(&address, message, private_key)?;
+  let witness_script = witness_script_hex
+    .map(|h| ScriptBuf::from_hex(h).map_err(|_| Error::InvalidWitness))
+    .transpose()?;
+
+  let witness = sign_simple(&address, message, private_keys, witness_script.as_ref())?;
 
   let mut buffer = Vec::new();
 
@@ -22,14 +34,27 @@ pub fn sign_simple_encoded(address: &str, message: &str, wif_private_key: &str) 
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
-pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+#[allow(clippy::result_large_err)]
+pub fn sign_full_encoded(
+  address: &str,
+  message: &str,
+  wif_private_keys: &[impl AsRef<str>],
+  witness_script_hex: Option<&str>,
+) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
+  let private_keys: &[PrivateKey] = &wif_private_keys
+    .iter()
+    .map(|private_key| PrivateKey::from_wif(private_key.as_ref()).context(error::PrivateKeyParse))
+    .collect::<Result<Vec<_>>>()?;
 
-  let tx = sign_full(&address, message, private_key)?;
+  let witness_script = witness_script_hex
+    .map(|h| ScriptBuf::from_hex(h).map_err(|_| Error::InvalidWitness))
+    .transpose()?;
+
+  let tx = sign_full(&address, message, private_keys, witness_script.as_ref())?;
 
   let mut buffer = Vec::new();
 
@@ -44,13 +69,18 @@ pub fn sign_full_encoded(address: &str, message: &str, wif_private_key: &str) ->
 pub fn sign_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
-  private_key: PrivateKey,
+  private_keys: &[PrivateKey],
+  witness_script: Option<&ScriptBuf>,
 ) -> Result<Witness> {
-  Ok(
-    sign_full(address, message, private_key)?.input[0]
-      .witness
-      .clone(),
-  )
+  let tx = sign_full(address, message, private_keys, witness_script)?;
+
+  if tx.input[0].witness.is_empty() {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
+
+  Ok(tx.input[0].witness.clone())
 }
 
 /// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
@@ -58,10 +88,15 @@ pub fn sign_simple(
 pub fn sign_full(
   address: &Address,
   message: impl AsRef<[u8]>,
-  private_key: PrivateKey,
+  private_keys: &[PrivateKey],
+  witness_script: Option<&ScriptBuf>,
 ) -> Result<Transaction> {
   let to_spend = create_to_spend(address, message)?;
   let mut to_sign = create_to_sign(&to_spend, None)?;
+
+  if private_keys.is_empty() {
+    return Err(Error::NoPrivateKeys);
+  }
 
   let witness = match address.to_address_data() {
     AddressData::Segwit { witness_program } => {
@@ -69,17 +104,21 @@ pub fn sign_full(
       let program_len = witness_program.program().len();
 
       match version {
-        0 => {
-          if program_len != 20 {
-            return Err(Error::NotKeyPathSpend);
-          }
-          create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, false)
-        }
+        0 => match program_len {
+          20 => create_message_signature_p2wpkh(&to_spend, &to_sign, &private_keys[0], false),
+          32 => create_message_signature_p2wsh(
+            &to_spend,
+            &to_sign,
+            private_keys,
+            witness_script.ok_or(Error::InvalidWitness)?,
+          ),
+          _ => return Err(Error::NotKeyPathSpend),
+        },
         1 => {
           if program_len != 32 {
             return Err(Error::NotKeyPathSpend);
           }
-          create_message_signature_taproot(&to_spend, &to_sign, private_key, None)
+          create_message_signature_taproot(&to_spend, &to_sign, &private_keys[0], None)
         }
         _ => {
           return Err(Error::UnsupportedAddress {
@@ -88,9 +127,53 @@ pub fn sign_full(
         }
       }
     }
-    AddressData::P2sh { script_hash: _ } => {
-      create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, true)
-    }
+    AddressData::P2sh { script_hash: _ } => match witness_script {
+      Some(ws) => {
+        let p2wsh_redeem = ScriptBuf::new_p2wsh(&ws.wscript_hash());
+
+        if address.script_pubkey() == ScriptBuf::new_p2sh(&ws.script_hash()) {
+          create_message_signature_p2sh_multisig(&mut to_sign, private_keys, ws)
+        } else if address.script_pubkey() == ScriptBuf::new_p2sh(&p2wsh_redeem.script_hash()) {
+          let witness = create_message_signature_p2wsh(&to_spend, &to_sign, private_keys, ws);
+
+          let mut push_bytes = bitcoin::script::PushBytesBuf::new();
+          push_bytes
+            .extend_from_slice(p2wsh_redeem.as_bytes())
+            .expect("redeem fits");
+          to_sign.inputs[0].final_script_sig =
+            Some(ScriptBuf::builder().push_slice(push_bytes).into_script());
+          witness
+        } else {
+          return Err(Error::UnsupportedAddress {
+            address: address.to_string(),
+          });
+        }
+      }
+      None => {
+        let secp = Secp256k1::new();
+
+        let wpkh = private_keys[0]
+          .public_key(&secp)
+          .wpubkey_hash()
+          .expect("compressed public key");
+
+        let redeem = ScriptBuf::new_p2wpkh(&wpkh);
+        if address.script_pubkey() != ScriptBuf::new_p2sh(&redeem.script_hash()) {
+          return Err(Error::UnsupportedAddress {
+            address: address.to_string(),
+          });
+        }
+
+        let witness = create_message_signature_p2wpkh(&to_spend, &to_sign, &private_keys[0], true);
+        let mut pb = bitcoin::script::PushBytesBuf::new();
+        pb.extend_from_slice(redeem.as_bytes())
+          .expect("redeem fits in push");
+        to_sign.inputs[0].final_script_sig =
+          Some(ScriptBuf::builder().push_slice(pb).into_script());
+
+        witness
+      }
+    },
     _ => {
       return Err(Error::UnsupportedAddress {
         address: address.to_string(),
@@ -98,8 +181,9 @@ pub fn sign_full(
     }
   };
 
-  to_sign.inputs[0].final_script_witness = Some(witness);
-
+  if !witness.is_empty() {
+    to_sign.inputs[0].final_script_witness = Some(witness);
+  }
   to_sign.extract_tx().context(error::TransactionExtract)
 }
 
@@ -107,7 +191,7 @@ pub fn sign_full(
 pub fn create_message_signature_p2wpkh(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
-  private_key: PrivateKey,
+  private_key: &PrivateKey,
   is_p2sh: bool,
 ) -> Witness {
   let secp = Secp256k1::new();
@@ -156,7 +240,7 @@ pub fn create_message_signature_p2wpkh(
 pub fn create_message_signature_taproot(
   to_spend_tx: &Transaction,
   to_sign: &Psbt,
-  private_key: PrivateKey,
+  private_key: &PrivateKey,
   aux_rand: Option<[u8; 32]>,
 ) -> Witness {
   let mut to_sign = to_sign.clone();
@@ -214,4 +298,80 @@ pub fn create_message_signature_taproot(
   );
 
   witness.to_owned()
+}
+
+/// Sign for multisig
+#[allow(clippy::result_large_err)]
+pub fn create_message_signature_p2wsh(
+  to_spend_tx: &Transaction,
+  to_sign: &Psbt,
+  private_keys: &[PrivateKey],
+  witness_script: &ScriptBuf,
+) -> Witness {
+  let secp = Secp256k1::new();
+  let sighash_type = EcdsaSighashType::All;
+  let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
+
+  let sighash = sighash_cache
+    .p2wsh_signature_hash(0, witness_script, to_spend_tx.output[0].value, sighash_type)
+    .expect("signature hash should compute");
+
+  let message = secp256k1::Message::from_digest_slice(sighash.as_ref())
+    .expect("should be cryptographically secure hash");
+
+  let mut witness = Witness::new();
+  witness.push::<&[u8]>(&[]);
+
+  for private_key in private_keys {
+    let signature = secp.sign_ecdsa(&message, &private_key.inner);
+    witness.push(
+      bitcoin::ecdsa::Signature {
+        signature,
+        sighash_type,
+      }
+      .to_vec(),
+    );
+  }
+
+  witness.push(witness_script.as_bytes());
+  witness
+}
+
+/// Sign for p2sh multisig
+#[allow(clippy::result_large_err)]
+pub fn create_message_signature_p2sh_multisig(
+  to_sign: &mut Psbt,
+  private_keys: &[PrivateKey],
+  redeem_script: &ScriptBuf,
+) -> Witness {
+  let secp = Secp256k1::new();
+  let sighash_type = EcdsaSighashType::All;
+
+  let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
+    .legacy_signature_hash(0, redeem_script, sighash_type.to_u32())
+    .expect("signature hash should compute");
+
+  let message = secp256k1::Message::from_digest_slice(sighash.as_ref())
+    .expect("should be cryptographically secure hash");
+
+  // OP_0 <sig_1> .. <sig_m> <redeemScript>
+  let mut builder = ScriptBuf::builder().push_opcode(opcodes::OP_0);
+
+  for private_key in private_keys {
+    let sig_bytes = bitcoin::ecdsa::Signature {
+      signature: secp.sign_ecdsa(&message, &private_key.inner),
+      sighash_type,
+    }
+    .to_vec();
+    let mut pb = bitcoin::script::PushBytesBuf::new();
+    pb.extend_from_slice(&sig_bytes).expect("sig fits in push");
+    builder = builder.push_slice(pb);
+  }
+
+  let mut pb = bitcoin::script::PushBytesBuf::new();
+  pb.extend_from_slice(redeem_script.as_bytes())
+    .expect("redeem fits in push");
+  to_sign.inputs[0].final_script_sig = Some(builder.push_slice(pb).into_script());
+
+  Witness::new()
 }

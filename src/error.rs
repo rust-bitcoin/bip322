@@ -66,4 +66,16 @@ pub enum Error {
   InvalidWitness,
   #[snafu(display("Public key does not match"))]
   PublicKeyMismatch,
+  #[snafu(display("At least one private key is required"))]
+  NoPrivateKeys,
+  #[snafu(display("Non-standard sighash type: {source}"))]
+  SigHashTypeNonStandard {
+    source: bitcoin::sighash::NonStandardSighashTypeError,
+  },
+  #[snafu(display("Signer's public key not present in multisig script"))]
+  UnknownSigner,
+  #[snafu(display("Duplicate private key provided"))]
+  DuplicateSigner,
+  #[snafu(display("Multisig requires exactly {required} signatures, got {provided}"))]
+  SignatureCount { required: usize, provided: usize },
 }
