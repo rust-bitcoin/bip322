@@ -292,18 +292,26 @@ fn verify_full_p2wsh(
     return Err(Error::InvalidWitness);
   }
 
+  if !items[0].is_empty() {
+    return Err(Error::InvalidWitness);
+  }
+
   let witness_script = ScriptBuf::from_bytes(items[items.len() - 1].clone());
 
   let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
   let spk = address.script_pubkey();
-  if spk != program && spk != ScriptBuf::new_p2sh(&program.script_hash()) {
+  if spk == ScriptBuf::new_p2sh(&program.script_hash()) {
+    if to_sign.input[0].script_sig != push_only_script(&program) {
+      return Err(Error::ToSignInvalid);
+    }
+  } else if spk != program {
     return Err(Error::ToSignInvalid);
   }
 
-  let (m, pubkeys) = parse_multisig(&witness_script)?;
+  let (required, pubkeys) = parse_multisig(&witness_script)?;
 
   let signatures = &items[1..items.len() - 1];
-  if signatures.len() != m {
+  if signatures.len() != required {
     return Err(Error::InvalidWitness);
   }
 
@@ -334,9 +342,12 @@ fn verify_full_p2wsh(
       return Err(Error::InvalidWitness);
     }
 
-    if EcdsaSighashType::from_consensus(encoded[length - 1] as u32) != EcdsaSighashType::All {
+    let sighash_type = EcdsaSighashType::from_standard(encoded[length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
+
+    if sighash_type != EcdsaSighashType::All {
       return Err(Error::SigHashTypeUnsupported {
-        sighash_type: "non-ALL".to_string(),
+        sighash_type: sighash_type.to_string(),
       });
     }
 
@@ -421,11 +432,16 @@ fn verify_full_p2sh_multisig(
     let Some((sighash_byte, der)) = encoded.split_last() else {
       return Err(Error::InvalidWitness);
     };
-    if EcdsaSighashType::from_consensus(*sighash_byte as u32) != EcdsaSighashType::All {
+
+    let sighash_type = EcdsaSighashType::from_standard(*sighash_byte as u32)
+      .context(error::SigHashTypeNonStandard)?;
+
+    if sighash_type != EcdsaSighashType::All {
       return Err(Error::SigHashTypeUnsupported {
-        sighash_type: "non-ALL".to_string(),
+        sighash_type: sighash_type.to_string(),
       });
     }
+
     let signature =
       bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
 

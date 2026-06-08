@@ -84,8 +84,6 @@ pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Resul
 
 #[allow(clippy::result_large_err)]
 pub fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
-  use bitcoin::script::Instruction;
-
   let instructions = script
     .instructions()
     .collect::<std::result::Result<Vec<_>, _>>()
@@ -120,12 +118,15 @@ pub fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>
   };
 
   let key_instructions = &instructions[1..instructions.len() - 2];
-  if key_instructions.len() != total_keys || required_signatures > total_keys {
+  if key_instructions.len() != total_keys
+    || required_signatures < 1
+    || required_signatures > total_keys
+  {
     return Err(Error::InvalidWitness);
   }
 
   let mut pubkeys = Vec::with_capacity(total_keys);
-  for instruction in &instructions[1..instructions.len() - 2] {
+  for instruction in key_instructions {
     match instruction {
       Instruction::PushBytes(bytes) => {
         pubkeys.push(PublicKey::from_slice(bytes.as_bytes()).map_err(|_| Error::InvalidPublicKey)?)

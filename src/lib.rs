@@ -9,7 +9,7 @@ use {
     key::{Keypair, TapTweak},
     opcodes,
     psbt::Psbt,
-    script::PushBytes,
+    script::{Instruction, PushBytes},
     secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
     transaction::Version,
@@ -46,6 +46,22 @@ mod tests {
   const NESTED_SEGWIT_WIF_PRIVATE_KEY: &str =
     "KwTbAxmBXjoZM3bzbXixEr9nxLhyYSM4vp2swet58i19bw9sqk5z";
   const NESTED_SEGWIT_ADDRESS: &str = "3HSVzEhCFuH9Z3wvoWTexy7BMVVp3PjS6f";
+
+  const P2WSH_2OF2_ADDRESS: &str = "bc1qg8r3cl47rrr75dwvr7jhzdukptegnmq8v0nmjd2jdn4qvlczqkts0rqtav";
+  const P2WSH_2OF2_WITNESS_SCRIPT: &str =
+    "52210244f7cb842a4ce4f352ce4062ae5e0a5d60d6faa0b07b62c2063484aa5297bbce210234eed6190efc47716b953a050b563f8b2b523addea955ae43351dd2a92aa49f452ae";
+  const P2WSH_2OF2_PRIVATE_KEY_1: &str = "L14bn1tSDZUKYLLiTConCRHbqzGef8eqB2tU5PBPFBkyPLUyob7V";
+  const P2WSH_2OF2_PRIVATE_KEY_2: &str = "KyJnWYygb7P2P8khWyDMW9yFGA3dUe7kpkEHtLbzY6cfvvn9T5CS";
+  const P2WSH_2OF2_MESSAGE: &str = "QXYOWYWO7ZGJC4OPNC367HBUQF";
+
+  const P2SH_P2WSH_2OF2_ADDRESS: &str = "3PGZjFkYBL1m9WBWkWbCW5FEFTaS1Hj4EB";
+  const P2SH_P2WSH_2OF2_WITNESS_SCRIPT: &str =
+    "522103fb824153fc000a213c5456d01780d1f292a0cfbfbc5f6f8f1dc713706c5519d12103db88ce9fb8081e50460beb37539741b0667d6f2439dd1ca283d63182421c10b152ae";
+  const P2SH_P2WSH_2OF2_PRIVATE_KEY_1: &str =
+    "L246N8J5x5ehwjoz97ZfHXBCELxGcK2jqRFinReMBcRnqH1X4zdc";
+  const P2SH_P2WSH_2OF2_PRIVATE_KEY_2: &str =
+    "L1WzdMN476EHhwsDLHJwVHZKrwVLFFsdvNoZFsZVk2Mb5rKst2Et";
+  const P2SH_P2WSH_2OF2_MESSAGE: &str = "NQVRV3DJYLKBANM3OPTNBULEU3";
 
   #[test]
   fn message_hashes_are_correct() {
@@ -327,8 +343,9 @@ mod tests {
       "Hello World",
       &sign::sign_full_encoded(
         NESTED_SEGWIT_ADDRESS,
-        "Hello World"
-        , &[NESTED_SEGWIT_WIF_PRIVATE_KEY], None
+        "Hello World",
+        &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
+        None
       )
       .unwrap()
     )
@@ -350,5 +367,82 @@ mod tests {
       create_message_signature_taproot(&to_spend, &to_sign, &private_key, Some(aux_rand));
 
     assert!(verify_simple(&address, message, witness).is_ok());
+  }
+
+  #[test]
+  fn roundtrip_p2wsh_2of2_simple() {
+    assert!(verify::verify_simple_encoded(
+      P2WSH_2OF2_ADDRESS,
+      P2WSH_2OF2_MESSAGE,
+      &sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        P2WSH_2OF2_MESSAGE,
+        &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      )
+      .unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn roundtrip_p2sh_p2wsh_2of2_full() {
+    assert!(verify::verify_full_encoded(
+      P2SH_P2WSH_2OF2_ADDRESS,
+      P2SH_P2WSH_2OF2_MESSAGE,
+      &sign::sign_full_encoded(
+        P2SH_P2WSH_2OF2_ADDRESS,
+        P2SH_P2WSH_2OF2_MESSAGE,
+        &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
+        Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
+      )
+      .unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn roundtrip_p2wsh_2of2_shuffled_keys() {
+    assert!(verify::verify_simple_encoded(
+      P2WSH_2OF2_ADDRESS,
+      P2WSH_2OF2_MESSAGE,
+      &sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        P2WSH_2OF2_MESSAGE,
+        &[P2WSH_2OF2_PRIVATE_KEY_2, P2WSH_2OF2_PRIVATE_KEY_1],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      )
+      .unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn roundtrip_p2sh_p2wsh_2of2_shuffled_keys() {
+    assert!(verify::verify_full_encoded(
+      P2SH_P2WSH_2OF2_ADDRESS,
+      P2SH_P2WSH_2OF2_MESSAGE,
+      &sign::sign_full_encoded(
+        P2SH_P2WSH_2OF2_ADDRESS,
+        P2SH_P2WSH_2OF2_MESSAGE,
+        &[P2SH_P2WSH_2OF2_PRIVATE_KEY_2, P2SH_P2WSH_2OF2_PRIVATE_KEY_1],
+        Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
+      )
+      .unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn multisig_rejects_unknown_signer() {
+    assert!(matches!(
+      sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        P2WSH_2OF2_MESSAGE,
+        &[P2WSH_2OF2_PRIVATE_KEY_1, WIF_PRIVATE_KEY],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      ),
+      Err(Error::UnknownSigner)
+    ));
   }
 }

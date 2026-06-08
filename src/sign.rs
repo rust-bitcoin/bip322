@@ -34,7 +34,6 @@ pub fn sign_simple_encoded(
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
-#[allow(clippy::result_large_err)]
 pub fn sign_full_encoded(
   address: &str,
   message: &str,
@@ -111,7 +110,7 @@ pub fn sign_full(
             &to_sign,
             private_keys,
             witness_script.ok_or(Error::InvalidWitness)?,
-          ),
+          )?,
           _ => return Err(Error::NotKeyPathSpend),
         },
         1 => {
@@ -132,9 +131,9 @@ pub fn sign_full(
         let p2wsh_redeem = ScriptBuf::new_p2wsh(&ws.wscript_hash());
 
         if address.script_pubkey() == ScriptBuf::new_p2sh(&ws.script_hash()) {
-          create_message_signature_p2sh_multisig(&mut to_sign, private_keys, ws)
+          create_message_signature_p2sh_multisig(&mut to_sign, private_keys, ws)?
         } else if address.script_pubkey() == ScriptBuf::new_p2sh(&p2wsh_redeem.script_hash()) {
-          let witness = create_message_signature_p2wsh(&to_spend, &to_sign, private_keys, ws);
+          let witness = create_message_signature_p2wsh(&to_spend, &to_sign, private_keys, ws)?;
 
           let mut push_bytes = bitcoin::script::PushBytesBuf::new();
           push_bytes
@@ -307,7 +306,7 @@ pub fn create_message_signature_p2wsh(
   to_sign: &Psbt,
   private_keys: &[PrivateKey],
   witness_script: &ScriptBuf,
-) -> Witness {
+) -> Result<Witness> {
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
@@ -322,19 +321,15 @@ pub fn create_message_signature_p2wsh(
   let mut witness = Witness::new();
   witness.push::<&[u8]>(&[]);
 
-  for private_key in private_keys {
-    let signature = secp.sign_ecdsa(&message, &private_key.inner);
-    witness.push(
-      bitcoin::ecdsa::Signature {
-        signature,
-        sighash_type,
-      }
-      .to_vec(),
-    );
+  let signatures = ordered_multisig_signatures(&secp, witness_script, private_keys, &message)?;
+
+  for signature in signatures {
+    witness.push(signature)
   }
 
   witness.push(witness_script.as_bytes());
-  witness
+
+  Ok(witness)
 }
 
 /// Sign for p2sh multisig
@@ -343,7 +338,7 @@ pub fn create_message_signature_p2sh_multisig(
   to_sign: &mut Psbt,
   private_keys: &[PrivateKey],
   redeem_script: &ScriptBuf,
-) -> Witness {
+) -> Result<Witness> {
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
 
@@ -354,17 +349,14 @@ pub fn create_message_signature_p2sh_multisig(
   let message = secp256k1::Message::from_digest_slice(sighash.as_ref())
     .expect("should be cryptographically secure hash");
 
+  let signatures = ordered_multisig_signatures(&secp, redeem_script, private_keys, &message)?;
+
   // OP_0 <sig_1> .. <sig_m> <redeemScript>
   let mut builder = ScriptBuf::builder().push_opcode(opcodes::OP_0);
 
-  for private_key in private_keys {
-    let sig_bytes = bitcoin::ecdsa::Signature {
-      signature: secp.sign_ecdsa(&message, &private_key.inner),
-      sighash_type,
-    }
-    .to_vec();
+  for signature in signatures {
     let mut pb = bitcoin::script::PushBytesBuf::new();
-    pb.extend_from_slice(&sig_bytes).expect("sig fits in push");
+    pb.extend_from_slice(&signature).expect("sig fits in push");
     builder = builder.push_slice(pb);
   }
 
@@ -373,5 +365,5 @@ pub fn create_message_signature_p2sh_multisig(
     .expect("redeem fits in push");
   to_sign.inputs[0].final_script_sig = Some(builder.push_slice(pb).into_script());
 
-  Witness::new()
+  Ok(Witness::new())
 }
