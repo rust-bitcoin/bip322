@@ -524,19 +524,13 @@ fn verify_full_p2pkh(
   to_sign: Transaction,
 ) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
-  let to_spend_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
-  if to_sign.input[0].previous_output != to_spend_outpoint {
-    return Err(Error::ToSignInvalid);
-  }
+
+  check_to_sign(&to_spend, &to_sign)?;
 
   if !to_sign.input[0].witness.is_empty() {
     return Err(Error::InvalidWitness);
   }
 
-  // scriptSig: <sig> <pubkey>
   let mut instructions = to_sign.input[0].script_sig.instructions();
   let signature_bytes = match instructions.next() {
     Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
@@ -558,9 +552,12 @@ fn verify_full_p2pkh(
 
   let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
 
-  if EcdsaSighashType::from_consensus(*sighash_byte as u32) != EcdsaSighashType::All {
+  let sighash_type =
+    EcdsaSighashType::from_standard(*sighash_byte as u32).context(error::SigHashTypeNonStandard)?;
+
+  if sighash_type != EcdsaSighashType::All {
     return Err(Error::SigHashTypeUnsupported {
-      sighash_type: "non-ALL".to_string(),
+      sighash_type: sighash_type.to_string(),
     });
   }
   let signature =

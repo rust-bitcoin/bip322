@@ -444,6 +444,16 @@ mod tests {
       )
       .unwrap()
     )
+    .is_ok())
+  }
+
+  #[test]
+  fn roundtrip_p2pkh_full() {
+    assert!(verify::verify_full_encoded(
+      LEGACY_ADDRESS,
+      "Hello World",
+      &sign::sign_full_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
+    )
     .is_ok());
   }
 
@@ -469,6 +479,14 @@ mod tests {
         &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
       ),
+      Err(Error::UnsupportedAddress { .. })
+    ));
+  }
+
+  #[test]
+  fn p2pkh_simple_unsupported() {
+    assert!(matches!(
+      sign::sign_simple_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None),
       Err(Error::UnsupportedAddress { .. })
     ));
   }
@@ -960,6 +978,29 @@ mod tests {
         None,
       ),
       Err(Error::InvalidWitness)
+    ))
+  }
+
+  #[test]
+  fn roundtrip_legacy() {
+    assert!(verify::verify_legacy_encoded(
+      LEGACY_ADDRESS,
+      "Hello World",
+      &sign::sign_legacy_encoded(LEGACY_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+    )
+    .is_ok(),);
+  }
+
+  #[test]
+  fn legacy_address_rejects_simple_proof() {
+    assert!(matches!(
+      verify::verify_simple_encoded(
+        LEGACY_ADDRESS,
+        "",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      )
+      .unwrap_err(),
+      Error::InvalidWitness
     ));
   }
 }
