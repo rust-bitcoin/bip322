@@ -86,4 +86,10 @@ pub enum Error {
   WitnessScriptParse {
     source: bitcoin::hex::HexToBytesError,
   },
+  #[snafu(display("Invalid BIP-137 recovery flag `{flag}`"))]
+  InvalidRecoveryFlag { flag: u8 },
+  #[snafu(display("Invalid legacy signature: {source}"))]
+  LegacyRecover {
+    source: bitcoin::sign_message::MessageSignatureError,
+  },
 }

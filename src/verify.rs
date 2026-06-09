@@ -1,5 +1,49 @@
 use super::*;
 
+/// Verifies a BIP-137 legacy proof from string inputs.
+#[allow(clippy::result_large_err)]
+pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
+  let address = Address::from_str(address)
+    .context(error::AddressParse { address })?
+    .assume_checked();
+
+  if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
+
+  let signature_bytes = general_purpose::STANDARD
+    .decode(signature)
+    .context(error::SignatureDecode { signature })?;
+
+  if signature_bytes.len() != 65 {
+    return Err(Error::SignatureLength {
+      length: signature_bytes.len(),
+      encoded_signature: signature_bytes,
+    });
+  }
+
+  let flag = signature_bytes[0];
+  if !(27..=34).contains(&flag) {
+    return Err(Error::InvalidRecoveryFlag { flag });
+  }
+
+  let signature = MessageSignature::from_slice(&signature_bytes).context(error::LegacyRecover)?;
+
+  let hash = signed_msg_hash(message);
+
+  let recovered = signature
+    .recover_pubkey(&Secp256k1::verification_only(), hash)
+    .context(error::LegacyRecover)?;
+
+  if address.script_pubkey() != ScriptBuf::new_p2pkh(&recovered.pubkey_hash()) {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  Ok(())
+}
+
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
@@ -488,6 +532,10 @@ fn verify_full_p2pkh(
     return Err(Error::ToSignInvalid);
   }
 
+  if !to_sign.input[0].witness.is_empty() {
+    return Err(Error::InvalidWitness);
+  }
+
   // scriptSig: <sig> <pubkey>
   let mut instructions = to_sign.input[0].script_sig.instructions();
   let signature_bytes = match instructions.next() {
@@ -502,7 +550,7 @@ fn verify_full_p2pkh(
     return Err(Error::InvalidWitness);
   }
 
-  let pub_key = PublicKey::from_slice(&pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
+  let pub_key = PublicKey::from_slice(pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
 
   if address.script_pubkey() != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
     return Err(Error::PublicKeyMismatch);
