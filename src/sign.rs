@@ -181,6 +181,9 @@ pub fn sign_full(
         witness
       }
     },
+    AddressData::P2pkh { pubkey_hash: _ } => {
+      create_message_signature_p2pkh(&to_spend, &mut to_sign, &private_keys[0])
+    }
     _ => {
       return Err(Error::UnsupportedAddress {
         address: address.to_string(),
@@ -362,15 +365,14 @@ pub fn create_message_signature_p2sh_multisig(
   let mut builder = ScriptBuf::builder().push_opcode(opcodes::OP_0);
 
   for signature in signatures {
-    let mut pb = bitcoin::script::PushBytesBuf::new();
-    pb.extend_from_slice(&signature).expect("sig fits in push");
-    builder = builder.push_slice(pb);
+    builder = builder.push_slice(push_bytes(&signature));
   }
 
-  let mut pb = bitcoin::script::PushBytesBuf::new();
-  pb.extend_from_slice(redeem_script.as_bytes())
-    .expect("redeem fits in push");
-  to_sign.inputs[0].final_script_sig = Some(builder.push_slice(pb).into_script());
+  to_sign.inputs[0].final_script_sig = Some(
+    builder
+      .push_slice(push_bytes(redeem_script.as_bytes()))
+      .into_script(),
+  );
 
   Ok(Witness::new())
 }
@@ -385,4 +387,41 @@ fn single_key(private_keys: &[PrivateKey]) -> Result<&PrivateKey> {
   }
 
   Ok(&private_keys[0])
+}
+
+/// Sign for p2pkh
+#[allow(clippy::result_large_err)]
+pub fn create_message_signature_p2pkh(
+  to_spend_tx: &Transaction,
+  to_sign: &mut Psbt,
+  private_key: &PrivateKey,
+) -> Witness {
+  let secp = Secp256k1::new();
+  let sighash_type = EcdsaSighashType::All;
+  let pub_key = private_key.public_key(&secp);
+
+  let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
+    .legacy_signature_hash(
+      0,
+      &to_spend_tx.output[0].script_pubkey,
+      sighash_type.to_u32(),
+    )
+    .expect("signature hash should compute");
+  let msg = secp256k1::Message::from_digest_slice(sighash.as_ref())
+    .expect("should be cryptographically secure hash");
+
+  let sig_bytes = bitcoin::ecdsa::Signature {
+    signature: secp.sign_ecdsa(&msg, &private_key.inner),
+    sighash_type,
+  }
+  .to_vec();
+
+  to_sign.inputs[0].final_script_sig = Some(
+    ScriptBuf::builder()
+      .push_slice(push_bytes(&sig_bytes))
+      .push_slice(push_bytes(&pub_key.to_bytes()))
+      .into_script(),
+  );
+
+  Witness::new()
 }

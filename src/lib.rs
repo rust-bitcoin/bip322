@@ -9,7 +9,7 @@ use {
     key::{Keypair, TapTweak},
     opcodes,
     psbt::Psbt,
-    script::{Instruction, PushBytes},
+    script::{Instruction, PushBytes, PushBytesBuf},
     secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
     transaction::Version,
@@ -191,12 +191,12 @@ mod tests {
   }
 
   #[test]
-  fn invalid_address() {
+  fn legacy_address_rejects_witness_signature() {
     assert_eq!(verify::verify_simple_encoded(
       LEGACY_ADDRESS,
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      format!("Unsupported address `{LEGACY_ADDRESS}`, only P2TR, P2WPKH, P2SH-P2WPKH, and P2WSH/P2SH multisig allowed")
+      "Invalid witness"
     )
   }
 
