@@ -544,9 +544,12 @@ fn verify_full_p2pkh(
 
   let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
 
-  if EcdsaSighashType::from_consensus(*sighash_byte as u32) != EcdsaSighashType::All {
+  let sighash_type =
+    EcdsaSighashType::from_standard(*sighash_byte as u32).context(error::SigHashTypeNonStandard)?;
+
+  if sighash_type != EcdsaSighashType::All {
     return Err(Error::SigHashTypeUnsupported {
-      sighash_type: "non-ALL".to_string(),
+      sighash_type: sighash_type.to_string(),
     });
   }
   let signature =
