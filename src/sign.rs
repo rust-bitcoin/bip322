@@ -1,5 +1,32 @@
 use super::*;
 
+/// Signs a message in the BIP-137 legacy format from string inputs.
+#[allow(clippy::result_large_err)]
+pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
+  let address = Address::from_str(address)
+    .context(error::AddressParse { address })?
+    .assume_checked();
+  let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
+
+  let secp = Secp256k1::new();
+  let pubkey = private_key.public_key(&secp);
+
+  if address.script_pubkey() != ScriptBuf::new_p2pkh(&pubkey.pubkey_hash()) {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
+
+  let msg = Message::from_digest(signed_msg_hash(message).to_byte_array());
+
+  let recoverable = secp.sign_ecdsa_recoverable(&msg, &private_key.inner);
+
+  Ok(
+    general_purpose::STANDARD
+      .encode(MessageSignature::new(recoverable, pubkey.compressed).serialize()),
+  )
+}
+
 /// Signs the BIP-322 simple from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
 pub fn sign_simple_encoded(
@@ -174,7 +201,7 @@ pub fn sign_full(
       }
     },
     AddressData::P2pkh { pubkey_hash: _ } => {
-      create_message_signature_p2pkh(&to_spend, &mut to_sign, &private_keys[0])
+      create_message_signature_p2pkh(&to_spend, &mut to_sign, &private_keys[0])?
     }
     _ => {
       return Err(Error::UnsupportedAddress {
@@ -372,14 +399,18 @@ pub fn create_message_signature_p2sh_multisig(
 }
 
 /// Sign for p2pkh
+#[allow(clippy::result_large_err)]
 pub fn create_message_signature_p2pkh(
   to_spend_tx: &Transaction,
   to_sign: &mut Psbt,
   private_key: &PrivateKey,
-) -> Witness {
+) -> Result<Witness> {
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let pub_key = private_key.public_key(&secp);
+  if to_spend_tx.output[0].script_pubkey != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
+    return Err(Error::PublicKeyMismatch);
+  }
 
   let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
     .legacy_signature_hash(
@@ -398,9 +429,12 @@ pub fn create_message_signature_p2pkh(
   .to_vec();
 
   let mut sig_push = bitcoin::script::PushBytesBuf::new();
-  sig_push.extend_from_slice(&sig_bytes).expect("sig fits in push");
+  sig_push
+    .extend_from_slice(&sig_bytes)
+    .expect("sig fits in push");
   let mut key_push = bitcoin::script::PushBytesBuf::new();
-  key_push.extend_from_slice(&pub_key.to_bytes())
+  key_push
+    .extend_from_slice(&pub_key.to_bytes())
     .expect("pubkey fits in push");
 
   to_sign.inputs[0].final_script_sig = Some(
@@ -410,5 +444,5 @@ pub fn create_message_signature_p2pkh(
       .into_script(),
   );
 
-  Witness::new()
+  Ok(Witness::new())
 }

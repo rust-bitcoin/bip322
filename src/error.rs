@@ -78,4 +78,10 @@ pub enum Error {
   DuplicateSigner,
   #[snafu(display("Multisig requires exactly {required} signatures, got {provided}"))]
   SignatureCount { required: usize, provided: usize },
+  #[snafu(display("Invalid BIP-137 recovery flag `{flag}`"))]
+  InvalidRecoveryFlag { flag: u8 },
+  #[snafu(display("Invalid legacy signature: {source}"))]
+  LegacyRecover {
+    source: bitcoin::sign_message::MessageSignatureError,
+  },
 }
