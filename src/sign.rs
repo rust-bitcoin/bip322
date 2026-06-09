@@ -173,6 +173,9 @@ pub fn sign_full(
         witness
       }
     },
+    AddressData::P2pkh { pubkey_hash: _ } => {
+      create_message_signature_p2pkh(&to_spend, &mut to_sign, &private_keys[0])
+    }
     _ => {
       return Err(Error::UnsupportedAddress {
         address: address.to_string(),
@@ -366,4 +369,46 @@ pub fn create_message_signature_p2sh_multisig(
   to_sign.inputs[0].final_script_sig = Some(builder.push_slice(pb).into_script());
 
   Ok(Witness::new())
+}
+
+/// Sign for p2pkh
+pub fn create_message_signature_p2pkh(
+  to_spend_tx: &Transaction,
+  to_sign: &mut Psbt,
+  private_key: &PrivateKey,
+) -> Witness {
+  let secp = Secp256k1::new();
+  let sighash_type = EcdsaSighashType::All;
+  let pub_key = private_key.public_key(&secp);
+
+  let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
+    .legacy_signature_hash(
+      0,
+      &to_spend_tx.output[0].script_pubkey,
+      sighash_type.to_u32(),
+    )
+    .expect("signature hash should compute");
+  let msg = secp256k1::Message::from_digest_slice(sighash.as_ref())
+    .expect("should be cryptographically secure hash");
+
+  let sig_bytes = bitcoin::ecdsa::Signature {
+    signature: secp.sign_ecdsa(&msg, &private_key.inner),
+    sighash_type,
+  }
+  .to_vec();
+
+  let mut sig_push = bitcoin::script::PushBytesBuf::new();
+  sig_push.extend_from_slice(&sig_bytes).expect("sig fits in push");
+  let mut key_push = bitcoin::script::PushBytesBuf::new();
+  key_push.extend_from_slice(&pub_key.to_bytes())
+    .expect("pubkey fits in push");
+
+  to_sign.inputs[0].final_script_sig = Some(
+    ScriptBuf::builder()
+      .push_slice(sig_push)
+      .push_slice(key_push)
+      .into_script(),
+  );
+
+  Witness::new()
 }

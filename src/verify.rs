@@ -105,6 +105,7 @@ pub fn verify_full(
         _ => Err(Error::InvalidWitness),
       }
     }
+    AddressData::P2pkh { pubkey_hash: _ } => verify_full_p2pkh(address, message, to_sign),
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
     }),
@@ -385,7 +386,7 @@ fn verify_full_p2sh_multisig(
     vout: 0,
   };
 
-  if to_sign.input.len() != 1 || to_sign.input[0].previous_output != to_spend_outpoint {
+  if to_sign.input[0].previous_output != to_spend_outpoint {
     return Err(Error::ToSignInvalid);
   }
 
@@ -455,4 +456,65 @@ fn verify_full_p2sh_multisig(
   }
 
   Ok(())
+}
+
+/// Verify a BIP-322 proof for a P2PKH
+#[allow(clippy::result_large_err)]
+fn verify_full_p2pkh(
+  address: &Address,
+  message: impl AsRef<[u8]>,
+  to_sign: Transaction,
+) -> Result<()> {
+  let to_spend = create_to_spend(address, message)?;
+  let to_spend_outpoint = OutPoint {
+    txid: to_spend.compute_txid(),
+    vout: 0,
+  };
+  if to_sign.input[0].previous_output != to_spend_outpoint {
+    return Err(Error::ToSignInvalid);
+  }
+
+  // scriptSig: <sig> <pubkey>
+  let mut instructions = to_sign.input[0].script_sig.instructions();
+  let signature_bytes = match instructions.next() {
+    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
+    _ => return Err(Error::InvalidWitness),
+  };
+  let pubkey_bytes = match instructions.next() {
+    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
+    _ => return Err(Error::InvalidWitness),
+  };
+  if instructions.next().is_some() {
+    return Err(Error::InvalidWitness);
+  }
+
+  let pub_key = PublicKey::from_slice(&pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
+
+  if address.script_pubkey() != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
+
+  if EcdsaSighashType::from_consensus(*sighash_byte as u32) != EcdsaSighashType::All {
+    return Err(Error::SigHashTypeUnsupported {
+      sighash_type: "non-ALL".to_string(),
+    });
+  }
+  let signature =
+    bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
+
+  let sighash = SighashCache::new(&to_sign)
+    .legacy_signature_hash(
+      0,
+      &to_spend.output[0].script_pubkey,
+      EcdsaSighashType::All.to_u32(),
+    )
+    .expect("signature hash should compute");
+  let msg =
+    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
+
+  Secp256k1::verification_only()
+    .verify_ecdsa(&msg, &signature, &pub_key.inner)
+    .context(error::SignatureInvalid)
 }
