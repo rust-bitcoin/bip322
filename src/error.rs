@@ -84,4 +84,6 @@ pub enum Error {
   LegacyRecover {
     source: bitcoin::sign_message::MessageSignatureError,
   },
+  #[snafu(display("Invalid proof input at index {index}: {reason}"))]
+  InvalidProofInput { index: usize, reason: String },
 }

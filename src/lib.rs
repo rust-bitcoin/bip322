@@ -355,8 +355,14 @@ mod tests {
     let mut aux_rand = [0u8; 32];
     rand::rng().fill_bytes(&mut aux_rand);
 
+    let prevouts = [TxOut {
+      value: Amount::from_sat(0),
+      script_pubkey: to_spend.output[0].script_pubkey.clone(),
+    }];
+
     let witness =
-      create_message_signature_taproot(&to_spend, &to_sign, &private_key, Some(aux_rand));
+      create_message_signature_taproot(&to_sign, &private_key, &prevouts, 0, Some(aux_rand))
+        .unwrap();
 
     assert!(verify_simple(&address, message, witness).is_ok());
   }

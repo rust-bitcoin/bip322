@@ -2,6 +2,10 @@ use super::*;
 
 pub const BIP322_TAG: &str = "BIP0322-signed-message";
 
+/// PSBT global key type for the BIP-322 generic signed message
+/// (PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE).
+pub const PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE: u8 = 0x09;
+
 /// Create the tagged message hash.
 pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
   let tag_hash = Sha256::new().chain_update(tag).finalize();
