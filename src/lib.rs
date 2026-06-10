@@ -65,6 +65,14 @@ mod tests {
     "L1WzdMN476EHhwsDLHJwVHZKrwVLFFsdvNoZFsZVk2Mb5rKst2Et";
   const P2SH_P2WSH_2OF2_MESSAGE: &str = "NQVRV3DJYLKBANM3OPTNBULEU3";
 
+  // PoF constants
+  const POF_P2TR_ADDRESS: &str = "bc1pk3vq3wpn4txexwq4dj0k2dugzp6kfwllvs89w49cvtk3j2cndcds3l9kw9";
+  const POF_P2TR_CHALLENGE_KEY: &str = "L1p7QRghEregYbBvSCp1eW4YJg2RwMYwX2uhR1eAnkVoPJBaJ7Dy";
+  const POF_P2TR_PROVEN_KEY_1: &str = "Kz5jBiqQKoppYvaxtWZJicxGZ3G3iJ4rLqNnv7MaQBusyoE731EJ";
+  const POF_P2TR_PROVEN_KEY_2: &str = "L2fNJduiUkSytUDbxa58ivWoHevB3svcWUJMxMFebdugYP5jgJr1";
+  const POF_P2TR_PROVEN_KEY_3: &str = "KxqVMn81AEYSwYuzBxe6xC4JDAgA2eU2qiNvBAgVZZwRFv1BqN3y";
+  const POF_P2TR_MESSAGE: &str = "FUYMQWKYGS7HJEN7YFEZU5SNR5";
+
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
