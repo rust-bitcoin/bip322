@@ -135,23 +135,27 @@ fn verify_full_p2wpkh(
     return Err(Error::PublicKeyMismatch);
   }
 
+  // The witness item is a DER-encoded ECDSA signature followed by a one-byte
+  // sighash flag. Its length is not fixed: low-S DER signatures are usually 71 or
+  // 72 bytes but are shorter when r or s serialize to fewer than 32 bytes. Split
+  // off the sighash flag and let `from_der` validate the remainder, rather than
+  // rejecting valid signatures on length alone.
+  if encoded_signature.is_empty() {
+    return Err(Error::SignatureLength {
+      length: 0,
+      encoded_signature,
+    });
+  }
+
   let signature_length = encoded_signature.len();
 
-  let (signature, sighash_type) = match signature_length {
-    71 | 72 => (
-      bitcoin::secp256k1::ecdsa::Signature::from_der(
-        &encoded_signature.as_slice()[..signature_length - 1],
-      )
-      .context(error::SignatureInvalid)?,
-      EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32),
-    ),
-    _ => {
-      return Err(Error::SignatureLength {
-        length: encoded_signature.len(),
-        encoded_signature,
-      })
-    }
-  };
+  let signature = bitcoin::secp256k1::ecdsa::Signature::from_der(
+    &encoded_signature.as_slice()[..signature_length - 1],
+  )
+  .context(error::SignatureInvalid)?;
+
+  let sighash_type =
+    EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32);
 
   if !(sighash_type == EcdsaSighashType::All) {
     return Err(Error::SigHashTypeUnsupported {
