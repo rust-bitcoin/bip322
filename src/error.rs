@@ -56,7 +56,7 @@ pub enum Error {
   SigHashTypeInvalid {
     source: bitcoin::sighash::InvalidSighashTypeError,
   },
-  #[snafu(display("Non-standard sighash type"))]
+  #[snafu(display("Non-standard sighash type: {source}"))]
   SigHashTypeNonStandard {
     source: bitcoin::sighash::NonStandardSighashTypeError,
   },
