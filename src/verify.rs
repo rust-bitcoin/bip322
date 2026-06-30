@@ -155,7 +155,8 @@ fn verify_full_p2wpkh(
   .context(error::SignatureInvalid)?;
 
   let sighash_type =
-    EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32);
+    EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
   if !(sighash_type == EcdsaSighashType::All) {
     return Err(Error::SigHashTypeUnsupported {
