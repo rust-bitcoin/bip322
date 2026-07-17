@@ -142,9 +142,8 @@ pub fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>
   Ok((required_signatures, pubkeys))
 }
 
-/// Sign with each private key, ordering signatures by the position of the
-/// corresponding public key in the multisig script, as required by
-/// OP_CHECKMULTISIG's forward-only matching.
+/// Sign with each key, emitting signatures in the script's pubkey order
+/// as OP_CHECKMULTISIG's forward-only matching requires.
 #[allow(clippy::result_large_err)]
 pub fn ordered_multisig_signatures(
   secp: &Secp256k1<secp256k1::All>,

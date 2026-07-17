@@ -492,4 +492,181 @@ mod tests {
       Error::InvalidWitness
     ));
   }
+
+  #[test]
+  fn roundtrip_pof_p2tr_with_inputs() {
+    let proof_inputs = vec![
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .unwrap(),
+          vout: 0,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "5120788b90c2b523c73a4237d04df46b232858be3bbc0e65d8d049a7fa59d5719db8",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
+        witness_script: None,
+      },
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "2222222222222222222222222222222222222222222222222222222222222222"
+            .parse()
+            .unwrap(),
+          vout: 1,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_2).unwrap()],
+        witness_script: None,
+      },
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "3333333333333333333333333333333333333333333333333333333333333333"
+            .parse()
+            .unwrap(),
+          vout: 1,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "51205c2badbb20cebdce218800dda2fed598e51fab8c30e87112ec967a340b9c3099",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_3).unwrap()],
+        witness_script: None,
+      },
+    ];
+
+    let prevouts: Vec<TxOut> = proof_inputs
+      .iter()
+      .map(|proof_input| proof_input.prevout.clone())
+      .collect();
+
+    assert!(verify_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &sign_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &[POF_P2TR_CHALLENGE_KEY],
+        None,
+        &proof_inputs,
+      )
+      .unwrap(),
+      &prevouts
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn pof_wrong_prevout_is_rejected() {
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: "1111111111111111111111111111111111111111111111111111111111111111"
+          .parse()
+          .unwrap(),
+        vout: 0,
+      },
+      prevout: TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: ScriptBuf::from_hex(
+          "5120788b90c2b523c73a4237d04df46b232858be3bbc0e65d8d049a7fa59d5719db8",
+        )
+        .unwrap(),
+      },
+      prev_tx: None,
+      private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
+      witness_script: None,
+    }];
+
+    // Swap in a different scriptPubKey for verification
+    let wrong_prevouts = vec![TxOut {
+      value: Amount::from_sat(345678),
+      script_pubkey: ScriptBuf::from_hex(
+        "5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca",
+      )
+      .unwrap(),
+    }];
+
+    assert!(matches!(
+      verify_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &sign_pof_encoded(
+          POF_P2TR_ADDRESS,
+          POF_P2TR_MESSAGE,
+          &[POF_P2TR_CHALLENGE_KEY],
+          None,
+          &proof_inputs,
+        )
+        .unwrap(),
+        &wrong_prevouts
+      ),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn roundtrip_pof_with_legacy_input() {
+    let secp = Secp256k1::new();
+    let legacy_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let legacy_spk = ScriptBuf::new_p2pkh(&legacy_key.public_key(&secp).pubkey_hash());
+
+    // The real previous transaction whose output the proof claims
+    let prev_tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: legacy_spk.clone(),
+      }],
+    };
+
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: prev_tx.compute_txid(),
+        vout: 0,
+      },
+      prevout: prev_tx.output[0].clone(),
+      prev_tx: Some(prev_tx),
+      private_keys: vec![legacy_key],
+      witness_script: None,
+    }];
+
+    let prevouts: Vec<TxOut> = proof_inputs
+      .iter()
+      .map(|proof_input| proof_input.prevout.clone())
+      .collect();
+
+    assert!(verify_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &sign_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &[POF_P2TR_CHALLENGE_KEY],
+        None,
+        &proof_inputs,
+      )
+      .unwrap(),
+      &prevouts
+    )
+    .is_ok());
+  }
 }

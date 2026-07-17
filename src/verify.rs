@@ -109,7 +109,7 @@ pub fn verify_pof_encoded(
   verify_pof(&address, message, psbt, prevouts)
 }
 
-/// Verifies the BIP-322 simple from proper Rust types.
+/// Verifies the BIP-322 simple format.
 #[allow(clippy::result_large_err)]
 pub fn verify_simple(
   address: &Address,
@@ -125,7 +125,7 @@ pub fn verify_simple(
   )
 }
 
-/// Verifies the BIP-322 full from proper Rust types.
+/// Verifies the BIP-322 full format.
 #[allow(clippy::result_large_err)]
 pub fn verify_full(
   address: &Address,

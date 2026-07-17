@@ -7,8 +7,7 @@ pub struct ProofInput {
   pub outpoint: OutPoint,
   /// The previous output being spent
   pub prevout: TxOut,
-  /// Full previous transaction. Required for legacy (non-witness) inputs per
-  /// BIP174; ignored for witness-type inputs.
+  /// Full previous transaction for this input's outpoint.
   pub prev_tx: Option<Transaction>,
   /// Key(s) that satisfy the input: one for single-sig, `m` for an `m`-of-`n` multisig
   pub private_keys: Vec<PrivateKey>,
@@ -106,7 +105,7 @@ pub fn sign_full_encoded(
   Ok(general_purpose::STANDARD.encode(buffer))
 }
 
-/// Signs in the BIP-322 simple format from proper Rust types and returns the witness.
+/// Signs in the BIP-322 simple format and returns the witness.
 #[allow(clippy::result_large_err)]
 pub fn sign_simple(
   address: &Address,
@@ -125,7 +124,7 @@ pub fn sign_simple(
   Ok(tx.input[0].witness.clone())
 }
 
-/// Signs in the BIP-322 full format from proper Rust types and returns the full transaction.
+/// Signs in the BIP-322 full format and returns the full transaction.
 #[allow(clippy::result_large_err)]
 pub fn sign_full(
   address: &Address,
