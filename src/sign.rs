@@ -78,7 +78,10 @@ pub fn sign_simple_encoded(
     .consensus_encode(&mut buffer)
     .context(error::WitnessEncoding)?;
 
-  Ok(general_purpose::STANDARD.encode(buffer))
+  Ok(format!(
+    "{SIMPLE_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(buffer)
+  ))
 }
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
@@ -109,7 +112,10 @@ pub fn sign_full_encoded(
   tx.consensus_encode(&mut buffer)
     .context(error::TransactionEncode)?;
 
-  Ok(general_purpose::STANDARD.encode(buffer))
+  Ok(format!(
+    "{FULL_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(buffer)
+  ))
 }
 
 /// Signs in the BIP-322 simple format and returns the witness.
@@ -194,7 +200,10 @@ pub fn sign_pof_encoded(
     .serialize_to_writer(&mut buffer)
     .context(error::TransactionEncode)?;
 
-  Ok(general_purpose::STANDARD.encode(buffer))
+  Ok(format!(
+    "{POF_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(buffer)
+  ))
 }
 
 /// Signs a BIP-322 full proof
