@@ -416,6 +416,8 @@ fn verify_full_p2wpkh(
     EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
       .context(error::SigHashTypeNonStandard)?;
 
+  require_low_s(&signature)?;
+
   if !(sighash_type == EcdsaSighashType::All) {
     return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
@@ -582,6 +584,8 @@ fn verify_full_p2wsh(
     }
 
     if let Ok(signature) = bitcoin::secp256k1::ecdsa::Signature::from_der(&encoded[..length - 1]) {
+      require_low_s(&signature)?;
+
       if secp
         .verify_ecdsa(&message, &signature, &pub_key.inner)
         .is_ok()
@@ -608,7 +612,8 @@ fn verify_full_p2sh_multisig(
   input_index: usize,
 ) -> Result<InputVerification> {
   let mut pushes: Vec<Vec<u8>> = Vec::new();
-  for instruction in to_sign.input[input_index].script_sig.instructions() {
+
+  for instruction in to_sign.input[input_index].script_sig.instructions_minimal() {
     match instruction.map_err(|_| Error::InvalidWitness)? {
       Instruction::PushBytes(b) => pushes.push(b.as_bytes().to_vec()),
       _ => return Err(Error::InvalidWitness),
@@ -665,6 +670,8 @@ fn verify_full_p2sh_multisig(
     let signature =
       bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
 
+    require_low_s(&signature)?;
+
     let offset = pubkeys[key_index..]
       .iter()
       .position(|pk| secp.verify_ecdsa(&message, &signature, &pk.inner).is_ok())
@@ -689,7 +696,7 @@ fn verify_full_p2pkh(
   }
 
   // scriptSig: <sig> <pubkey>
-  let mut instructions = to_sign.input[input_index].script_sig.instructions();
+  let mut instructions = to_sign.input[input_index].script_sig.instructions_minimal();
   let signature_bytes = match instructions.next() {
     Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
     _ => return Err(Error::InvalidWitness),
@@ -720,6 +727,8 @@ fn verify_full_p2pkh(
   }
   let signature =
     bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
+
+  require_low_s(&signature)?;
 
   let sighash = SighashCache::new(to_sign)
     .legacy_signature_hash(

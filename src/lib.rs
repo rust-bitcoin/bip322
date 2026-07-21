@@ -1432,8 +1432,14 @@ mod tests {
     let simple =
       sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
 
-    let full =
-      sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+    let full = sign::sign_full_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &[WIF_PRIVATE_KEY],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
 
     let proof_inputs = vec![ProofInput {
       outpoint: OutPoint {

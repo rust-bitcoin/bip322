@@ -268,3 +268,16 @@ pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Re
 
   Ok(signature)
 }
+
+/// Enforces the LOW_S rule, a valid ECDSA signature must have a low-S value.
+#[allow(clippy::result_large_err)]
+pub fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
+  let mut normalized = *signature;
+  normalized.normalize_s();
+  if normalized != *signature {
+    return Err(Error::SignatureInvalid {
+      source: bitcoin::secp256k1::Error::IncorrectSignature,
+    });
+  }
+  Ok(())
+}
