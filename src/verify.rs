@@ -123,16 +123,11 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
   verify_full(&address, message, to_sign)
 }
 
-/// Verifies a BIP-322 full proof of funds from a spec-compliant string encoding.
+/// Verifies a BIP-322 full proof of funds.
 ///
 /// See [`verify_pof`] for the expected contents of `prevouts`.
 #[allow(clippy::result_large_err)]
-pub fn verify_pof_encoded(
-  address: &str,
-  message: &str,
-  to_sign: &str,
-  prevouts: &[TxOut],
-) -> Result<Verification> {
+pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -148,7 +143,7 @@ pub fn verify_pof_encoded(
 
   let psbt = Psbt::deserialize(&bytes).map_err(|_| Error::ToSignInvalid)?;
 
-  verify_pof(&address, message, psbt, prevouts)
+  verify_pof(&address, message, psbt)
 }
 
 /// Verifies the BIP-322 simple format.
@@ -238,7 +233,6 @@ pub fn verify_pof(
   address: &Address,
   message: impl AsRef<[u8]>,
   psbt: Psbt,
-  prevouts: &[TxOut],
 ) -> Result<Verification> {
   let msg_key = bitcoin::psbt::raw::Key {
     type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
@@ -266,7 +260,7 @@ pub fn verify_pof(
   if unsigned_tx.input[0].previous_output != to_spend_outpoint {
     return Err(Error::ToSignInvalid);
   }
-  if prevouts.len() != unsigned_tx.input.len() - 1 {
+  if psbt.inputs.len() != unsigned_tx.input.len() {
     return Err(Error::ToSignInvalid);
   }
 
@@ -282,22 +276,37 @@ pub fn verify_pof(
     value: Amount::from_sat(0),
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
-  all_prevouts.extend_from_slice(prevouts);
 
-  for (index, psbt_input) in psbt.inputs.iter().enumerate() {
-    if let Some(txout) = &psbt_input.witness_utxo {
-      if *txout != all_prevouts[index] {
+  for index in 1..unsigned_tx.input.len() {
+    let outpoint = unsigned_tx.input[index].previous_output;
+    let psbt_input = &psbt.inputs[index];
+
+    let prevout = if let Some(txout) = &psbt_input.witness_utxo {
+      txout.clone()
+    } else {
+      let tx = psbt_input
+        .non_witness_utxo
+        .as_ref()
+        .or_else(|| {
+          (1..index).find_map(|i| {
+            (unsigned_tx.input[i].previous_output.txid == outpoint.txid)
+              .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
+              .flatten()
+          })
+        })
+        .ok_or(Error::ToSignInvalid)?;
+
+      if tx.compute_txid() != outpoint.txid {
         return Err(Error::ToSignInvalid);
       }
-    }
-    if let Some(tx) = &psbt_input.non_witness_utxo {
-      let outpoint = psbt.unsigned_tx.input[index].previous_output;
-      if tx.compute_txid() != outpoint.txid
-        || tx.output.get(outpoint.vout as usize) != Some(&all_prevouts[index])
-      {
-        return Err(Error::ToSignInvalid);
-      }
-    }
+
+      tx.output
+        .get(outpoint.vout as usize)
+        .ok_or(Error::ToSignInvalid)?
+        .clone()
+    };
+
+    all_prevouts.push(prevout);
   }
 
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
@@ -629,7 +638,6 @@ fn verify_full_p2sh_multisig(
     return Err(Error::ToSignInvalid);
   }
 
-  // let (required_signatures, pubkeys) = parse_multisig(&redeem_script)?;
   let Ok((required_signatures, pubkeys)) = parse_multisig(&redeem_script) else {
     return Ok(InputVerification::Inconclusive);
   };

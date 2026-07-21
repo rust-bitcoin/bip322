@@ -823,7 +823,7 @@ mod tests {
 
     let to_spend = create_to_spend(&address, "foo").unwrap();
 
-    let mut to_sign = create_to_sign(&to_spend, None)
+    let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
       .unwrap()
       .extract_tx()
       .unwrap();
@@ -864,6 +864,7 @@ mod tests {
         "foo",
         &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
         None,
+        LockParams::default()
       ),
       Err(Error::PublicKeyMismatch)
     ));
@@ -1227,11 +1228,6 @@ mod tests {
       },
     ];
 
-    let prevouts: Vec<TxOut> = proof_inputs
-      .iter()
-      .map(|proof_input| proof_input.prevout.clone())
-      .collect();
-
     let signature = sign_pof_encoded(
       POF_P2TR_ADDRESS,
       POF_P2TR_MESSAGE,
@@ -1242,11 +1238,11 @@ mod tests {
     )
     .unwrap();
 
-    assert!(verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature, &prevouts).is_ok());
+    assert!(verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature).is_ok());
   }
 
   #[test]
-  fn pof_wrong_prevout_is_rejected() {
+  fn pof_tampered_witness_utxo_is_rejected() {
     let proof_inputs = vec![ProofInput {
       outpoint: OutPoint {
         txid: "1111111111111111111111111111111111111111111111111111111111111111"
@@ -1265,33 +1261,25 @@ mod tests {
       private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
       witness_script: None,
     }];
+    let address = Address::from_str(POF_P2TR_ADDRESS)
+      .unwrap()
+      .assume_checked();
 
-    // Swap in a different scriptPubKey for verification
-    let wrong_prevouts = vec![TxOut {
-      value: Amount::from_sat(345678),
-      script_pubkey: ScriptBuf::from_hex(
-        "5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca",
-      )
-      .unwrap(),
-    }];
+    let mut psbt = sign_pof(
+      &address,
+      POF_P2TR_MESSAGE,
+      &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+      None,
+      &proof_inputs,
+      LockParams::default(),
+    )
+    .unwrap();
 
-    assert!(matches!(
-      verify_pof_encoded(
-        POF_P2TR_ADDRESS,
-        POF_P2TR_MESSAGE,
-        &sign_pof_encoded(
-          POF_P2TR_ADDRESS,
-          POF_P2TR_MESSAGE,
-          &[POF_P2TR_CHALLENGE_KEY],
-          None,
-          &proof_inputs,
-          LockParams::default()
-        )
-        .unwrap(),
-        &wrong_prevouts
-      ),
-      Err(Error::ToSignInvalid)
-    ));
+    psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey =
+      ScriptBuf::from_hex("5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca")
+        .unwrap();
+
+    assert!(verify_pof(&address, POF_P2TR_MESSAGE, psbt).is_err());
   }
 
   #[test]
@@ -1322,11 +1310,6 @@ mod tests {
       witness_script: None,
     }];
 
-    let prevouts: Vec<TxOut> = proof_inputs
-      .iter()
-      .map(|proof_input| proof_input.prevout.clone())
-      .collect();
-
     assert!(verify_pof_encoded(
       POF_P2TR_ADDRESS,
       POF_P2TR_MESSAGE,
@@ -1339,7 +1322,6 @@ mod tests {
         LockParams::default()
       )
       .unwrap(),
-      &prevouts
     )
     .is_ok());
   }
@@ -1413,8 +1395,7 @@ mod tests {
         .unwrap()
         .assume_checked(),
       POF_P2TR_MESSAGE,
-      to_sign,
-      &[proof_inputs[0].prevout.clone()],
+      to_sign
     )
     .is_ok());
   }
@@ -1422,7 +1403,7 @@ mod tests {
   #[test]
   fn verify_rejects_mismatched_variant_prefix() {
     #[track_caller]
-    fn mismatch(result: Result<(), Error>) {
+    fn mismatch(result: Result<Verification>) {
       assert!(
         matches!(result, Err(Error::SignatureVariantMismatch { .. })),
         "got {result:?}"
@@ -1466,6 +1447,7 @@ mod tests {
       &[WIF_PRIVATE_KEY],
       None,
       &proof_inputs,
+      LockParams::default(),
     )
     .unwrap();
 
@@ -1488,13 +1470,11 @@ mod tests {
       SEGWIT_ADDRESS,
       "Hello World",
       &simple,
-      &[],
     ));
     mismatch(verify::verify_pof_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
       &full,
-      &[],
     ));
   }
 
