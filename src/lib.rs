@@ -1484,4 +1484,17 @@ mod tests {
       Err(Error::SignatureDecode { .. })
     ));
   }
+
+  #[test]
+  fn unknown_witness_version_is_inconclusive() {
+    let program = bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[0u8; 32]).unwrap();
+    let address = Address::from_witness_program(program, bitcoin::Network::Bitcoin);
+    let to_sign = create_to_sign(&create_to_spend(&address, "msg").unwrap(), None)
+      .unwrap()
+      .extract_tx_unchecked_fee_rate();
+    assert_eq!(
+      verify_full(&address, "msg", to_sign).unwrap(),
+      Verification::Inconclusive
+    );
+  }
 }

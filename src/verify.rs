@@ -1,5 +1,31 @@
 use super::*;
 
+/// Outcome of BIP-322 verification, per the spec's three validator states.
+/// The third state, invalid, is reported as `Err` by the verify functions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verification {
+  /// "valid at time T and age S": `time` is `to_sign`'s `nLockTime`, `age`
+  /// is the `nSequence` of its first input.
+  Valid {
+    /// `nLockTime` of `to_sign` — the time T at which the proof is valid.
+    time: LockTime,
+    /// `nSequence` of `to_sign`'s first input — the age S.
+    age: Sequence,
+  },
+  /// The validator could not interpret the script; neither accepted nor rejected.
+  Inconclusive,
+}
+
+/// Per-input outcome. Inputs carry no lock fields, so this is a plain tri-state:
+/// `Valid`, `Inconclusive`, or `Err` for invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputVerification {
+  /// The input's script was interpreted and its signature(s) check out.
+  Valid,
+  /// The input's script cannot be interpreted by this validator
+  Inconclusive,
+}
+
 /// Verifies a BIP-137 legacy proof from string inputs.
 #[allow(clippy::result_large_err)]
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
@@ -50,7 +76,11 @@ pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignatu
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
-pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
+pub fn verify_simple_encoded(
+  address: &str,
+  message: &str,
+  signature: &str,
+) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -71,7 +101,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
-pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<()> {
+pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -102,7 +132,7 @@ pub fn verify_pof_encoded(
   message: &str,
   to_sign: &str,
   prevouts: &[TxOut],
-) -> Result<()> {
+) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -127,7 +157,7 @@ pub fn verify_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
   signature: Witness,
-) -> Result<()> {
+) -> Result<Verification> {
   verify_full(
     address,
     &message,
@@ -143,7 +173,7 @@ pub fn verify_full(
   address: &Address,
   message: impl AsRef<[u8]>,
   to_sign: Transaction,
-) -> Result<()> {
+) -> Result<Verification> {
   let to_spend = create_to_spend(address, &message)?;
 
   check_to_sign(&to_spend, &to_sign)?;
@@ -153,7 +183,19 @@ pub fn verify_full(
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   };
 
-  verify_input(&to_sign, &[challenge_prevout], 0)
+  match verify_input(&to_sign, &[challenge_prevout], 0)? {
+    InputVerification::Inconclusive => Ok(Verification::Inconclusive),
+    InputVerification::Valid => {
+      // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
+      if to_sign.version != Version(0) && to_sign.version != Version(2) {
+        return Ok(Verification::Inconclusive);
+      }
+      Ok(Verification::Valid {
+        time: to_sign.lock_time,
+        age: to_sign.input[0].sequence,
+      })
+    }
+  }
 }
 
 #[allow(clippy::result_large_err)]
@@ -193,7 +235,7 @@ pub fn verify_pof(
   message: impl AsRef<[u8]>,
   psbt: Psbt,
   prevouts: &[TxOut],
-) -> Result<()> {
+) -> Result<Verification> {
   let msg_key = bitcoin::psbt::raw::Key {
     type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
     key: vec![],
@@ -257,15 +299,29 @@ pub fn verify_pof(
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
 
   for input_index in 0..to_sign.input.len() {
-    verify_input(&to_sign, &all_prevouts, input_index)?;
+    match verify_input(&to_sign, &all_prevouts, input_index)? {
+      InputVerification::Valid => {}
+      InputVerification::Inconclusive => return Ok(Verification::Inconclusive),
+    }
   }
 
-  Ok(())
+  if to_sign.version != Version(0) && to_sign.version != Version(2) {
+    return Ok(Verification::Inconclusive);
+  }
+
+  Ok(Verification::Valid {
+    time: to_sign.lock_time,
+    age: to_sign.input[0].sequence,
+  })
 }
 
 /// Verifies input.
 #[allow(clippy::result_large_err)]
-fn verify_input(to_sign: &Transaction, prevouts: &[TxOut], input_index: usize) -> Result<()> {
+fn verify_input(
+  to_sign: &Transaction,
+  prevouts: &[TxOut],
+  input_index: usize,
+) -> Result<InputVerification> {
   let prevout = &prevouts[input_index];
   let spk = &prevout.script_pubkey;
 
@@ -282,14 +338,12 @@ fn verify_input(to_sign: &Transaction, prevouts: &[TxOut], input_index: usize) -
       0 => verify_full_p2sh_multisig(to_sign, prevout, input_index),
       2 => verify_full_p2wpkh(to_sign, prevout, input_index, true),
       n if n > 2 => verify_full_p2wsh(to_sign, prevout, input_index),
-      _ => Err(Error::InvalidWitness),
+      _ => Ok(InputVerification::Inconclusive),
     }
   } else if spk.is_p2pkh() {
     verify_full_p2pkh(to_sign, prevout, input_index)
   } else {
-    Err(Error::UnsupportedAddress {
-      address: spk.to_string(),
-    })
+    Ok(InputVerification::Inconclusive)
   }
 }
 
@@ -299,7 +353,7 @@ fn verify_full_p2wpkh(
   prevout: &TxOut,
   input_index: usize,
   is_p2sh: bool,
-) -> Result<()> {
+) -> Result<InputVerification> {
   let witness = to_sign.input[input_index].witness.clone();
 
   if witness.is_empty() {
@@ -377,11 +431,15 @@ fn verify_full_p2wpkh(
     .verify_ecdsa(&message, &signature, &pub_key.inner)
     .context(error::SignatureInvalid)?;
 
-  Ok(())
+  Ok(InputVerification::Valid)
 }
 
 #[allow(clippy::result_large_err)]
-fn verify_full_p2tr(to_sign: &Transaction, prevouts: &[TxOut], input_index: usize) -> Result<()> {
+fn verify_full_p2tr(
+  to_sign: &Transaction,
+  prevouts: &[TxOut],
+  input_index: usize,
+) -> Result<InputVerification> {
   let prevout = &prevouts[input_index];
 
   let pub_key = XOnlyPublicKey::from_slice(&prevout.script_pubkey.as_bytes()[2..])
@@ -435,12 +493,18 @@ fn verify_full_p2tr(to_sign: &Transaction, prevouts: &[TxOut], input_index: usiz
 
   Secp256k1::verification_only()
     .verify_schnorr(&signature, &message, &pub_key)
-    .context(error::SignatureInvalid)
+    .context(error::SignatureInvalid)?;
+
+  Ok(InputVerification::Valid)
 }
 
 /// Verify a BIP-322 proof for a P2WSH
 #[allow(clippy::result_large_err)]
-fn verify_full_p2wsh(to_sign: &Transaction, prevout: &TxOut, input_index: usize) -> Result<()> {
+fn verify_full_p2wsh(
+  to_sign: &Transaction,
+  prevout: &TxOut,
+  input_index: usize,
+) -> Result<InputVerification> {
   let witness_items = to_sign.input[input_index].witness.to_vec();
 
   if witness_items.len() < 3 {
@@ -468,7 +532,9 @@ fn verify_full_p2wsh(to_sign: &Transaction, prevout: &TxOut, input_index: usize)
     return Err(Error::ToSignInvalid);
   }
 
-  let (required_signatures, pubkeys) = parse_multisig(&witness_script)?;
+  let Ok((required_signatures, pubkeys)) = parse_multisig(&witness_script) else {
+    return Ok(InputVerification::Inconclusive);
+  };
 
   let signatures = &witness_items[1..witness_items.len() - 1];
   if signatures.len() != required_signatures {
@@ -522,7 +588,7 @@ fn verify_full_p2wsh(to_sign: &Transaction, prevout: &TxOut, input_index: usize)
   }
 
   if sig_index == signatures.len() {
-    Ok(())
+    Ok(InputVerification::Valid)
   } else {
     Err(Error::SignatureInvalid {
       source: bitcoin::secp256k1::Error::IncorrectSignature,
@@ -536,7 +602,7 @@ fn verify_full_p2sh_multisig(
   to_sign: &Transaction,
   prevout: &TxOut,
   input_index: usize,
-) -> Result<()> {
+) -> Result<InputVerification> {
   let mut pushes: Vec<Vec<u8>> = Vec::new();
   for instruction in to_sign.input[input_index].script_sig.instructions() {
     match instruction.map_err(|_| Error::InvalidWitness)? {
@@ -554,8 +620,10 @@ fn verify_full_p2sh_multisig(
     return Err(Error::ToSignInvalid);
   }
 
-  let (required_signatures, pubkeys) = parse_multisig(&redeem_script)?;
-
+  // let (required_signatures, pubkeys) = parse_multisig(&redeem_script)?;
+  let Ok((required_signatures, pubkeys)) = parse_multisig(&redeem_script) else {
+    return Ok(InputVerification::Inconclusive);
+  };
   let Some((null_dummy, signatures)) = sig_pushes.split_first() else {
     return Err(Error::InvalidWitness);
   };
@@ -602,12 +670,16 @@ fn verify_full_p2sh_multisig(
     key_index += offset + 1;
   }
 
-  Ok(())
+  Ok(InputVerification::Valid)
 }
 
 /// Verify a BIP-322 proof for a P2PKH
 #[allow(clippy::result_large_err)]
-fn verify_full_p2pkh(to_sign: &Transaction, prevout: &TxOut, input_index: usize) -> Result<()> {
+fn verify_full_p2pkh(
+  to_sign: &Transaction,
+  prevout: &TxOut,
+  input_index: usize,
+) -> Result<InputVerification> {
   if !to_sign.input[input_index].witness.is_empty() {
     return Err(Error::InvalidWitness);
   }
@@ -657,5 +729,7 @@ fn verify_full_p2pkh(to_sign: &Transaction, prevout: &TxOut, input_index: usize)
 
   Secp256k1::verification_only()
     .verify_ecdsa(&msg, &signature, &pub_key.inner)
-    .context(error::SignatureInvalid)
+    .context(error::SignatureInvalid)?;
+
+  Ok(InputVerification::Valid)
 }
