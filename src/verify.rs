@@ -161,9 +161,13 @@ pub fn verify_simple(
   verify_full(
     address,
     &message,
-    create_to_sign(&create_to_spend(address, &message)?, Some(signature))?
-      .extract_tx()
-      .context(error::TransactionExtract)?,
+    create_to_sign(
+      &create_to_spend(address, &message)?,
+      Some(signature),
+      LockParams::default(),
+    )?
+    .extract_tx()
+    .context(error::TransactionExtract)?,
   )
 }
 

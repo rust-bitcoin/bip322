@@ -143,7 +143,7 @@ mod tests {
     )
     .unwrap();
 
-    let to_sign = create_to_sign(&to_spend, None).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     assert_eq!(
       to_sign.unsigned_tx.compute_txid().to_string(),
@@ -156,7 +156,7 @@ mod tests {
     )
     .unwrap();
 
-    let to_sign = create_to_sign(&to_spend, None).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     assert_eq!(
       to_sign.unsigned_tx.compute_txid().to_string(),
@@ -207,7 +207,14 @@ mod tests {
     assert!(verify::verify_full_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign::sign_full_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
+      &sign::sign_full_encoded(
+        TAPROOT_ADDRESS,
+        "Hello World",
+        &[WIF_PRIVATE_KEY],
+        None,
+        LockParams::default()
+      )
+      .unwrap()
     )
     .is_ok());
   }
@@ -330,7 +337,14 @@ mod tests {
     assert!(verify::verify_full_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
+      &sign::sign_full_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        &[WIF_PRIVATE_KEY],
+        None,
+        LockParams::default()
+      )
+      .unwrap()
     )
     .is_ok());
   }
@@ -385,7 +399,8 @@ mod tests {
         NESTED_SEGWIT_ADDRESS,
         "Hello World",
         &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
-        None
+        None,
+        LockParams::default()
       )
       .unwrap()
     )
@@ -397,7 +412,7 @@ mod tests {
     let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
     let message = "Hello World with aux randomness";
     let to_spend = create_to_spend(&address, message).unwrap();
-    let to_sign = create_to_sign(&to_spend, None).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
     let mut aux_rand = [0u8; 32];
@@ -441,6 +456,7 @@ mod tests {
         P2SH_P2WSH_2OF2_MESSAGE,
         &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
+        LockParams::default()
       )
       .unwrap()
     )
@@ -473,6 +489,7 @@ mod tests {
         P2SH_P2WSH_2OF2_MESSAGE,
         &[P2SH_P2WSH_2OF2_PRIVATE_KEY_2, P2SH_P2WSH_2OF2_PRIVATE_KEY_1],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
+        LockParams::default()
       )
       .unwrap()
     )
@@ -484,7 +501,14 @@ mod tests {
     assert!(verify::verify_full_encoded(
       LEGACY_ADDRESS,
       "Hello World",
-      &sign::sign_full_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
+      &sign::sign_full_encoded(
+        LEGACY_ADDRESS,
+        "Hello World",
+        &[WIF_PRIVATE_KEY],
+        None,
+        LockParams::default()
+      )
+      .unwrap()
     )
     .is_ok());
   }
@@ -563,6 +587,7 @@ mod tests {
         "foo",
         &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
         None,
+        LockParams::default(),
       )
       .unwrap();
 
@@ -890,7 +915,7 @@ mod tests {
       .assume_checked();
 
     let to_spend = create_to_spend(&victim, "foo").unwrap();
-    let to_sign = create_to_sign(&to_spend, None).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     let witness = create_message_signature_p2wpkh(
       &to_sign,
@@ -955,6 +980,7 @@ mod tests {
           P2SH_MULTISIG_2OF2_PRIVATE_KEY_2
         ],
         Some(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT),
+        LockParams::default()
       )
       .unwrap()
     )
@@ -1028,6 +1054,7 @@ mod tests {
       "foo",
       &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
       None,
+      LockParams::default(),
     )
     .unwrap();
 
@@ -1053,6 +1080,7 @@ mod tests {
         PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
       ],
       Some(&ScriptBuf::from_hex(P2SH_P2WSH_2OF2_WITNESS_SCRIPT).unwrap()),
+      LockParams::default(),
     )
     .unwrap();
 
@@ -1088,6 +1116,7 @@ mod tests {
         "foo",
         &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2WSH_2OF2_WITNESS_SCRIPT),
+        LockParams::default()
       ),
       Err(Error::UnsupportedAddress { .. })
     ));
@@ -1209,6 +1238,7 @@ mod tests {
       &[POF_P2TR_CHALLENGE_KEY],
       None,
       &proof_inputs,
+      LockParams::default(),
     )
     .unwrap();
 
@@ -1255,6 +1285,7 @@ mod tests {
           &[POF_P2TR_CHALLENGE_KEY],
           None,
           &proof_inputs,
+          LockParams::default()
         )
         .unwrap(),
         &wrong_prevouts
@@ -1305,6 +1336,7 @@ mod tests {
         &[POF_P2TR_CHALLENGE_KEY],
         None,
         &proof_inputs,
+        LockParams::default()
       )
       .unwrap(),
       &prevouts
@@ -1323,6 +1355,7 @@ mod tests {
         &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
         None,
         &[],
+        LockParams::default()
       ),
       Err(Error::NoProofInputs)
     ));
@@ -1367,6 +1400,7 @@ mod tests {
       &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
       None,
       &proof_inputs,
+      LockParams::default(),
     )
     .unwrap();
 
@@ -1489,12 +1523,44 @@ mod tests {
   fn unknown_witness_version_is_inconclusive() {
     let program = bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[0u8; 32]).unwrap();
     let address = Address::from_witness_program(program, bitcoin::Network::Bitcoin);
-    let to_sign = create_to_sign(&create_to_spend(&address, "msg").unwrap(), None)
-      .unwrap()
-      .extract_tx_unchecked_fee_rate();
+    let to_sign = create_to_sign(
+      &create_to_spend(&address, "msg").unwrap(),
+      None,
+      LockParams::default(),
+    )
+    .unwrap()
+    .extract_tx_unchecked_fee_rate();
     assert_eq!(
       verify_full(&address, "msg", to_sign).unwrap(),
       Verification::Inconclusive
+    );
+  }
+
+  #[test]
+  fn timelocked_full_signature_reports_time_and_age() {
+    let locks = LockParams {
+      lock_time: LockTime::from_height(800_000).unwrap(),
+      sequence: Sequence(144),
+    };
+
+    assert_eq!(
+      verify::verify_full_encoded(
+        SEGWIT_ADDRESS,
+        "Hello World",
+        &sign::sign_full_encoded(
+          SEGWIT_ADDRESS,
+          "Hello World",
+          &[WIF_PRIVATE_KEY],
+          None,
+          locks
+        )
+        .unwrap()
+      )
+      .unwrap(),
+      Verification::Valid {
+        time: locks.lock_time,
+        age: locks.sequence
+      }
     );
   }
 }
