@@ -24,11 +24,12 @@ use {
 };
 
 mod error;
+mod psbt;
 mod sign;
 mod util;
 mod verify;
 
-pub use {error::Error, sign::*, util::*, verify::*};
+pub use {error::Error, psbt::*, sign::*, util::*, verify::*};
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
 

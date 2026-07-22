@@ -51,6 +51,15 @@ pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
 /// Create the `to_spend` transaction.
 #[allow(clippy::result_large_err)]
 pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<Transaction> {
+  create_to_spend_from_script(&address.script_pubkey(), message)
+}
+
+/// Create the `to_spend` transaction from a raw script pubkey.
+#[allow(clippy::result_large_err)]
+pub fn create_to_spend_from_script(
+  script_pubkey: &ScriptBuf,
+  message: impl AsRef<[u8]>,
+) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -75,7 +84,7 @@ pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<T
     }],
     output: vec![TxOut {
       value: Amount::from_sat(0),
-      script_pubkey: address.script_pubkey(),
+      script_pubkey: script_pubkey.clone(),
     }],
   })
 }

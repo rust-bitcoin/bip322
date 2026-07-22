@@ -100,4 +100,6 @@ pub enum Error {
   SignatureVariantMismatch { expected: String, found: String },
   #[snafu(display("Cannot interpret script `{script}`"))]
   UnknownScriptType { script: String },
+  #[snafu(display("PSBT is not a BIP-322 signing request"))]
+  OrdinaryPsbt,
 }
