@@ -1557,6 +1557,52 @@ mod tests {
   }
 
   #[test]
+  fn multiparty_p2wsh_2of2_roundtrip() {
+    let address = Address::from_str(P2WSH_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+    let witness_script = ScriptBuf::from_hex(P2WSH_2OF2_WITNESS_SCRIPT).unwrap();
+
+    // Creator serializes and sends.
+    let created = create_bip322_psbt(
+      &address,
+      P2WSH_2OF2_MESSAGE,
+      Some(&witness_script),
+      LockParams::default(),
+    )
+    .unwrap()
+    .serialize();
+
+    // Signer 1
+    let mut psbt_1 = Psbt::deserialize(&created).unwrap();
+    let detected_1 = sign_bip322_psbt_input(
+      &mut psbt_1,
+      &PrivateKey::from_wif(P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(detected_1.message, P2WSH_2OF2_MESSAGE.as_bytes());
+    assert_eq!(detected_1.message_challenge, address.script_pubkey());
+
+    // Signer 2
+    let mut psbt_2 = Psbt::deserialize(&psbt_1.serialize()).unwrap();
+    assert_eq!(psbt_2.inputs[0].partial_sigs.len(), 1);
+    sign_bip322_psbt_input(
+      &mut psbt_2,
+      &PrivateKey::from_wif(P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
+    )
+    .unwrap();
+
+    // Finalizer
+    let final_psbt = Psbt::deserialize(&psbt_2.serialize()).unwrap();
+    let encoded = finalize_bip322_psbt(final_psbt).unwrap();
+
+    assert!(matches!(
+      verify_full_encoded(P2WSH_2OF2_ADDRESS, P2WSH_2OF2_MESSAGE, &encoded).unwrap(),
+      Verification::Valid { .. }
+    ));
+  }
+
+  #[test]
   fn unknown_transaction_version_is_inconclusive() {
     let (address, mut to_sign) = full_p2wpkh_to_sign();
 

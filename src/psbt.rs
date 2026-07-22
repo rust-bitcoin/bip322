@@ -125,6 +125,10 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
     return Err(Error::OrdinaryPsbt);
   };
 
+  if psbt.unsigned_tx.input.len() != 1 {
+    return Err(Error::ToSignInvalid);
+  }
+
   let secp = Secp256k1::new();
   let pub_key = private_key.public_key(&secp);
   let challenge = &detected.message_challenge;
@@ -146,6 +150,11 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       .tap_tweak(&secp, psbt.inputs[0].tap_merkle_root)
       .to_keypair();
 
+    let (output_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
+    if *challenge != ScriptBuf::new_p2tr_tweaked(output_key.dangerous_assume_tweaked()) {
+      return Err(Error::PublicKeyMismatch);
+    }
+
     let signature = secp.sign_schnorr_no_aux_rand(
       &secp256k1::Message::from_digest_slice(sighash.as_ref())
         .expect("should be cryptographically secure hash"),
@@ -163,6 +172,16 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
   let sighash_type = EcdsaSighashType::All;
 
   let message = if challenge.is_p2wpkh() {
+    if *challenge
+      != ScriptBuf::new_p2wpkh(
+        &pub_key
+          .wpubkey_hash()
+          .map_err(|_| Error::InvalidPublicKey)?,
+      )
+    {
+      return Err(Error::PublicKeyMismatch);
+    }
+
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
       .p2wpkh_signature_hash(0, challenge, Amount::from_sat(0), sighash_type)
       .expect("signature hash should compute");
@@ -217,6 +236,14 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       return Err(Error::UnknownSigner);
     }
 
+    let p2wsh = ScriptBuf::new_p2wsh(&script.wscript_hash());
+    if *challenge != p2wsh
+      && *challenge != ScriptBuf::new_p2sh(&p2wsh.script_hash())
+      && *challenge != ScriptBuf::new_p2sh(&script.script_hash())
+    {
+      return Err(Error::PublicKeyMismatch);
+    }
+
     let sighash = if psbt.inputs[0].witness_script.is_some() {
       SighashCache::new(psbt.unsigned_tx.clone())
         .p2wsh_signature_hash(0, &script, Amount::from_sat(0), sighash_type)
@@ -253,6 +280,10 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   let Some(detected) = detect_bip322_psbt(&psbt) else {
     return Err(Error::OrdinaryPsbt);
   };
+
+  if psbt.unsigned_tx.input.len() != 1 {
+    return Err(Error::ToSignInvalid);
+  }
 
   // Taproot key path: the tap_key_sig becomes a one-element witness.
   if let Some(signature) = psbt.inputs[0].tap_key_sig {
