@@ -335,6 +335,80 @@ fn verify_input(
   prevouts: &[TxOut],
   input_index: usize,
 ) -> Result<InputVerification> {
+  match verify_standard_script(to_sign, prevouts, input_index)? {
+    InputVerification::Inconclusive => verify_with_interpreter(to_sign, prevouts, input_index),
+    valid => Ok(valid),
+  }
+}
+
+/// Fallback verification via the miniscript interpreter for scripts the
+/// templates cannot classify.
+///
+/// Returns `Inconclusive` when the interpreter cannot parse the spend,
+/// `Err` when the witness fails to satisfy it.
+#[allow(clippy::result_large_err)]
+fn verify_with_interpreter(
+  to_sign: &Transaction,
+  prevouts: &[TxOut],
+  input_index: usize,
+) -> Result<InputVerification> {
+  use miniscript::interpreter::Interpreter;
+
+  let prevout = &prevouts[input_index];
+  let txin = &to_sign.input[input_index];
+
+  let interpreter = match Interpreter::from_txdata(
+    &prevout.script_pubkey,
+    &txin.script_sig,
+    &txin.witness,
+    txin.sequence,
+    to_sign.lock_time,
+  ) {
+    Ok(interpreter) => interpreter,
+    Err(_) => return Ok(InputVerification::Inconclusive),
+  };
+
+  let secp = Secp256k1::verification_only();
+  let prevouts_all = sighash::Prevouts::All(prevouts);
+
+  for result in interpreter.iter(&secp, to_sign, input_index, &prevouts_all) {
+    match result {
+      Ok(SatisfiedConstraint::PublicKey { key_sig })
+      | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
+        KeySigPair::Ecdsa(_, signature) => {
+          if signature.sighash_type != EcdsaSighashType::All {
+            return Err(Error::SigHashTypeUnsupported {
+              sighash_type: signature.sighash_type.to_string(),
+            });
+          }
+          require_low_s(&signature.signature)?;
+        }
+        KeySigPair::Schnorr(_, signature) => {
+          if signature.sighash_type != TapSighashType::All
+            && signature.sighash_type != TapSighashType::Default
+          {
+            return Err(Error::SigHashTypeUnsupported {
+              sighash_type: signature.sighash_type.to_string(),
+            });
+          }
+        }
+      },
+      Ok(_) => {}
+      Err(_) => return Err(Error::ScriptNotSatisfied),
+    }
+  }
+
+  Ok(InputVerification::Valid)
+}
+
+/// Verifies the standard script types by template. Returns `Inconclusive`
+/// for anything else, which [`verify_input`] hands to the interpreter.
+#[allow(clippy::result_large_err)]
+fn verify_standard_script(
+  to_sign: &Transaction,
+  prevouts: &[TxOut],
+  input_index: usize,
+) -> Result<InputVerification> {
   let prevout = &prevouts[input_index];
   let spk = &prevout.script_pubkey;
 
@@ -522,11 +596,7 @@ fn verify_full_p2wsh(
 ) -> Result<InputVerification> {
   let witness_items = to_sign.input[input_index].witness.to_vec();
 
-  if witness_items.len() < 3 {
-    return Err(Error::InvalidWitness);
-  }
-
-  if !witness_items[0].is_empty() {
+  if witness_items.is_empty() {
     return Err(Error::InvalidWitness);
   }
 
@@ -550,6 +620,10 @@ fn verify_full_p2wsh(
   let Ok((required_signatures, pubkeys)) = parse_multisig(&witness_script) else {
     return Ok(InputVerification::Inconclusive);
   };
+
+  if witness_items.len() < 3 || !witness_items[0].is_empty() {
+    return Err(Error::InvalidWitness);
+  }
 
   let signatures = &witness_items[1..witness_items.len() - 1];
   if signatures.len() != required_signatures {
