@@ -18,6 +18,7 @@ use {
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
   },
+  miniscript::interpreter::{KeySigPair, SatisfiedConstraint},
   sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::str::FromStr,

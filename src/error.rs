@@ -100,4 +100,6 @@ pub enum Error {
   SignatureVariantMismatch { expected: String, found: String },
   #[snafu(display("PSBT is not a BIP-322 signing request"))]
   OrdinaryPsbt,
+  #[snafu(display("Script was interpreted but the witness does not satisfy it"))]
+  ScriptNotSatisfied,
 }

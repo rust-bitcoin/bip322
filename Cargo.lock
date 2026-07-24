@@ -36,6 +36,7 @@ dependencies = [
  "base64",
  "bitcoin",
  "hex",
+ "miniscript",
  "pretty_assertions",
  "rand",
  "sha2",
@@ -222,6 +223,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-conservative"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35431185f361ccf3ffc58254628af5f1f5d5f28531da2e02e5d6c82bbc282a10"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
 name = "hex_lit"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -232,6 +242,17 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+
+[[package]]
+name = "miniscript"
+version = "13.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd35e2c377504e50159561884b03610711db6c2fec6c89f2b98d94016684726b"
+dependencies = [
+ "bech32",
+ "bitcoin",
+ "hex-conservative 1.2.0",
+]
 
 [[package]]
 name = "ppv-lite86"
