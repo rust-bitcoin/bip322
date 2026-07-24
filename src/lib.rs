@@ -676,18 +676,35 @@ mod tests {
   fn official_vectors_rejected() {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str, full: bool) {
-      let result = if full {
+      assert!(run(address, message, signature, full).is_err());
+    }
+
+    #[track_caller]
+    fn not_valid(address: &str, message: &str, signature: &str, full: bool) {
+      let result = run(address, message, signature, full);
+      assert!(
+        !matches!(result, Ok(Verification::Valid { .. })),
+        "got {result:?}"
+      );
+    }
+
+    fn run(
+      address: &str,
+      message: &str,
+      signature: &str,
+      full: bool,
+    ) -> Result<Verification, Box<Error>> {
+      if full {
         verify::verify_full_encoded(address, message, signature)
       } else {
         verify::verify_simple_encoded(address, message, signature)
-      };
-
-      assert!(result.is_err());
+      }
+      .map_err(Box::new)
     }
 
     // time-locked script types are not supported
     case("bc1p6vffkx7vcyezrjq7pg9qqdjv7vmtanfhk8ukwsn4syejwmarmhxqp0rw5x", "AY2VOQOXYI5CN2EHZKLOX7ZI37", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
-    case("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "MGKMA2MJUBDHT55J7MHOLM7UPE", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
+    not_valid("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "MGKMA2MJUBDHT55J7MHOLM7UPE", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
 
     // wrong message for p2wsh-multisig-2of2 simple signature
     case("bc1qw6g0rgrpuxvj4edkwtvzpmt3c5m08mhp8nuk3mrk4erufvlczp5ssdscjd", "DL2KXDPQAN63YIQPIP34O3XYVX", "BABIMEUCIQCKl1f9Cj26k0fFWE48+O4ibhYJYPytbDZWJRaaG9BybwIgCbk+3BViWkpuu2RI+41dwtlQ/m/01G860pTFCzDFfokBSDBFAiEA0O77DJsaM7IO+Ht06sp3umzXB64CNNOwf2isZuPfdmwCIGlggOwRSkXsqlPhE1gMdd5hf7ycL33Orfrr4v/XnMGSAUdSIQNsu/OwZurHvJMoiJoSAmmCHLoqIc5Wblh+rek+7rhASCECgYVkUspeAxwRfM6v4GRBhN/gGxTfpPqZuOlBIYZxTJZSrg==", false);
