@@ -6,7 +6,7 @@ description = "Implements BIP322 generic message signing and verification"
 license = "CC0-1.0"
 homepage = "https://bip322.rs"
 repository = "https://github.com/rust-bitcoin/bip322"
-rust-version = "1.63"
+rust-version = "1.74"
 
 [features]
 default = []
