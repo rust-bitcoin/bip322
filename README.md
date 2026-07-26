@@ -26,5 +26,4 @@ The goal is to provide a full signing and verifying library similar to
 
 ## MSRV
 
-At the moment the Minimum Supported Rust Version (MSRV) is 1.63. You can check
-it by running `just msrv`.
+At the moment the Minimum Supported Rust Version (MSRV) is 1.74. 

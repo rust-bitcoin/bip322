@@ -32,7 +32,7 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
-  use {super::*, pretty_assertions::assert_eq, rand::RngCore};
+  use {super::*, pretty_assertions::assert_eq, rand::Rng};
 
   // From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   // and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
