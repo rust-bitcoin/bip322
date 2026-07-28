@@ -12,16 +12,16 @@ pub fn sign_simple_encoded(
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_keys: &[PrivateKey] = &wif_private_keys
+  let private_keys: Vec<PrivateKey> = wif_private_keys
     .iter()
     .map(|private_key| PrivateKey::from_wif(private_key.as_ref()).context(error::PrivateKeyParse))
     .collect::<Result<Vec<_>>>()?;
 
   let witness_script = witness_script_hex
-    .map(|h| ScriptBuf::from_hex(h).map_err(|_| Error::InvalidWitness))
+    .map(|hex| ScriptBuf::from_hex(hex).context(error::WitnessScriptParse))
     .transpose()?;
 
-  let witness = sign_simple(&address, message, private_keys, witness_script.as_ref())?;
+  let witness = sign_simple(&address, message, &private_keys, witness_script.as_ref())?;
 
   let mut buffer = Vec::new();
 
@@ -44,16 +44,16 @@ pub fn sign_full_encoded(
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let private_keys: &[PrivateKey] = &wif_private_keys
+  let private_keys: Vec<PrivateKey> = wif_private_keys
     .iter()
     .map(|private_key| PrivateKey::from_wif(private_key.as_ref()).context(error::PrivateKeyParse))
     .collect::<Result<Vec<_>>>()?;
 
   let witness_script = witness_script_hex
-    .map(|h| ScriptBuf::from_hex(h).map_err(|_| Error::InvalidWitness))
+    .map(|hex| ScriptBuf::from_hex(hex).context(error::WitnessScriptParse))
     .transpose()?;
 
-  let tx = sign_full(&address, message, private_keys, witness_script.as_ref())?;
+  let tx = sign_full(&address, message, &private_keys, witness_script.as_ref())?;
 
   let mut buffer = Vec::new();
 
@@ -104,20 +104,27 @@ pub fn sign_full(
 
       match version {
         0 => match program_len {
-          20 => create_message_signature_p2wpkh(&to_spend, &to_sign, &private_keys[0], false),
-          32 => create_message_signature_p2wsh(
-            &to_spend,
-            &to_sign,
-            private_keys,
-            witness_script.ok_or(Error::InvalidWitness)?,
-          )?,
+          20 => {
+            create_message_signature_p2wpkh(&to_spend, &to_sign, single_key(private_keys)?, false)
+          }
+          32 => {
+            let witness_script = witness_script.ok_or(Error::InvalidWitness)?;
+
+            if address.script_pubkey() != ScriptBuf::new_p2wsh(&witness_script.wscript_hash()) {
+              return Err(Error::UnsupportedAddress {
+                address: address.to_string(),
+              });
+            }
+
+            create_message_signature_p2wsh(&to_spend, &to_sign, private_keys, witness_script)?
+          }
           _ => return Err(Error::NotKeyPathSpend),
         },
         1 => {
           if program_len != 32 {
             return Err(Error::NotKeyPathSpend);
           }
-          create_message_signature_taproot(&to_spend, &to_sign, &private_keys[0], None)
+          create_message_signature_taproot(&to_spend, &to_sign, single_key(private_keys)?, None)
         }
         _ => {
           return Err(Error::UnsupportedAddress {
@@ -151,10 +158,12 @@ pub fn sign_full(
       None => {
         let secp = Secp256k1::new();
 
-        let wpkh = private_keys[0]
+        let private_key = single_key(private_keys)?;
+
+        let wpkh = private_key
           .public_key(&secp)
           .wpubkey_hash()
-          .expect("compressed public key");
+          .context(error::UncompressedPublicKey)?;
 
         let redeem = ScriptBuf::new_p2wpkh(&wpkh);
         if address.script_pubkey() != ScriptBuf::new_p2sh(&redeem.script_hash()) {
@@ -163,7 +172,7 @@ pub fn sign_full(
           });
         }
 
-        let witness = create_message_signature_p2wpkh(&to_spend, &to_sign, &private_keys[0], true);
+        let witness = create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, true);
         let mut pb = bitcoin::script::PushBytesBuf::new();
         pb.extend_from_slice(redeem.as_bytes())
           .expect("redeem fits in push");
@@ -351,7 +360,6 @@ pub fn create_message_signature_p2sh_multisig(
 
   let signatures = ordered_multisig_signatures(&secp, redeem_script, private_keys, &message)?;
 
-  // OP_0 <sig_1> .. <sig_m> <redeemScript>
   let mut builder = ScriptBuf::builder().push_opcode(opcodes::OP_0);
 
   for signature in signatures {
@@ -366,4 +374,16 @@ pub fn create_message_signature_p2sh_multisig(
   to_sign.inputs[0].final_script_sig = Some(builder.push_slice(pb).into_script());
 
   Ok(Witness::new())
+}
+
+#[allow(clippy::result_large_err)]
+fn single_key(private_keys: &[PrivateKey]) -> Result<&PrivateKey> {
+  if private_keys.len() != 1 {
+    return Err(Error::SignatureCount {
+      required: 1,
+      provided: private_keys.len(),
+    });
+  }
+
+  Ok(&private_keys[0])
 }

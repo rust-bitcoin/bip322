@@ -83,7 +83,7 @@ pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Resul
 }
 
 #[allow(clippy::result_large_err)]
-pub fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
+pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
   let instructions = script
     .instructions()
     .collect::<std::result::Result<Vec<_>, _>>()
@@ -142,7 +142,7 @@ pub fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>
 /// corresponding public key in the multisig script, as required by
 /// OP_CHECKMULTISIG's forward-only matching.
 #[allow(clippy::result_large_err)]
-pub fn ordered_multisig_signatures(
+pub(crate) fn ordered_multisig_signatures(
   secp: &Secp256k1<secp256k1::All>,
   script: &ScriptBuf,
   private_keys: &[PrivateKey],
@@ -186,7 +186,6 @@ pub fn ordered_multisig_signatures(
     }
   }
 
-  // Any unused key has no matching pubkey in the script.
   if signatures.len() != required {
     return Err(Error::UnknownSigner);
   }
@@ -194,7 +193,7 @@ pub fn ordered_multisig_signatures(
   Ok(signatures)
 }
 
-pub fn push_only_script(script: &ScriptBuf) -> ScriptBuf {
+pub(crate) fn push_only_script(script: &ScriptBuf) -> ScriptBuf {
   let mut push_bytes = bitcoin::script::PushBytesBuf::new();
   push_bytes
     .extend_from_slice(script.as_bytes())

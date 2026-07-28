@@ -112,6 +112,30 @@ pub fn verify_full(
 }
 
 #[allow(clippy::result_large_err)]
+fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
+  let to_spend_outpoint = OutPoint {
+    txid: to_spend.compute_txid(),
+    vout: 0,
+  };
+
+  let op_return = script::Builder::new()
+    .push_opcode(opcodes::all::OP_RETURN)
+    .into_script();
+
+  if !matches!(to_sign.version, Version(0) | Version(2))
+    || to_sign.input.len() != 1
+    || to_sign.input[0].previous_output != to_spend_outpoint
+    || to_sign.output.len() != 1
+    || to_sign.output[0].value != Amount::from_sat(0)
+    || to_sign.output[0].script_pubkey != op_return
+  {
+    return Err(Error::ToSignInvalid);
+  }
+
+  Ok(())
+}
+
+#[allow(clippy::result_large_err)]
 fn verify_full_p2wpkh(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -121,14 +145,7 @@ fn verify_full_p2wpkh(
 ) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
 
-  let to_spend_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
-
-  if to_spend_outpoint != to_sign.input[0].previous_output {
-    return Err(Error::ToSignInvalid);
-  }
+  check_to_sign(&to_spend, &to_sign)?;
 
   let witness = to_sign.input[0].witness.clone();
 
@@ -205,14 +222,7 @@ fn verify_full_p2tr(
 ) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
 
-  let to_spend_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
-
-  if to_spend_outpoint != to_sign.input[0].previous_output {
-    return Err(Error::ToSignInvalid);
-  }
+  check_to_sign(&to_spend, &to_sign)?;
 
   let witness = to_sign.input[0].witness.clone();
 
@@ -277,14 +287,7 @@ fn verify_full_p2wsh(
 ) -> Result<()> {
   let to_spend = create_to_spend(address, message)?;
 
-  let to_spend_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
-
-  if to_sign.input[0].previous_output != to_spend_outpoint {
-    return Err(Error::ToSignInvalid);
-  }
+  check_to_sign(&to_spend, &to_sign)?;
 
   let items = to_sign.input[0].witness.to_vec();
 
@@ -329,7 +332,6 @@ fn verify_full_p2wsh(
 
   let secp = Secp256k1::verification_only();
 
-  // CHECKMULTISIG: signatures must appear in the same order as pubkeys
   let mut sig_index = 0usize;
   for pub_key in &pubkeys {
     if sig_index == signatures.len() {
@@ -377,17 +379,9 @@ fn verify_full_p2sh_multisig(
   message: impl AsRef<[u8]>,
   to_sign: Transaction,
 ) -> Result<()> {
-  use bitcoin::script::Instruction;
-
   let to_spend = create_to_spend(address, message)?;
-  let to_spend_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
 
-  if to_sign.input.len() != 1 || to_sign.input[0].previous_output != to_spend_outpoint {
-    return Err(Error::ToSignInvalid);
-  }
+  check_to_sign(&to_spend, &to_sign)?;
 
   let mut pushes: Vec<Vec<u8>> = Vec::new();
   for instruction in to_sign.input[0].script_sig.instructions() {
