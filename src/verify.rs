@@ -164,6 +164,26 @@ fn verify_full_p2wpkh(
     return Err(Error::PublicKeyMismatch);
   }
 
+  let p2wpkh_script = ScriptBuf::new_p2wpkh(
+    &pub_key
+      .wpubkey_hash()
+      .context(error::UncompressedPublicKey)?,
+  );
+
+  let expected_script_pubkey = if is_p2sh {
+    ScriptBuf::new_p2sh(&p2wpkh_script.script_hash())
+  } else {
+    p2wpkh_script.clone()
+  };
+
+  if address.script_pubkey() != expected_script_pubkey {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  if !is_p2sh && !to_sign.input[0].script_sig.is_empty() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let signature_length = encoded_signature.len();
 
   let (signature, sighash_type) = match signature_length {
@@ -191,16 +211,7 @@ fn verify_full_p2wpkh(
   let mut sighash_cache = SighashCache::new(to_sign);
 
   let sighash = sighash_cache
-    .p2wpkh_signature_hash(
-      0,
-      &if is_p2sh {
-        ScriptBuf::new_p2wpkh(&pub_key.wpubkey_hash().unwrap())
-      } else {
-        to_spend.output[0].script_pubkey.clone()
-      },
-      to_spend.output[0].value,
-      sighash_type,
-    )
+    .p2wpkh_signature_hash(0, &p2wpkh_script, to_spend.output[0].value, sighash_type)
     .expect("signature hash should compute");
 
   let message =
@@ -223,6 +234,10 @@ fn verify_full_p2tr(
   let to_spend = create_to_spend(address, message)?;
 
   check_to_sign(&to_spend, &to_sign)?;
+
+  if !to_sign.input[0].script_sig.is_empty() {
+    return Err(Error::ToSignInvalid);
+  }
 
   let witness = to_sign.input[0].witness.clone();
 
@@ -303,11 +318,16 @@ fn verify_full_p2wsh(
 
   let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
   let spk = address.script_pubkey();
-  if spk == ScriptBuf::new_p2sh(&program.script_hash()) {
-    if to_sign.input[0].script_sig != push_only_script(&program) {
-      return Err(Error::ToSignInvalid);
-    }
-  } else if spk != program {
+
+  let expected_script_sig = if spk == ScriptBuf::new_p2sh(&program.script_hash()) {
+    push_only_script(&program)
+  } else if spk == program {
+    ScriptBuf::new()
+  } else {
+    return Err(Error::ToSignInvalid);
+  };
+
+  if to_sign.input[0].script_sig != expected_script_sig {
     return Err(Error::ToSignInvalid);
   }
 

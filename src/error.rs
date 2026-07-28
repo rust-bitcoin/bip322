@@ -78,7 +78,7 @@ pub enum Error {
   DuplicateSigner,
   #[snafu(display("Expected exactly {required} private keys, got {provided}"))]
   SignatureCount { required: usize, provided: usize },
-  #[snafu(display("P2SH-P2WPKH requires a compressed public key"))]
+  #[snafu(display("P2WPKH requires a compressed public key"))]
   UncompressedPublicKey {
     source: bitcoin::key::UncompressedPublicKeyError,
   },

@@ -67,6 +67,14 @@ mod tests {
 
   const UNCOMPRESSED_WIF_PRIVATE_KEY: &str = "5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf";
 
+  const P2SH_MULTISIG_2OF2_ADDRESS: &str = "3Nye4j1GUFqCEBR3do2KEFZAs9oLe8NZ6X";
+  const P2SH_MULTISIG_2OF2_REDEEM_SCRIPT: &str =
+    "52210384a8dc6ff3efd7fec062eb73397c2079cd3cc300ff57088f9b9f0b734c63a21821021c9c8e9c1d06e3f7de8ad05c01f5080b2b81292eb29c4cdbe14f43838256141652ae";
+  const P2SH_MULTISIG_2OF2_PRIVATE_KEY_1: &str =
+    "L5Teubyzf4mFSMHGCzADK42oRi9xz45qhBrYx2Xs8uCY6WyrymT5";
+  const P2SH_MULTISIG_2OF2_PRIVATE_KEY_2: &str =
+    "L4HsBh1Rb5DWP5Hf82tPw3whgwFyt8hdRTChxZQE4HzWfdbVgiWT";
+
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
@@ -523,6 +531,7 @@ mod tests {
       let output = tx.output[0].clone();
       tx.output.push(output);
     });
+    case(|tx| tx.input[0].script_sig = ScriptBuf::from_hex("deadbeef").unwrap());
     case(|tx| tx.output[0].value = Amount::from_sat(1));
     case(|tx| tx.output[0].script_pubkey = ScriptBuf::new());
   }
@@ -701,11 +710,252 @@ mod tests {
   fn verify_simple_rejects_legacy_p2sh_multisig() {
     assert!(matches!(
       verify::verify_simple(
-        &Address::from_str("3Nye4j1GUFqCEBR3do2KEFZAs9oLe8NZ6X")
+        &Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
           .unwrap()
           .assume_checked(),
         "foo",
         Witness::new()
+      ),
+      Err(Error::InvalidWitness)
+    ));
+  }
+
+  #[test]
+  fn verify_p2wpkh_rejects_mismatched_key() {
+    let victim = Address::from_str("bc1qqthe0hz8klx90e7stf6shclhsvqd5ly96pn53v")
+      .unwrap()
+      .assume_checked();
+
+    let witness = sign::sign_simple(
+      &victim,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+    )
+    .unwrap();
+
+    assert!(matches!(
+      verify::verify_simple(&victim, "foo", witness),
+      Err(Error::PublicKeyMismatch)
+    ));
+  }
+
+  #[test]
+  fn verify_p2sh_p2wpkh_rejects_mismatched_key() {
+    let victim = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+
+    let to_spend = create_to_spend(&victim, "foo").unwrap();
+    let to_sign = create_to_sign(&to_spend, None).unwrap();
+
+    let witness = create_message_signature_p2wpkh(
+      &to_spend,
+      &to_sign,
+      &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+      true,
+    );
+
+    assert!(matches!(
+      verify::verify_simple(&victim, "foo", witness),
+      Err(Error::PublicKeyMismatch)
+    ));
+  }
+
+  #[test]
+  fn verify_p2sh_p2wpkh_rejects_uncompressed_witness_key() {
+    let pub_key = PrivateKey::from_wif(UNCOMPRESSED_WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&Secp256k1::new());
+
+    let mut witness = Witness::new();
+    witness.push(vec![0; 71]);
+    witness.push(pub_key.to_bytes());
+
+    assert!(matches!(
+      verify::verify_simple(
+        &Address::from_str(NESTED_SEGWIT_ADDRESS)
+          .unwrap()
+          .assume_checked(),
+        "foo",
+        witness
+      ),
+      Err(Error::UncompressedPublicKey { .. })
+    ));
+  }
+
+  #[test]
+  fn sign_simple_rejects_p2sh_p2wsh() {
+    assert!(matches!(
+      sign::sign_simple_encoded(
+        P2SH_P2WSH_2OF2_ADDRESS,
+        "foo",
+        &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
+        Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
+      ),
+      Err(Error::UnsupportedAddress { .. })
+    ));
+  }
+
+  #[test]
+  fn roundtrip_p2sh_multisig_full() {
+    assert!(verify::verify_full_encoded(
+      P2SH_MULTISIG_2OF2_ADDRESS,
+      "foo",
+      &sign::sign_full_encoded(
+        P2SH_MULTISIG_2OF2_ADDRESS,
+        "foo",
+        &[
+          P2SH_MULTISIG_2OF2_PRIVATE_KEY_1,
+          P2SH_MULTISIG_2OF2_PRIVATE_KEY_2
+        ],
+        Some(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT),
+      )
+      .unwrap()
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn multisig_rejects_duplicate_signer() {
+    assert!(matches!(
+      sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        "foo",
+        &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_1],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      ),
+      Err(Error::DuplicateSigner)
+    ));
+  }
+
+  #[test]
+  fn sign_rejects_no_private_keys() {
+    let keys: &[&str] = &[];
+
+    assert!(matches!(
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "foo", keys, None),
+      Err(Error::NoPrivateKeys)
+    ));
+  }
+
+  #[test]
+  fn verify_rejects_non_sighash_all_signatures() {
+    let key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let p2wpkh = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+    let mut items = sign::sign_simple(&p2wpkh, "foo", &[key], None)
+      .unwrap()
+      .to_vec();
+    *items[0].last_mut().unwrap() = 0x02;
+    assert!(matches!(
+      verify::verify_simple(&p2wpkh, "foo", Witness::from_slice(&items)),
+      Err(Error::SigHashTypeUnsupported { .. })
+    ));
+
+    let p2tr = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+    let mut items = sign::sign_simple(&p2tr, "foo", &[key], None)
+      .unwrap()
+      .to_vec();
+    *items[0].last_mut().unwrap() = 0x02;
+    assert!(matches!(
+      verify::verify_simple(&p2tr, "foo", Witness::from_slice(&items)),
+      Err(Error::SigHashTypeUnsupported { .. })
+    ));
+
+    let p2wsh = Address::from_str(P2WSH_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+    let mut items = p2wsh_2of2_witness(&p2wsh).to_vec();
+    *items[1].last_mut().unwrap() = 0x02;
+    assert!(matches!(
+      verify::verify_simple(&p2wsh, P2WSH_2OF2_MESSAGE, Witness::from_slice(&items)),
+      Err(Error::SigHashTypeUnsupported { .. })
+    ));
+  }
+
+  #[test]
+  fn verify_full_p2tr_rejects_script_sig() {
+    let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+
+    let mut to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+    )
+    .unwrap();
+
+    to_sign.input[0].script_sig = ScriptBuf::from_hex("deadbeef").unwrap();
+
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn verify_p2sh_p2wsh_rejects_tampered_script_sig() {
+    let address = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+
+    let mut to_sign = sign::sign_full(
+      &address,
+      P2SH_P2WSH_2OF2_MESSAGE,
+      &[
+        PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
+        PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
+      ],
+      Some(&ScriptBuf::from_hex(P2SH_P2WSH_2OF2_WITNESS_SCRIPT).unwrap()),
+    )
+    .unwrap();
+
+    to_sign.input[0].script_sig = ScriptBuf::from_hex("deadbeef").unwrap();
+
+    assert!(matches!(
+      verify::verify_full(&address, P2SH_P2WSH_2OF2_MESSAGE, to_sign),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn multisig_rejects_wrong_key_count() {
+    assert!(matches!(
+      sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        "foo",
+        &[P2WSH_2OF2_PRIVATE_KEY_1],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      ),
+      Err(Error::SignatureCount {
+        required: 2,
+        provided: 1
+      })
+    ));
+  }
+
+  #[test]
+  fn sign_p2sh_rejects_mismatched_witness_script() {
+    assert!(matches!(
+      sign::sign_full_encoded(
+        P2SH_P2WSH_2OF2_ADDRESS,
+        "foo",
+        &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
+        Some(P2WSH_2OF2_WITNESS_SCRIPT),
+      ),
+      Err(Error::UnsupportedAddress { .. })
+    ));
+  }
+
+  #[test]
+  fn sign_p2wsh_rejects_missing_witness_script() {
+    assert!(matches!(
+      sign::sign_simple_encoded(
+        P2WSH_2OF2_ADDRESS,
+        "foo",
+        &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
+        None,
       ),
       Err(Error::InvalidWitness)
     ));

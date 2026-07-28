@@ -71,6 +71,12 @@ pub fn sign_simple(
   private_keys: &[PrivateKey],
   witness_script: Option<&ScriptBuf>,
 ) -> Result<Witness> {
+  if matches!(address.to_address_data(), AddressData::P2sh { .. }) && witness_script.is_some() {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
+
   let tx = sign_full(address, message, private_keys, witness_script)?;
 
   if tx.input[0].witness.is_empty() {
@@ -142,12 +148,8 @@ pub fn sign_full(
         } else if address.script_pubkey() == ScriptBuf::new_p2sh(&p2wsh_redeem.script_hash()) {
           let witness = create_message_signature_p2wsh(&to_spend, &to_sign, private_keys, ws)?;
 
-          let mut push_bytes = bitcoin::script::PushBytesBuf::new();
-          push_bytes
-            .extend_from_slice(p2wsh_redeem.as_bytes())
-            .expect("redeem fits");
-          to_sign.inputs[0].final_script_sig =
-            Some(ScriptBuf::builder().push_slice(push_bytes).into_script());
+          to_sign.inputs[0].final_script_sig = Some(push_only_script(&p2wsh_redeem));
+
           witness
         } else {
           return Err(Error::UnsupportedAddress {
@@ -173,11 +175,8 @@ pub fn sign_full(
         }
 
         let witness = create_message_signature_p2wpkh(&to_spend, &to_sign, private_key, true);
-        let mut pb = bitcoin::script::PushBytesBuf::new();
-        pb.extend_from_slice(redeem.as_bytes())
-          .expect("redeem fits in push");
-        to_sign.inputs[0].final_script_sig =
-          Some(ScriptBuf::builder().push_slice(pb).into_script());
+
+        to_sign.inputs[0].final_script_sig = Some(push_only_script(&redeem));
 
         witness
       }
