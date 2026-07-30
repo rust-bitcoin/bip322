@@ -77,6 +77,14 @@ mod tests {
   const P2SH_MULTISIG_2OF2_PRIVATE_KEY_2: &str =
     "L4HsBh1Rb5DWP5Hf82tPw3whgwFyt8hdRTChxZQE4HzWfdbVgiWT";
 
+  // PoF constants
+  const POF_P2TR_ADDRESS: &str = "bc1pk3vq3wpn4txexwq4dj0k2dugzp6kfwllvs89w49cvtk3j2cndcds3l9kw9";
+  const POF_P2TR_CHALLENGE_KEY: &str = "L1p7QRghEregYbBvSCp1eW4YJg2RwMYwX2uhR1eAnkVoPJBaJ7Dy";
+  const POF_P2TR_PROVEN_KEY_1: &str = "Kz5jBiqQKoppYvaxtWZJicxGZ3G3iJ4rLqNnv7MaQBusyoE731EJ";
+  const POF_P2TR_PROVEN_KEY_2: &str = "L2fNJduiUkSytUDbxa58ivWoHevB3svcWUJMxMFebdugYP5jgJr1";
+  const POF_P2TR_PROVEN_KEY_3: &str = "KxqVMn81AEYSwYuzBxe6xC4JDAgA2eU2qiNvBAgVZZwRFv1BqN3y";
+  const POF_P2TR_MESSAGE: &str = "FUYMQWKYGS7HJEN7YFEZU5SNR5";
+
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
@@ -149,7 +157,7 @@ mod tests {
     assert!(
       verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
-        "Hello World", 
+        "Hello World",
         "AUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
       ).is_ok()
     );
@@ -208,7 +216,7 @@ mod tests {
     assert_eq!(
       verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
-        "Hello World", 
+        "Hello World",
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
       ).unwrap_err().to_string(),
       "Decode error for signature `AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH`"
@@ -383,8 +391,14 @@ mod tests {
     let mut aux_rand = [0u8; 32];
     rand::rng().fill_bytes(&mut aux_rand);
 
+    let prevouts = [TxOut {
+      value: Amount::from_sat(0),
+      script_pubkey: to_spend.output[0].script_pubkey.clone(),
+    }];
+
     let witness =
-      create_message_signature_taproot(&to_spend, &to_sign, &private_key, Some(aux_rand));
+      create_message_signature_taproot(&to_sign, &private_key, &prevouts, 0, Some(aux_rand))
+        .unwrap();
 
     assert!(verify_simple(&address, message, witness).is_ok());
   }
@@ -776,11 +790,13 @@ mod tests {
     let to_sign = create_to_sign(&to_spend, None).unwrap();
 
     let witness = create_message_signature_p2wpkh(
-      &to_spend,
       &to_sign,
       &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+      &to_spend.output[0],
+      0,
       true,
-    );
+    )
+    .unwrap();
 
     assert!(matches!(
       verify::verify_simple(&victim, "foo", witness),
@@ -1018,5 +1034,251 @@ mod tests {
       .unwrap_err(),
       Error::InvalidWitness
     ));
+  }
+
+  #[test]
+  fn roundtrip_pof_p2tr_with_inputs() {
+    let proof_inputs = vec![
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .unwrap(),
+          vout: 0,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "5120788b90c2b523c73a4237d04df46b232858be3bbc0e65d8d049a7fa59d5719db8",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
+        witness_script: None,
+      },
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "2222222222222222222222222222222222222222222222222222222222222222"
+            .parse()
+            .unwrap(),
+          vout: 1,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_2).unwrap()],
+        witness_script: None,
+      },
+      ProofInput {
+        outpoint: OutPoint {
+          txid: "3333333333333333333333333333333333333333333333333333333333333333"
+            .parse()
+            .unwrap(),
+          vout: 1,
+        },
+        prevout: TxOut {
+          value: Amount::from_sat(345678),
+          script_pubkey: ScriptBuf::from_hex(
+            "51205c2badbb20cebdce218800dda2fed598e51fab8c30e87112ec967a340b9c3099",
+          )
+          .unwrap(),
+        },
+        prev_tx: None,
+        private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_3).unwrap()],
+        witness_script: None,
+      },
+    ];
+
+    let prevouts: Vec<TxOut> = proof_inputs
+      .iter()
+      .map(|proof_input| proof_input.prevout.clone())
+      .collect();
+
+    let signature = sign_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &[POF_P2TR_CHALLENGE_KEY],
+      None,
+      &proof_inputs,
+    )
+    .unwrap();
+
+    assert!(verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature, &prevouts).is_ok());
+  }
+
+  #[test]
+  fn pof_wrong_prevout_is_rejected() {
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: "1111111111111111111111111111111111111111111111111111111111111111"
+          .parse()
+          .unwrap(),
+        vout: 0,
+      },
+      prevout: TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: ScriptBuf::from_hex(
+          "5120788b90c2b523c73a4237d04df46b232858be3bbc0e65d8d049a7fa59d5719db8",
+        )
+        .unwrap(),
+      },
+      prev_tx: None,
+      private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
+      witness_script: None,
+    }];
+
+    // Swap in a different scriptPubKey for verification
+    let wrong_prevouts = vec![TxOut {
+      value: Amount::from_sat(345678),
+      script_pubkey: ScriptBuf::from_hex(
+        "5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca",
+      )
+      .unwrap(),
+    }];
+
+    assert!(matches!(
+      verify_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &sign_pof_encoded(
+          POF_P2TR_ADDRESS,
+          POF_P2TR_MESSAGE,
+          &[POF_P2TR_CHALLENGE_KEY],
+          None,
+          &proof_inputs,
+        )
+        .unwrap(),
+        &wrong_prevouts
+      ),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn roundtrip_pof_with_legacy_input() {
+    let secp = Secp256k1::new();
+    let legacy_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let legacy_spk = ScriptBuf::new_p2pkh(&legacy_key.public_key(&secp).pubkey_hash());
+
+    // The real previous transaction whose output the proof claims
+    let prev_tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: legacy_spk.clone(),
+      }],
+    };
+
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: prev_tx.compute_txid(),
+        vout: 0,
+      },
+      prevout: prev_tx.output[0].clone(),
+      prev_tx: Some(prev_tx),
+      private_keys: vec![legacy_key],
+      witness_script: None,
+    }];
+
+    let prevouts: Vec<TxOut> = proof_inputs
+      .iter()
+      .map(|proof_input| proof_input.prevout.clone())
+      .collect();
+
+    assert!(verify_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &sign_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &[POF_P2TR_CHALLENGE_KEY],
+        None,
+        &proof_inputs,
+      )
+      .unwrap(),
+      &prevouts
+    )
+    .is_ok());
+  }
+
+  #[test]
+  fn sign_pof_rejects_no_proof_inputs() {
+    assert!(matches!(
+      sign_pof(
+        &Address::from_str(POF_P2TR_ADDRESS)
+          .unwrap()
+          .assume_checked(),
+        POF_P2TR_MESSAGE,
+        &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+        None,
+        &[],
+      ),
+      Err(Error::NoProofInputs)
+    ));
+  }
+
+  #[test]
+  fn roundtrip_pof_with_p2sh_multisig_input() {
+    let spk = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked()
+      .script_pubkey();
+
+    let prev_tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: spk.clone(),
+      }],
+    };
+
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: prev_tx.compute_txid(),
+        vout: 0,
+      },
+      prevout: prev_tx.output[0].clone(),
+      prev_tx: Some(prev_tx),
+      private_keys: vec![
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+      ],
+      witness_script: Some(ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap()),
+    }];
+
+    let to_sign = sign_pof(
+      &Address::from_str(POF_P2TR_ADDRESS)
+        .unwrap()
+        .assume_checked(),
+      POF_P2TR_MESSAGE,
+      &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+      None,
+      &proof_inputs,
+    )
+    .unwrap();
+
+    // a non-segwit input must carry the full previous transaction (BIP-174)
+    assert!(to_sign.inputs[1].witness_utxo.is_none());
+    assert!(to_sign.inputs[1].non_witness_utxo.is_some());
+
+    assert!(verify_pof(
+      &Address::from_str(POF_P2TR_ADDRESS)
+        .unwrap()
+        .assume_checked(),
+      POF_P2TR_MESSAGE,
+      to_sign,
+      &[proof_inputs[0].prevout.clone()],
+    )
+    .is_ok());
   }
 }

@@ -13,7 +13,7 @@ security is welcome and encouraged.
 
 - [x] simple
 - [x] full 
-- [ ] full (proof-of-funds)
+- [x] full (proof-of-funds)
 - [x] legacy (BIP-137)
 
 The goal is to provide a full signing and verifying library similar to
