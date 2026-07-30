@@ -193,16 +193,6 @@ mod tests {
   }
 
   #[test]
-  fn legacy_address_rejects_witness_signature() {
-    assert_eq!(verify::verify_simple_encoded(
-      LEGACY_ADDRESS,
-      "",
-      "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      "Invalid witness"
-    )
-  }
-
-  #[test]
   fn signature_decode_error() {
     assert_eq!(
       verify::verify_simple_encoded(
@@ -1005,6 +995,16 @@ mod tests {
       &sign::sign_legacy_encoded(LEGACY_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
     )
     .is_ok(),);
+  }
+
+  #[test]
+  fn roundtrip_legacy_typed() {
+    let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let signature = sign::sign_legacy(&address, "foo", &private_key).unwrap();
+
+    assert!(verify::verify_legacy(&address, "foo", signature).is_ok());
   }
 
   #[test]

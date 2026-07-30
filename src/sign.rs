@@ -8,6 +8,16 @@ pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) 
     .assume_checked();
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
 
+  Ok(general_purpose::STANDARD.encode(sign_legacy(&address, message, &private_key)?.serialize()))
+}
+
+/// Signs a message in the BIP-137 legacy format from proper Rust types.
+#[allow(clippy::result_large_err)]
+pub fn sign_legacy(
+  address: &Address,
+  message: &str,
+  private_key: &PrivateKey,
+) -> Result<MessageSignature> {
   let secp = Secp256k1::new();
   let pubkey = private_key.public_key(&secp);
 
@@ -21,10 +31,7 @@ pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) 
 
   let recoverable = secp.sign_ecdsa_recoverable(&msg, &private_key.inner);
 
-  Ok(
-    general_purpose::STANDARD
-      .encode(MessageSignature::new(recoverable, pubkey.compressed).serialize()),
-  )
+  Ok(MessageSignature::new(recoverable, pubkey.compressed))
 }
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
