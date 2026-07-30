@@ -6,12 +6,14 @@ use {
     blockdata::script,
     consensus::Decodable,
     consensus::Encodable,
+    hashes::Hash,
     key::{Keypair, TapTweak},
     opcodes,
     psbt::Psbt,
-    script::{Instruction, PushBytes},
+    script::{Instruction, PushBytes, PushBytesBuf},
     secp256k1::{self, schnorr::Signature, Message, Secp256k1, XOnlyPublicKey},
     sighash::{self, SighashCache, TapSighashType},
+    sign_message::{signed_msg_hash, MessageSignature},
     transaction::Version,
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
@@ -188,16 +190,6 @@ mod tests {
       &sign::sign_full_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
     )
     .is_ok());
-  }
-
-  #[test]
-  fn invalid_address() {
-    assert_eq!(verify::verify_simple_encoded(
-      LEGACY_ADDRESS,
-      "",
-      "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=").unwrap_err().to_string(),
-      format!("Unsupported address `{LEGACY_ADDRESS}`, only P2TR, P2WPKH, P2SH-P2WPKH, and P2WSH/P2SH multisig allowed")
-    )
   }
 
   #[test]
@@ -458,6 +450,16 @@ mod tests {
       )
       .unwrap()
     )
+    .is_ok())
+  }
+
+  #[test]
+  fn roundtrip_p2pkh_full() {
+    assert!(verify::verify_full_encoded(
+      LEGACY_ADDRESS,
+      "Hello World",
+      &sign::sign_full_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
+    )
     .is_ok());
   }
 
@@ -483,6 +485,14 @@ mod tests {
         &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
       ),
+      Err(Error::UnsupportedAddress { .. })
+    ));
+  }
+
+  #[test]
+  fn p2pkh_simple_unsupported() {
+    assert!(matches!(
+      sign::sign_simple_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None),
       Err(Error::UnsupportedAddress { .. })
     ));
   }
@@ -974,6 +984,39 @@ mod tests {
         None,
       ),
       Err(Error::InvalidWitness)
+    ))
+  }
+
+  #[test]
+  fn roundtrip_legacy() {
+    assert!(verify::verify_legacy_encoded(
+      LEGACY_ADDRESS,
+      "Hello World",
+      &sign::sign_legacy_encoded(LEGACY_ADDRESS, "Hello World", WIF_PRIVATE_KEY).unwrap()
+    )
+    .is_ok(),);
+  }
+
+  #[test]
+  fn roundtrip_legacy_typed() {
+    let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let signature = sign::sign_legacy(&address, "foo", &private_key).unwrap();
+
+    assert!(verify::verify_legacy(&address, "foo", signature).is_ok());
+  }
+
+  #[test]
+  fn legacy_address_rejects_simple_proof() {
+    assert!(matches!(
+      verify::verify_simple_encoded(
+        LEGACY_ADDRESS,
+        "",
+        "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
+      )
+      .unwrap_err(),
+      Error::InvalidWitness
     ));
   }
 }

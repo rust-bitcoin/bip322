@@ -1,5 +1,53 @@
 use super::*;
 
+/// Verifies a BIP-137 legacy proof from string inputs.
+#[allow(clippy::result_large_err)]
+pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
+  let address = Address::from_str(address)
+    .context(error::AddressParse { address })?
+    .assume_checked();
+
+  let signature_bytes = general_purpose::STANDARD
+    .decode(signature)
+    .context(error::SignatureDecode { signature })?;
+
+  if signature_bytes.len() != 65 {
+    return Err(Error::SignatureLength {
+      length: signature_bytes.len(),
+      encoded_signature: signature_bytes,
+    });
+  }
+
+  let flag = signature_bytes[0];
+  if !(27..=34).contains(&flag) {
+    return Err(Error::InvalidRecoveryFlag { flag });
+  }
+
+  let signature = MessageSignature::from_slice(&signature_bytes).context(error::LegacyRecover)?;
+
+  verify_legacy(&address, message, signature)
+}
+
+/// Verifies a BIP-137 legacy proof from proper Rust types.
+#[allow(clippy::result_large_err)]
+pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignature) -> Result<()> {
+  if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
+
+  let recovered = signature
+    .recover_pubkey(&Secp256k1::verification_only(), signed_msg_hash(message))
+    .context(error::LegacyRecover)?;
+
+  if address.script_pubkey() != ScriptBuf::new_p2pkh(&recovered.pubkey_hash()) {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  Ok(())
+}
+
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
 #[allow(clippy::result_large_err)]
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
@@ -105,6 +153,7 @@ pub fn verify_full(
         _ => Err(Error::InvalidWitness),
       }
     }
+    AddressData::P2pkh { pubkey_hash: _ } => verify_full_p2pkh(address, message, to_sign),
     _ => Err(Error::UnsupportedAddress {
       address: address.to_string(),
     }),
@@ -469,4 +518,66 @@ fn verify_full_p2sh_multisig(
   }
 
   Ok(())
+}
+
+/// Verify a BIP-322 proof for a P2PKH
+#[allow(clippy::result_large_err)]
+fn verify_full_p2pkh(
+  address: &Address,
+  message: impl AsRef<[u8]>,
+  to_sign: Transaction,
+) -> Result<()> {
+  let to_spend = create_to_spend(address, message)?;
+
+  check_to_sign(&to_spend, &to_sign)?;
+
+  if !to_sign.input[0].witness.is_empty() {
+    return Err(Error::InvalidWitness);
+  }
+
+  let mut instructions = to_sign.input[0].script_sig.instructions();
+  let signature_bytes = match instructions.next() {
+    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
+    _ => return Err(Error::InvalidWitness),
+  };
+  let pubkey_bytes = match instructions.next() {
+    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
+    _ => return Err(Error::InvalidWitness),
+  };
+  if instructions.next().is_some() {
+    return Err(Error::InvalidWitness);
+  }
+
+  let pub_key = PublicKey::from_slice(pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
+
+  if address.script_pubkey() != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
+
+  let sighash_type =
+    EcdsaSighashType::from_standard(*sighash_byte as u32).context(error::SigHashTypeNonStandard)?;
+
+  if sighash_type != EcdsaSighashType::All {
+    return Err(Error::SigHashTypeUnsupported {
+      sighash_type: sighash_type.to_string(),
+    });
+  }
+  let signature =
+    bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
+
+  let sighash = SighashCache::new(&to_sign)
+    .legacy_signature_hash(
+      0,
+      &to_spend.output[0].script_pubkey,
+      EcdsaSighashType::All.to_u32(),
+    )
+    .expect("signature hash should compute");
+  let msg =
+    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
+
+  Secp256k1::verification_only()
+    .verify_ecdsa(&msg, &signature, &pub_key.inner)
+    .context(error::SignatureInvalid)
 }

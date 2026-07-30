@@ -194,9 +194,15 @@ pub(crate) fn ordered_multisig_signatures(
 }
 
 pub(crate) fn push_only_script(script: &ScriptBuf) -> ScriptBuf {
+  ScriptBuf::builder()
+    .push_slice(push_bytes(script.as_bytes()))
+    .into_script()
+}
+
+pub(crate) fn push_bytes(bytes: &[u8]) -> PushBytesBuf {
   let mut push_bytes = bitcoin::script::PushBytesBuf::new();
   push_bytes
-    .extend_from_slice(script.as_bytes())
-    .expect("witness program fits in push");
-  ScriptBuf::builder().push_slice(push_bytes).into_script()
+    .extend_from_slice(bytes)
+    .expect("data fits in push");
+  push_bytes
 }
