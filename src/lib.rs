@@ -275,6 +275,22 @@ mod tests {
   }
 
   #[test]
+  fn verify_p2wpkh_signature_shorter_than_71_bytes() {
+    // ECDSA signatures are not fixed length: this signature's DER encoding is 69
+    // bytes (r serializes to 31 bytes), i.e. 70 bytes with the sighash flag, below
+    // the usual 71/72. It is valid and `sign_simple` produces it, so `verify`
+    // must accept it. Regenerate with:
+    //   sign::sign_simple_encoded(SEGWIT_ADDRESS, "probe-266", WIF_PRIVATE_KEY)
+    assert!(
+      verify::verify_simple_encoded(
+        SEGWIT_ADDRESS,
+        "probe-266",
+        "AkYwQwIgdHvqo7c5BbXCr0O5xWkT1qoihgF5oaKXoFlzuegR+ZICHxoQGPcMKj+iUTymjR5tC+uN7arZcZHUv7BMyf6rwJoBIQLH8SADGWRClD2FiOAa7oQEI8xU/BUhUmo7hcKwy9WIcg=="
+      ).is_ok()
+    );
+  }
+
+  #[test]
   fn simple_sign_p2wpkh() {
     assert_eq!(
       sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap(),

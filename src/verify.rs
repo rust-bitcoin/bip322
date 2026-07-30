@@ -184,23 +184,23 @@ fn verify_full_p2wpkh(
     return Err(Error::ToSignInvalid);
   }
 
+  if encoded_signature.is_empty() {
+    return Err(Error::SignatureLength {
+      length: 0,
+      encoded_signature,
+    });
+  }
+
   let signature_length = encoded_signature.len();
 
-  let (signature, sighash_type) = match signature_length {
-    71 | 72 => (
-      bitcoin::secp256k1::ecdsa::Signature::from_der(
-        &encoded_signature.as_slice()[..signature_length - 1],
-      )
-      .context(error::SignatureInvalid)?,
-      EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32),
-    ),
-    _ => {
-      return Err(Error::SignatureLength {
-        length: encoded_signature.len(),
-        encoded_signature,
-      })
-    }
-  };
+  let signature = bitcoin::secp256k1::ecdsa::Signature::from_der(
+    &encoded_signature.as_slice()[..signature_length - 1],
+  )
+  .context(error::SignatureInvalid)?;
+
+  let sighash_type =
+    EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
   if !(sighash_type == EcdsaSighashType::All) {
     return Err(Error::SigHashTypeUnsupported {
