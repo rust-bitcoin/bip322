@@ -209,7 +209,7 @@ pub fn sign_full(
       }
     },
     AddressData::P2pkh { pubkey_hash: _ } => {
-      create_message_signature_p2pkh(&to_spend, &mut to_sign, &private_keys[0])?
+      create_message_signature_p2pkh(&to_spend, &mut to_sign, single_key(private_keys)?)?
     }
     _ => {
       return Err(Error::UnsupportedAddress {
