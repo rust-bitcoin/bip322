@@ -90,6 +90,8 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 }
 
 /// Verifies a BIP-322 full proof of funds from a spec-compliant string encoding.
+///
+/// See [`verify_pof`] for the expected contents of `prevouts`.
 #[allow(clippy::result_large_err)]
 pub fn verify_pof_encoded(
   address: &str,
@@ -172,7 +174,13 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
   Ok(())
 }
 
-/// Verifies a BIP-322 full proof of funds
+/// Verifies a BIP-322 full proof of funds.
+///
+/// The caller is expected to supply the UTXO set being proven: `prevouts`
+/// must hold the previous output for every input of the PSBT's unsigned
+/// transaction except the challenge input (input 0), in order. The PSBT's own
+/// `witness_utxo` and `non_witness_utxo` fields are cross-checked against
+/// `prevouts` when present, but are not required.
 #[allow(clippy::result_large_err)]
 pub fn verify_pof(
   address: &Address,

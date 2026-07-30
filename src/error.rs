@@ -72,6 +72,8 @@ pub enum Error {
   PublicKeyMismatch,
   #[snafu(display("At least one private key is required"))]
   NoPrivateKeys,
+  #[snafu(display("At least one proof input is required"))]
+  NoProofInputs,
   #[snafu(display("Signer's public key not present in multisig script"))]
   UnknownSigner,
   #[snafu(display("Duplicate private key provided"))]

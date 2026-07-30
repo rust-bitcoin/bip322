@@ -210,40 +210,23 @@ pub fn sign_pof(
     return Err(Error::NoPrivateKeys);
   }
 
+  if inputs.is_empty() {
+    return Err(Error::NoProofInputs);
+  }
+
   let to_spend = create_to_spend(address, &message)?;
 
-  let mut tx_in = vec![TxIn {
-    previous_output: OutPoint {
-      txid: to_spend.compute_txid(),
-      vout: 0,
-    },
-    script_sig: ScriptBuf::new(),
-    sequence: Sequence::ZERO,
-    witness: Witness::new(),
-  }];
+  let mut to_sign = create_to_sign(&to_spend, None)?;
 
   for input in inputs {
-    tx_in.push(TxIn {
+    to_sign.unsigned_tx.input.push(TxIn {
       previous_output: input.outpoint,
       script_sig: ScriptBuf::new(),
       sequence: Sequence::ZERO,
       witness: Witness::new(),
     });
+    to_sign.inputs.push(Default::default());
   }
-
-  let unsigned = Transaction {
-    version: Version(0),
-    lock_time: LockTime::ZERO,
-    input: tx_in,
-    output: vec![TxOut {
-      value: Amount::from_sat(0),
-      script_pubkey: ScriptBuf::builder()
-        .push_opcode(opcodes::all::OP_RETURN)
-        .into_script(),
-    }],
-  };
-
-  let mut to_sign = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
 
   to_sign.unknown.insert(
     bitcoin::psbt::raw::Key {
@@ -253,10 +236,11 @@ pub fn sign_pof(
     message.as_ref().to_vec(),
   );
 
-  if to_spend.output[0].script_pubkey.is_p2pkh() {
+  // create_to_sign sets a witness_utxo, but a non-segwit challenge (P2PKH or
+  // bare P2SH) requires the full to_spend transaction instead.
+  if !is_segwit_input(&to_spend.output[0].script_pubkey, witness_script) {
+    to_sign.inputs[0].witness_utxo = None;
     to_sign.inputs[0].non_witness_utxo = Some(to_spend.clone());
-  } else {
-    to_sign.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
   }
 
   let mut prevouts = Vec::with_capacity(inputs.len() + 1);
@@ -271,7 +255,7 @@ pub fn sign_pof(
     let input_index = proof_index + 1;
     let spk = &input.prevout.script_pubkey;
 
-    if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() || spk.is_p2sh() {
+    if is_segwit_input(spk, input.witness_script.as_ref()) {
       to_sign.inputs[input_index].witness_utxo = Some(input.prevout.clone());
     } else {
       let prev_tx = input
@@ -316,6 +300,22 @@ pub fn sign_pof(
   }
 
   Ok(to_sign)
+}
+
+/// Whether the input is spent via segwit, which decides if BIP-174 requires a
+/// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
+/// if it wraps a witness program.
+fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
+  if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
+    true
+  } else if spk.is_p2sh() {
+    match witness_script {
+      Some(ws) => *spk != ScriptBuf::new_p2sh(&ws.script_hash()),
+      None => true,
+    }
+  } else {
+    false
+  }
 }
 
 /// Signs input

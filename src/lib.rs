@@ -1208,4 +1208,77 @@ mod tests {
     )
     .is_ok());
   }
+
+  #[test]
+  fn sign_pof_rejects_no_proof_inputs() {
+    assert!(matches!(
+      sign_pof(
+        &Address::from_str(POF_P2TR_ADDRESS)
+          .unwrap()
+          .assume_checked(),
+        POF_P2TR_MESSAGE,
+        &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+        None,
+        &[],
+      ),
+      Err(Error::NoProofInputs)
+    ));
+  }
+
+  #[test]
+  fn roundtrip_pof_with_p2sh_multisig_input() {
+    let spk = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked()
+      .script_pubkey();
+
+    let prev_tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: spk.clone(),
+      }],
+    };
+
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: prev_tx.compute_txid(),
+        vout: 0,
+      },
+      prevout: prev_tx.output[0].clone(),
+      prev_tx: Some(prev_tx),
+      private_keys: vec![
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+      ],
+      witness_script: Some(ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap()),
+    }];
+
+    let to_sign = sign_pof(
+      &Address::from_str(POF_P2TR_ADDRESS)
+        .unwrap()
+        .assume_checked(),
+      POF_P2TR_MESSAGE,
+      &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+      None,
+      &proof_inputs,
+    )
+    .unwrap();
+
+    // a non-segwit input must carry the full previous transaction (BIP-174)
+    assert!(to_sign.inputs[1].witness_utxo.is_none());
+    assert!(to_sign.inputs[1].non_witness_utxo.is_some());
+
+    assert!(verify_pof(
+      &Address::from_str(POF_P2TR_ADDRESS)
+        .unwrap()
+        .assume_checked(),
+      POF_P2TR_MESSAGE,
+      to_sign,
+      &[proof_inputs[0].prevout.clone()],
+    )
+    .is_ok());
+  }
 }
