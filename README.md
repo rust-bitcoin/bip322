@@ -6,7 +6,10 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-At the moment this crate supports `P2TR`, `P2WPKH`, `P2WSH`, `P2SH-P2WPKH`, `P2SH-P2WSH`, and `P2SH` (legacy multisig) addresses. Feedback through issues or PRs on the interface design and security is welcome and encouraged. 
+At the moment this crate supports `P2TR`, `P2WPKH`, `P2SH-P2WPKH` and `P2PKH`
+single-sig addresses, as well as `P2WSH`, `P2SH-P2WSH` and `P2SH` CHECKMULTISIG
+multisig addresses. Feedback through issues or PRs on the interface design and
+security is welcome and encouraged. 
 
 - [x] simple
 - [x] full 
@@ -24,5 +27,4 @@ The goal is to provide a full signing and verifying library similar to
 
 ## MSRV
 
-At the moment the Minimum Supported Rust Version (MSRV) is 1.63. You can check
-it by running `just msrv`.
+At the moment the Minimum Supported Rust Version (MSRV) is 1.74.

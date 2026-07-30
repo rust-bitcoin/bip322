@@ -7,12 +7,6 @@ pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> R
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
-    return Err(Error::UnsupportedAddress {
-      address: address.to_string(),
-    });
-  }
-
   let signature_bytes = general_purpose::STANDARD
     .decode(signature)
     .context(error::SignatureDecode { signature })?;
@@ -31,10 +25,20 @@ pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> R
 
   let signature = MessageSignature::from_slice(&signature_bytes).context(error::LegacyRecover)?;
 
-  let hash = signed_msg_hash(message);
+  verify_legacy(&address, message, signature)
+}
+
+/// Verifies a BIP-137 legacy proof from proper Rust types.
+#[allow(clippy::result_large_err)]
+pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignature) -> Result<()> {
+  if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
+    return Err(Error::UnsupportedAddress {
+      address: address.to_string(),
+    });
+  }
 
   let recovered = signature
-    .recover_pubkey(&Secp256k1::verification_only(), hash)
+    .recover_pubkey(&Secp256k1::verification_only(), signed_msg_hash(message))
     .context(error::LegacyRecover)?;
 
   if address.script_pubkey() != ScriptBuf::new_p2pkh(&recovered.pubkey_hash()) {
@@ -133,28 +137,39 @@ pub fn verify_full(
   to_sign: Transaction,
 ) -> Result<()> {
   let to_spend = create_to_spend(address, &message)?;
+
+  check_to_sign(&to_spend, &to_sign)?;
+
+  let challenge_prevout = TxOut {
+    value: Amount::ZERO,
+    script_pubkey: to_spend.output[0].script_pubkey.clone(),
+  };
+
+  verify_input(&to_sign, &[challenge_prevout], 0)
+}
+
+#[allow(clippy::result_large_err)]
+fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
   let to_spend_outpoint = OutPoint {
     txid: to_spend.compute_txid(),
     vout: 0,
   };
 
-  if to_sign.input.is_empty() || to_sign.input[0].previous_output != to_spend_outpoint {
-    return Err(Error::ToSignInvalid);
-  }
+  let op_return = script::Builder::new()
+    .push_opcode(opcodes::all::OP_RETURN)
+    .into_script();
 
-  if to_sign.output.len() != 1
-    || !to_sign.output[0].script_pubkey.is_op_return()
+  if !matches!(to_sign.version, Version(0) | Version(2))
+    || to_sign.input.len() != 1
+    || to_sign.input[0].previous_output != to_spend_outpoint
+    || to_sign.output.len() != 1
     || to_sign.output[0].value != Amount::ZERO
+    || to_sign.output[0].script_pubkey != op_return
   {
     return Err(Error::ToSignInvalid);
   }
 
-  let challenge_prevout = TxOut {
-    value: Amount::from_sat(0),
-    script_pubkey: to_spend.output[0].script_pubkey.clone(),
-  };
-
-  verify_input(&to_sign, &[challenge_prevout], 0)
+  Ok(())
 }
 
 /// Verifies a BIP-322 full proof of funds
@@ -182,6 +197,9 @@ pub fn verify_pof(
 
   let unsigned_tx = &psbt.unsigned_tx;
 
+  if !matches!(unsigned_tx.version, Version(0) | Version(2)) {
+    return Err(Error::ToSignInvalid);
+  }
   if unsigned_tx.input.len() < 2 {
     return Err(Error::ToSignInvalid);
   }
@@ -283,46 +301,48 @@ fn verify_full_p2wpkh(
 
   let pub_key = PublicKey::from_slice(witness_pub_key).map_err(|_| Error::InvalidPublicKey)?;
 
-  let program = ScriptBuf::new_p2wpkh(
+  let p2wpkh_script = ScriptBuf::new_p2wpkh(
     &pub_key
       .wpubkey_hash()
-      .map_err(|_| Error::InvalidPublicKey)?,
+      .context(error::UncompressedPublicKey)?,
   );
-  let expected_spk = if is_p2sh {
-    ScriptBuf::new_p2sh(&program.script_hash())
+
+  let expected_script_pubkey = if is_p2sh {
+    ScriptBuf::new_p2sh(&p2wpkh_script.script_hash())
   } else {
-    program.clone()
+    p2wpkh_script.clone()
   };
-  if prevout.script_pubkey != expected_spk {
+
+  if prevout.script_pubkey != expected_script_pubkey {
     return Err(Error::PublicKeyMismatch);
   }
 
   let script_sig = &to_sign.input[input_index].script_sig;
   if is_p2sh {
-    if !script_sig.is_empty() && *script_sig != push_only_script(&program) {
+    if !script_sig.is_empty() && *script_sig != push_only_script(&p2wpkh_script) {
       return Err(Error::ToSignInvalid);
     }
   } else if !script_sig.is_empty() {
     return Err(Error::ToSignInvalid);
   }
 
+  if encoded_signature.is_empty() {
+    return Err(Error::SignatureLength {
+      length: 0,
+      encoded_signature,
+    });
+  }
+
   let signature_length = encoded_signature.len();
 
-  let (signature, sighash_type) = match signature_length {
-    71 | 72 => (
-      bitcoin::secp256k1::ecdsa::Signature::from_der(
-        &encoded_signature.as_slice()[..signature_length - 1],
-      )
-      .context(error::SignatureInvalid)?,
-      EcdsaSighashType::from_consensus(encoded_signature[signature_length - 1] as u32),
-    ),
-    _ => {
-      return Err(Error::SignatureLength {
-        length: encoded_signature.len(),
-        encoded_signature,
-      })
-    }
-  };
+  let signature = bitcoin::secp256k1::ecdsa::Signature::from_der(
+    &encoded_signature.as_slice()[..signature_length - 1],
+  )
+  .context(error::SignatureInvalid)?;
+
+  let sighash_type =
+    EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
   if !(sighash_type == EcdsaSighashType::All) {
     return Err(Error::SigHashTypeUnsupported {
@@ -333,7 +353,7 @@ fn verify_full_p2wpkh(
   let mut sighash_cache = SighashCache::new(to_sign);
 
   let sighash = sighash_cache
-    .p2wpkh_signature_hash(input_index, &program, prevout.value, sighash_type)
+    .p2wpkh_signature_hash(input_index, &p2wpkh_script, prevout.value, sighash_type)
     .expect("signature hash should compute");
 
   let message =
@@ -353,14 +373,14 @@ fn verify_full_p2tr(to_sign: &Transaction, prevouts: &[TxOut], input_index: usiz
   let pub_key = XOnlyPublicKey::from_slice(&prevout.script_pubkey.as_bytes()[2..])
     .map_err(|_| Error::InvalidPublicKey)?;
 
+  if !to_sign.input[input_index].script_sig.is_empty() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let witness = to_sign.input[input_index].witness.clone();
 
   if witness.is_empty() {
     return Err(Error::WitnessEmpty);
-  }
-
-  if !to_sign.input[input_index].script_sig.is_empty() {
-    return Err(Error::ToSignInvalid);
   }
 
   let encoded_signature = witness.to_vec()[0].clone();

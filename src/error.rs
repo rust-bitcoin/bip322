@@ -10,7 +10,7 @@ pub enum Error {
   },
   #[snafu(display("Failed to parse private key"))]
   PrivateKeyParse { source: bitcoin::key::FromWifError },
-  #[snafu(display("Unsupported address `{address}`, type"))]
+  #[snafu(display("Unsupported address `{address}`, only P2TR, P2WPKH, P2SH-P2WPKH, P2PKH, and P2WSH/P2SH multisig allowed"))]
   UnsupportedAddress { address: String },
   #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {
@@ -56,6 +56,10 @@ pub enum Error {
   SigHashTypeInvalid {
     source: bitcoin::sighash::InvalidSighashTypeError,
   },
+  #[snafu(display("Non-standard sighash type: {source}"))]
+  SigHashTypeNonStandard {
+    source: bitcoin::sighash::NonStandardSighashTypeError,
+  },
   #[snafu(display("Unsupported sighash type `{sighash_type}`"))]
   SigHashTypeUnsupported { sighash_type: String },
   #[snafu(display("Not key path spend"))]
@@ -68,16 +72,20 @@ pub enum Error {
   PublicKeyMismatch,
   #[snafu(display("At least one private key is required"))]
   NoPrivateKeys,
-  #[snafu(display("Non-standard sighash type: {source}"))]
-  SigHashTypeNonStandard {
-    source: bitcoin::sighash::NonStandardSighashTypeError,
-  },
   #[snafu(display("Signer's public key not present in multisig script"))]
   UnknownSigner,
   #[snafu(display("Duplicate private key provided"))]
   DuplicateSigner,
-  #[snafu(display("Multisig requires exactly {required} signatures, got {provided}"))]
+  #[snafu(display("Expected exactly {required} private keys, got {provided}"))]
   SignatureCount { required: usize, provided: usize },
+  #[snafu(display("P2WPKH requires a compressed public key"))]
+  UncompressedPublicKey {
+    source: bitcoin::key::UncompressedPublicKeyError,
+  },
+  #[snafu(display("Failed to parse witness script"))]
+  WitnessScriptParse {
+    source: bitcoin::hex::HexToBytesError,
+  },
   #[snafu(display("Invalid BIP-137 recovery flag `{flag}`"))]
   InvalidRecoveryFlag { flag: u8 },
   #[snafu(display("Invalid legacy signature: {source}"))]
