@@ -10,7 +10,7 @@ pub enum Error {
   },
   #[snafu(display("Failed to parse private key"))]
   PrivateKeyParse { source: bitcoin::key::FromWifError },
-  #[snafu(display("Unsuported address `{address}`, only P2TR, P2WPKH and P2SH-P2WPKH allowed"))]
+  #[snafu(display("Unsupported address `{address}`, only P2TR, P2WPKH, P2SH-P2WPKH, and P2WSH/P2SH multisig allowed"))]
   UnsupportedAddress { address: String },
   #[snafu(display("Decode error for signature `{signature}`"))]
   SignatureDecode {
@@ -70,4 +70,20 @@ pub enum Error {
   InvalidWitness,
   #[snafu(display("Public key does not match"))]
   PublicKeyMismatch,
+  #[snafu(display("At least one private key is required"))]
+  NoPrivateKeys,
+  #[snafu(display("Signer's public key not present in multisig script"))]
+  UnknownSigner,
+  #[snafu(display("Duplicate private key provided"))]
+  DuplicateSigner,
+  #[snafu(display("Expected exactly {required} private keys, got {provided}"))]
+  SignatureCount { required: usize, provided: usize },
+  #[snafu(display("P2WPKH requires a compressed public key"))]
+  UncompressedPublicKey {
+    source: bitcoin::key::UncompressedPublicKeyError,
+  },
+  #[snafu(display("Failed to parse witness script"))]
+  WitnessScriptParse {
+    source: bitcoin::hex::HexToBytesError,
+  },
 }

@@ -5,7 +5,7 @@ fn main() {
   let message = "Hello World";
   let wif_private_key = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
 
-  let base64_signature = sign_simple_encoded(address, message, wif_private_key).unwrap();
+  let base64_signature = sign_simple_encoded(address, message, &[wif_private_key], None).unwrap();
 
   assert!(verify_simple_encoded(address, message, &base64_signature).is_ok());
 }
