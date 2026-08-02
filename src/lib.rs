@@ -766,18 +766,109 @@ mod tests {
       .unwrap()
       .assume_checked();
 
-    let witness = sign::sign_simple(
-      &victim,
-      "foo",
-      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
-      None,
-    )
-    .unwrap();
+    let pub_key = PrivateKey::from_wif(WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&Secp256k1::new());
+
+    let mut witness = Witness::new();
+    witness.push(vec![0; 71]);
+    witness.push(pub_key.to_bytes());
 
     assert!(matches!(
       verify::verify_simple(&victim, "foo", witness),
       Err(Error::PublicKeyMismatch)
     ));
+  }
+
+  #[test]
+  fn verify_p2pkh_rejects_mismatched_key() {
+    let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+
+    let to_spend = create_to_spend(&address, "foo").unwrap();
+
+    let mut to_sign = create_to_sign(&to_spend, None)
+      .unwrap()
+      .extract_tx()
+      .unwrap();
+
+    let pub_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&Secp256k1::new());
+
+    to_sign.input[0].script_sig = ScriptBuf::builder()
+      .push_slice(push_bytes(&[0; 71]))
+      .push_slice(push_bytes(&pub_key.to_bytes()))
+      .into_script();
+
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
+      Err(Error::PublicKeyMismatch)
+    ));
+  }
+
+  #[test]
+  fn sign_p2wpkh_rejects_mismatched_key() {
+    assert!(matches!(
+      sign::sign_simple(
+        &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
+        "foo",
+        &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
+        None,
+      ),
+      Err(Error::PublicKeyMismatch)
+    ));
+  }
+
+  #[test]
+  fn sign_p2pkh_rejects_mismatched_key() {
+    assert!(matches!(
+      sign::sign_full(
+        &Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked(),
+        "foo",
+        &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
+        None,
+      ),
+      Err(Error::PublicKeyMismatch)
+    ));
+  }
+
+  #[test]
+  fn mismatched_keys_rejected_for_all_address_types() {
+    use rand::{rngs::StdRng, SeedableRng};
+
+    let secp = Secp256k1::new();
+    let mut rng = StdRng::seed_from_u64(0);
+
+    let mut key = || loop {
+      let mut bytes = [0; 32];
+      rng.fill_bytes(&mut bytes);
+      if let Ok(secret_key) = secp256k1::SecretKey::from_slice(&bytes) {
+        break PrivateKey::new(secret_key, bitcoin::Network::Bitcoin);
+      }
+    };
+
+    for _ in 0..10 {
+      let k1 = key();
+      let k2 = key();
+
+      let pub_key = k1.public_key(&secp);
+      let compressed_public_key = bitcoin::CompressedPublicKey::try_from(pub_key).unwrap();
+      let (x_only_public_key, _parity) =
+        XOnlyPublicKey::from_keypair(&Keypair::from_secret_key(&secp, &k1.inner));
+
+      let addresses = [
+        Address::p2wpkh(&compressed_public_key, bitcoin::Network::Bitcoin),
+        Address::p2shwpkh(&compressed_public_key, bitcoin::Network::Bitcoin),
+        Address::p2pkh(pub_key, bitcoin::Network::Bitcoin),
+        Address::p2tr(&secp, x_only_public_key, None, bitcoin::Network::Bitcoin),
+      ];
+
+      for address in addresses {
+        if let Ok(witness) = sign::sign_simple(&address, "foo", &[k2], None) {
+          assert!(verify::verify_simple(&address, "foo", witness).is_err());
+        }
+      }
+    }
   }
 
   #[test]
