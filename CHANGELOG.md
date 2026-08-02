@@ -1,6 +1,18 @@
 Changelog
 =========
 
+[0.0.11](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.11) - 2026-08-02
+---------------------------------------------------------------------------------
+
+### Added
+- Implement full proof of funds support (#67)
+- Implement `P2PKH` support and legacy signing method (#66)
+- Accept ECDSA signatures shorter than 71 bytes (#69)
+- Add multisig support (#65)
+
+### Changed
+- Update MSRV to 1.74 (#79)
+
 [0.0.10](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.10) - 2025-09-05
 ---------------------------------------------------------------------------------
 
