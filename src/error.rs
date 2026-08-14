@@ -96,4 +96,6 @@ pub enum Error {
   },
   #[snafu(display("Invalid proof input at index {index}: {reason}"))]
   InvalidProofInput { index: usize, reason: String },
+  #[snafu(display("Signature is a `{found}` variant, expected `{expected}`"))]
+  SignatureVariantMismatch { expected: String, found: String },
 }

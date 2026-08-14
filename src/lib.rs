@@ -1281,4 +1281,25 @@ mod tests {
     )
     .is_ok());
   }
+
+  #[test]
+  fn verify_rejects_mismatched_variant_prefix() {
+    let simple =
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+
+    let full =
+      sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+
+    // simple signature handed to the full verifier
+    assert!(matches!(
+      verify::verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &simple),
+      Err(Error::SignatureVariantMismatch { .. })
+    ));
+
+    // full signature handed to the simple verifier
+    assert!(matches!(
+      verify::verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &full),
+      Err(Error::SignatureVariantMismatch { .. })
+    ));
+  }
 }

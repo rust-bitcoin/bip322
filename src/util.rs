@@ -215,3 +215,26 @@ pub(crate) fn push_bytes(bytes: &[u8]) -> PushBytesBuf {
     .expect("data fits in push");
   push_bytes
 }
+
+/// Strips the variant prefix, rejecting a signature encoded for a different variant.
+/// An unprefixed signature is returned unchanged.
+#[allow(clippy::result_large_err)]
+pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Result<&'a str> {
+  for prefix in [
+    SIMPLE_SIGNATURE_PREFIX,
+    FULL_SIGNATURE_PREFIX,
+    POF_SIGNATURE_PREFIX,
+  ] {
+    if let Some(rest) = signature.strip_prefix(prefix) {
+      if prefix != expected {
+        return Err(Error::SignatureVariantMismatch {
+          expected: expected.into(),
+          found: prefix.into(),
+        });
+      }
+      return Ok(rest);
+    }
+  }
+
+  Ok(signature)
+}

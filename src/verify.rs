@@ -55,9 +55,7 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> R
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let signature = signature
-    .strip_prefix(SIMPLE_SIGNATURE_PREFIX)
-    .unwrap_or(signature);
+  let signature = strip_variant_prefix(signature, SIMPLE_SIGNATURE_PREFIX)?;
 
   let mut cursor = bitcoin::io::Cursor::new(
     general_purpose::STANDARD
@@ -78,9 +76,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let to_sign = to_sign
-    .strip_prefix(FULL_SIGNATURE_PREFIX)
-    .unwrap_or(to_sign);
+  let to_sign = strip_variant_prefix(to_sign, FULL_SIGNATURE_PREFIX)?;
 
   let mut cursor = bitcoin::io::Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
     error::TransactionBase64Decode {
@@ -111,9 +107,7 @@ pub fn verify_pof_encoded(
     .context(error::AddressParse { address })?
     .assume_checked();
 
-  let to_sign = to_sign
-    .strip_prefix(POF_SIGNATURE_PREFIX)
-    .unwrap_or(to_sign);
+  let to_sign = strip_variant_prefix(to_sign, POF_SIGNATURE_PREFIX)?;
 
   let bytes =
     general_purpose::STANDARD
