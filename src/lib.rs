@@ -85,6 +85,18 @@ mod tests {
   const POF_P2TR_PROVEN_KEY_3: &str = "KxqVMn81AEYSwYuzBxe6xC4JDAgA2eU2qiNvBAgVZZwRFv1BqN3y";
   const POF_P2TR_MESSAGE: &str = "FUYMQWKYGS7HJEN7YFEZU5SNR5";
 
+  // Prefix vectors from https://github.com/bitcoin/bips/blob/master/bip-0322/basic-test-vectors.json
+  const NO_PREFIX_ADDRESS: &str = "bc1pss0zhytly75awhm6x2hhvd5lnzv3vssgrf9axfheq8ldyzn88ges79fler";
+  const NO_PREFIX_MESSAGE: &str = "No prefix fallback";
+  const NO_PREFIX_SIGNATURE: &str =
+    "AUCJYOwOjxYAvatTAGYaVlNXBVyFuc4MwNQkOuK2tl8xhfKDONd0NjfYyNSYcRqeCp8hsAnCEPHAVEkO9h6vbQ/R";
+
+  const INCORRECT_PREFIX_ADDRESS: &str =
+    "bc1pyrgrm6cu6n54jrvkdjd9rvyd3xfyu84s2623awu2srn6mxhscwpsm5644w";
+  const INCORRECT_PREFIX_MESSAGE: &str = "incorrect prefix";
+  const INCORRECT_PREFIX_SIGNATURE: &str =
+    "fulAUDZwFXUp+adN+/UZj5dVrGAbB3zKs1Vcalz5fCF9srxS63eSWNGvH1NYbrBkPt1BJDUyWUz9zgUxfc63/QheT6M";
+
   #[test]
   fn message_hashes_are_correct() {
     assert_eq!(
@@ -1284,22 +1296,101 @@ mod tests {
 
   #[test]
   fn verify_rejects_mismatched_variant_prefix() {
+    #[track_caller]
+    fn mismatch(result: Result<(), Error>) {
+      assert!(
+        matches!(result, Err(Error::SignatureVariantMismatch { .. })),
+        "got {result:?}"
+      );
+    }
+
     let simple =
       sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
 
     let full =
       sign::sign_full_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
 
-    // simple signature handed to the full verifier
+    let proof_inputs = vec![ProofInput {
+      outpoint: OutPoint {
+        txid: "3333333333333333333333333333333333333333333333333333333333333333"
+          .parse()
+          .unwrap(),
+        vout: 1,
+      },
+      prevout: TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: ScriptBuf::from_hex(
+          "51205c2badbb20cebdce218800dda2fed598e51fab8c30e87112ec967a340b9c3099",
+        )
+        .unwrap(),
+      },
+      prev_tx: None,
+      private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_3).unwrap()],
+      witness_script: None,
+    }];
+
+    let pof = sign::sign_pof_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &[WIF_PRIVATE_KEY],
+      None,
+      &proof_inputs,
+    )
+    .unwrap();
+
+    mismatch(verify::verify_full_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &simple,
+    ));
+    mismatch(verify::verify_simple_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &full,
+    ));
+    mismatch(verify::verify_simple_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &pof,
+    ));
+    mismatch(verify::verify_pof_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &simple,
+      &[],
+    ));
+    mismatch(verify::verify_pof_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &full,
+      &[],
+    ));
+  }
+
+  #[test]
+  fn test_official_vector_prefix() {
+    // official vector with no prefix fallback
+    assert!(verify::verify_simple_encoded(
+      NO_PREFIX_ADDRESS,
+      NO_PREFIX_MESSAGE,
+      NO_PREFIX_SIGNATURE
+    )
+    .is_ok());
+
+    // official vector with incorrect prefix type
     assert!(matches!(
-      verify::verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &simple),
+      verify::verify_simple_encoded(
+        INCORRECT_PREFIX_ADDRESS,
+        INCORRECT_PREFIX_MESSAGE,
+        INCORRECT_PREFIX_SIGNATURE
+      ),
       Err(Error::SignatureVariantMismatch { .. })
     ));
 
-    // full signature handed to the simple verifier
+    // `foo` is not a known variant, so it fails to decode.
     assert!(matches!(
-      verify::verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &full),
-      Err(Error::SignatureVariantMismatch { .. })
+      verify::verify_simple_encoded(SEGWIT_ADDRESS, "foo", "fooAA=="),
+      Err(Error::SignatureDecode { .. })
     ));
   }
 }
