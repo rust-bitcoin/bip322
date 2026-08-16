@@ -6,6 +6,11 @@ pub const BIP322_TAG: &str = "BIP0322-signed-message";
 /// (PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE).
 pub const PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE: u8 = 0x09;
 
+/// Signature variant prefixes.
+pub const SIMPLE_SIGNATURE_PREFIX: &str = "smp";
+pub const FULL_SIGNATURE_PREFIX: &str = "ful";
+pub const POF_SIGNATURE_PREFIX: &str = "pof";
+
 /// Create the tagged message hash.
 pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
   let tag_hash = Sha256::new().chain_update(tag).finalize();
@@ -209,4 +214,27 @@ pub(crate) fn push_bytes(bytes: &[u8]) -> PushBytesBuf {
     .extend_from_slice(bytes)
     .expect("data fits in push");
   push_bytes
+}
+
+/// Strips the variant prefix, rejecting a signature encoded for a different variant.
+/// An unprefixed signature is returned unchanged.
+#[allow(clippy::result_large_err)]
+pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Result<&'a str> {
+  for prefix in [
+    SIMPLE_SIGNATURE_PREFIX,
+    FULL_SIGNATURE_PREFIX,
+    POF_SIGNATURE_PREFIX,
+  ] {
+    if let Some(rest) = signature.strip_prefix(prefix) {
+      if prefix != expected {
+        return Err(Error::SignatureVariantMismatch {
+          expected: expected.into(),
+          found: prefix.into(),
+        });
+      }
+      return Ok(rest);
+    }
+  }
+
+  Ok(signature)
 }
