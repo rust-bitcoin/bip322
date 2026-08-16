@@ -464,15 +464,21 @@ pub fn create_message_signature_p2wpkh(
 
   let pub_key = private_key.public_key(&secp);
 
+  let p2wpkh_script = ScriptBuf::new_p2wpkh(
+    &pub_key
+      .wpubkey_hash()
+      .context(error::UncompressedPublicKey)?,
+  );
+
+  if !is_p2sh && prevout.script_pubkey != p2wpkh_script {
+    return Err(Error::PublicKeyMismatch);
+  }
+
   let sighash = sighash_cache
     .p2wpkh_signature_hash(
       input_index,
       &if is_p2sh {
-        ScriptBuf::new_p2wpkh(
-          &pub_key
-            .wpubkey_hash()
-            .context(error::UncompressedPublicKey)?,
-        )
+        p2wpkh_script
       } else {
         prevout.script_pubkey.clone()
       },
