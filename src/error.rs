@@ -98,4 +98,10 @@ pub enum Error {
   InvalidProofInput { index: usize, reason: String },
   #[snafu(display("Signature is a `{found}` variant, expected `{expected}`"))]
   SignatureVariantMismatch { expected: String, found: String },
+  #[snafu(display("Cannot interpret script `{script}`"))]
+  UnknownScriptType { script: String },
+  #[snafu(display("PSBT is not a BIP-322 signing request"))]
+  OrdinaryPsbt,
+  #[snafu(display("Script was interpreted but the witness does not satisfy it"))]
+  ScriptNotSatisfied,
 }

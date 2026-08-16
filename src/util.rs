@@ -11,6 +11,32 @@ pub const SIMPLE_SIGNATURE_PREFIX: &str = "smp";
 pub const FULL_SIGNATURE_PREFIX: &str = "ful";
 pub const POF_SIGNATURE_PREFIX: &str = "pof";
 
+/// Timelock fields for FULL-format signatures.
+#[derive(Debug, Clone, Copy)]
+pub struct LockParams {
+  pub lock_time: LockTime,
+  pub sequence: Sequence,
+}
+
+impl Default for LockParams {
+  fn default() -> Self {
+    Self {
+      lock_time: LockTime::ZERO,
+      sequence: Sequence(0),
+    }
+  }
+}
+
+impl LockParams {
+  pub fn version(&self) -> Version {
+    if self.lock_time != LockTime::ZERO || self.sequence != Sequence(0) {
+      Version(2)
+    } else {
+      Version(0)
+    }
+  }
+}
+
 /// Create the tagged message hash.
 pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
   let tag_hash = Sha256::new().chain_update(tag).finalize();
@@ -25,6 +51,15 @@ pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
 /// Create the `to_spend` transaction.
 #[allow(clippy::result_large_err)]
 pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<Transaction> {
+  create_to_spend_from_script(&address.script_pubkey(), message)
+}
+
+/// Create the `to_spend` transaction from a raw script pubkey.
+#[allow(clippy::result_large_err)]
+pub fn create_to_spend_from_script(
+  script_pubkey: &ScriptBuf,
+  message: impl AsRef<[u8]>,
+) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -49,27 +84,31 @@ pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<T
     }],
     output: vec![TxOut {
       value: Amount::from_sat(0),
-      script_pubkey: address.script_pubkey(),
+      script_pubkey: script_pubkey.clone(),
     }],
   })
 }
 
 /// Create the `to_sign` transaction.
 #[allow(clippy::result_large_err)]
-pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>) -> Result<Psbt> {
+pub fn create_to_sign(
+  to_spend: &Transaction,
+  witness: Option<Witness>,
+  locks: LockParams,
+) -> Result<Psbt> {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
       txid: to_spend.compute_txid(),
       vout: 0,
     },
     script_sig: ScriptBuf::new(),
-    sequence: Sequence(0),
+    sequence: locks.sequence,
     witness: Witness::new(),
   }];
 
   let to_sign = Transaction {
-    version: Version(0),
-    lock_time: LockTime::ZERO,
+    version: locks.version(),
+    lock_time: locks.lock_time,
     input: inputs,
     output: vec![TxOut {
       value: Amount::from_sat(0),
@@ -237,4 +276,17 @@ pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Re
   }
 
   Ok(signature)
+}
+
+/// Enforces the LOW_S rule, a valid ECDSA signature must have a low-S value.
+#[allow(clippy::result_large_err)]
+pub fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
+  let mut normalized = *signature;
+  normalized.normalize_s();
+  if normalized != *signature {
+    return Err(Error::SignatureInvalid {
+      source: bitcoin::secp256k1::Error::IncorrectSignature,
+    });
+  }
+  Ok(())
 }
