@@ -34,7 +34,7 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
-  use {super::*, pretty_assertions::assert_eq, rand::RngCore};
+  use {super::*, bitcoin::hashes::sha256, pretty_assertions::assert_eq, rand::RngCore};
 
   // From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   // and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
@@ -576,20 +576,26 @@ mod tests {
     ));
   }
 
+  fn full_p2wpkh_to_sign() -> (Address, Transaction) {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+
+    let to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
+
+    (address, to_sign)
+  }
+
   #[test]
   fn verify_full_rejects_noncanonical_to_sign() {
     #[track_caller]
     fn case(mutate: impl Fn(&mut Transaction)) {
-      let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
-
-      let mut to_sign = sign::sign_full(
-        &address,
-        "foo",
-        &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
-        None,
-        LockParams::default(),
-      )
-      .unwrap();
+      let (address, mut to_sign) = full_p2wpkh_to_sign();
 
       mutate(&mut to_sign);
 
@@ -599,7 +605,6 @@ mod tests {
       ));
     }
 
-    case(|tx| tx.version = Version(3));
     case(|tx| {
       let input = tx.input[0].clone();
       tx.input.push(input);
@@ -1548,5 +1553,305 @@ mod tests {
         age: locks.sequence
       }
     );
+  }
+
+  #[test]
+  fn unknown_transaction_version_is_inconclusive() {
+    let (address, mut to_sign) = full_p2wpkh_to_sign();
+
+    to_sign.version = Version(3);
+
+    assert_eq!(
+      verify::verify_full(&address, "foo", to_sign).unwrap(),
+      Verification::Inconclusive
+    );
+  }
+
+  fn pof_p2tr_proof_input() -> ProofInput {
+    ProofInput {
+      outpoint: OutPoint {
+        txid: "1111111111111111111111111111111111111111111111111111111111111111"
+          .parse()
+          .unwrap(),
+        vout: 0,
+      },
+      prevout: TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: ScriptBuf::from_hex(
+          "5120788b90c2b523c73a4237d04df46b232858be3bbc0e65d8d049a7fa59d5719db8",
+        )
+        .unwrap(),
+      },
+      prev_tx: None,
+      private_keys: vec![PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap()],
+      witness_script: None,
+    }
+  }
+
+  #[test]
+  fn timelocked_pof_reports_time_and_age() {
+    let locks = LockParams {
+      lock_time: LockTime::from_height(800_000).unwrap(),
+      sequence: Sequence(144),
+    };
+
+    let signature = sign_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &[POF_P2TR_CHALLENGE_KEY],
+      None,
+      &[pof_p2tr_proof_input()],
+      locks,
+    )
+    .unwrap();
+
+    assert_eq!(
+      verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature).unwrap(),
+      Verification::Valid {
+        time: locks.lock_time,
+        age: locks.sequence
+      }
+    );
+  }
+
+  #[test]
+  fn pof_uninterpretable_input_is_inconclusive() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+
+    let mut psbt = sign_pof(
+      &address,
+      POF_P2TR_MESSAGE,
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+      &[pof_p2tr_proof_input()],
+      LockParams::default(),
+    )
+    .unwrap();
+
+    psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey =
+      ScriptBuf::from_hex("52200000000000000000000000000000000000000000000000000000000000000000")
+        .unwrap();
+
+    assert_eq!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt).unwrap(),
+      Verification::Inconclusive
+    );
+  }
+
+  #[test]
+  fn non_multisig_p2wsh_is_inconclusive() {
+    let witness_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_SHA256)
+      .push_slice(sha256::Hash::hash(&[7u8; 32]).to_byte_array())
+      .push_opcode(opcodes::all::OP_EQUAL)
+      .into_script();
+
+    let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
+
+    let to_spend = create_to_spend(&address, "msg").unwrap();
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+
+    let mut witness = Witness::new();
+    witness.push::<&[u8]>(&[]);
+    witness.push([7u8; 32]);
+    witness.push(witness_script.as_bytes());
+    psbt.inputs[0].final_script_witness = Some(witness);
+
+    assert_eq!(
+      verify_full(&address, "msg", psbt.extract_tx().unwrap()).unwrap(),
+      Verification::Inconclusive
+    );
+  }
+
+  #[test]
+  fn verify_rejects_high_s_signature() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+
+    let mut items = sign::sign_simple(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+    )
+    .unwrap()
+    .to_vec();
+
+    let (sighash_byte, der) = items[0].split_last().unwrap();
+    let sighash_byte = *sighash_byte;
+
+    let signature = secp256k1::ecdsa::Signature::from_der(der).unwrap();
+
+    assert!(require_low_s(&signature).is_ok());
+
+    let mut compact = signature.serialize_compact();
+
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+      let diff = secp256k1::constants::CURVE_ORDER[i] as i16 - compact[32 + i] as i16 - borrow;
+      compact[32 + i] = diff.rem_euclid(256) as u8;
+      borrow = i16::from(diff < 0);
+    }
+
+    let high_s = secp256k1::ecdsa::Signature::from_compact(&compact).unwrap();
+
+    assert!(require_low_s(&high_s).is_err());
+
+    let mut der = high_s.serialize_der().to_vec();
+    der.push(sighash_byte);
+    items[0] = der;
+
+    assert!(matches!(
+      verify::verify_simple(&address, "foo", Witness::from_slice(&items)),
+      Err(Error::SignatureInvalid { .. })
+    ));
+  }
+
+  #[test]
+  fn verify_p2pkh_rejects_non_minimal_push() {
+    let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+
+    let mut to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
+
+    assert!(verify::verify_full(&address, "foo", to_sign.clone()).is_ok());
+
+    let mut instructions = to_sign.input[0].script_sig.instructions();
+
+    let mut next_push = || match instructions.next() {
+      Some(Ok(Instruction::PushBytes(b))) => b.as_bytes().to_vec(),
+      other => panic!("expected a push, got {other:?}"),
+    };
+
+    let signature = next_push();
+    let pub_key = next_push();
+
+    let mut bytes = vec![signature.len() as u8];
+    bytes.extend_from_slice(&signature);
+    bytes.push(opcodes::all::OP_PUSHDATA1.to_u8());
+    bytes.push(pub_key.len() as u8);
+    bytes.extend_from_slice(&pub_key);
+
+    to_sign.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
+      Err(Error::InvalidWitness)
+    ));
+  }
+
+  #[test]
+  fn verify_p2sh_multisig_rejects_non_minimal_push() {
+    let address = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+
+    let mut to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+        PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+      ],
+      Some(&ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap()),
+      LockParams::default(),
+    )
+    .unwrap();
+
+    assert!(verify::verify_full(&address, "foo", to_sign.clone()).is_ok());
+
+    let pushes: Vec<Vec<u8>> = to_sign.input[0]
+      .script_sig
+      .instructions()
+      .map(|instruction| match instruction.unwrap() {
+        Instruction::PushBytes(b) => b.as_bytes().to_vec(),
+        other => panic!("expected a push, got {other:?}"),
+      })
+      .collect();
+
+    let mut bytes = vec![opcodes::OP_0.to_u8()];
+    for (index, push) in pushes.iter().enumerate().skip(1) {
+      if index == 1 {
+        bytes.push(opcodes::all::OP_PUSHDATA1.to_u8());
+      }
+      bytes.push(push.len() as u8);
+      bytes.extend_from_slice(push);
+    }
+
+    to_sign.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
+      Err(Error::InvalidWitness)
+    ));
+  }
+
+  #[test]
+  fn pof_same_txid_non_witness_utxo_fallback() {
+    let key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let spk = ScriptBuf::new_p2pkh(&key.public_key(&Secp256k1::new()).pubkey_hash());
+
+    let prev_tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![
+        TxOut {
+          value: Amount::from_sat(1),
+          script_pubkey: spk.clone(),
+        },
+        TxOut {
+          value: Amount::from_sat(2),
+          script_pubkey: spk,
+        },
+      ],
+    };
+
+    let txid = prev_tx.compute_txid();
+
+    let proof_inputs: Vec<ProofInput> = (0..2)
+      .map(|vout| ProofInput {
+        outpoint: OutPoint { txid, vout },
+        prevout: prev_tx.output[vout as usize].clone(),
+        prev_tx: Some(prev_tx.clone()),
+        private_keys: vec![key],
+        witness_script: None,
+      })
+      .collect();
+
+    let address = Address::from_str(POF_P2TR_ADDRESS)
+      .unwrap()
+      .assume_checked();
+
+    let sign = || {
+      sign_pof(
+        &address,
+        POF_P2TR_MESSAGE,
+        &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+        None,
+        &proof_inputs,
+        LockParams::default(),
+      )
+      .unwrap()
+    };
+
+    // the second proof input resolves via the first input's non_witness_utxo
+    let mut psbt = sign();
+    psbt.inputs[2].non_witness_utxo = None;
+    assert!(verify_pof(&address, POF_P2TR_MESSAGE, psbt).is_ok());
+
+    // neither input carries the previous transaction
+    let mut psbt = sign();
+    psbt.inputs[1].non_witness_utxo = None;
+    psbt.inputs[2].non_witness_utxo = None;
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Err(Error::ToSignInvalid)
+    ));
   }
 }

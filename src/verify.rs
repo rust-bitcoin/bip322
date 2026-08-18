@@ -177,6 +177,11 @@ pub fn verify_full(
 
   check_to_sign(&to_spend, &to_sign)?;
 
+  // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
+  if !matches!(to_sign.version, Version(0) | Version(2)) {
+    return Ok(Verification::Inconclusive);
+  }
+
   let challenge_prevout = TxOut {
     value: Amount::ZERO,
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
@@ -184,16 +189,10 @@ pub fn verify_full(
 
   match verify_input(&to_sign, &[challenge_prevout], 0)? {
     InputVerification::Inconclusive => Ok(Verification::Inconclusive),
-    InputVerification::Valid => {
-      // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
-      if to_sign.version != Version(0) && to_sign.version != Version(2) {
-        return Ok(Verification::Inconclusive);
-      }
-      Ok(Verification::Valid {
-        time: to_sign.lock_time,
-        age: to_sign.input[0].sequence,
-      })
-    }
+    InputVerification::Valid => Ok(Verification::Valid {
+      time: to_sign.lock_time,
+      age: to_sign.input[0].sequence,
+    }),
   }
 }
 
@@ -208,8 +207,7 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
     .push_opcode(opcodes::all::OP_RETURN)
     .into_script();
 
-  if !matches!(to_sign.version, Version(0) | Version(2))
-    || to_sign.input.len() != 1
+  if to_sign.input.len() != 1
     || to_sign.input[0].previous_output != to_spend_outpoint
     || to_sign.output.len() != 1
     || to_sign.output[0].value != Amount::ZERO
@@ -223,11 +221,10 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
 
 /// Verifies a BIP-322 full proof of funds.
 ///
-/// The caller is expected to supply the UTXO set being proven: `prevouts`
-/// must hold the previous output for every input of the PSBT's unsigned
-/// transaction except the challenge input (input 0), in order. The PSBT's own
-/// `witness_utxo` and `non_witness_utxo` fields are cross-checked against
-/// `prevouts` when present, but are not required.
+/// Each proven input's previous output is taken from the PSBT's own
+/// `witness_utxo`, or from a `non_witness_utxo` on that input or on an
+/// earlier input spending the same transaction. An input with neither is
+/// rejected.
 #[allow(clippy::result_large_err)]
 pub fn verify_pof(
   address: &Address,
@@ -252,7 +249,7 @@ pub fn verify_pof(
   let unsigned_tx = &psbt.unsigned_tx;
 
   if !matches!(unsigned_tx.version, Version(0) | Version(2)) {
-    return Err(Error::ToSignInvalid);
+    return Ok(Verification::Inconclusive);
   }
   if unsigned_tx.input.len() < 2 {
     return Err(Error::ToSignInvalid);
@@ -316,10 +313,6 @@ pub fn verify_pof(
       InputVerification::Valid => {}
       InputVerification::Inconclusive => return Ok(Verification::Inconclusive),
     }
-  }
-
-  if to_sign.version != Version(0) && to_sign.version != Version(2) {
-    return Ok(Verification::Inconclusive);
   }
 
   Ok(Verification::Valid {

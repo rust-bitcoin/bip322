@@ -282,10 +282,11 @@ pub fn sign_pof(
     message.as_ref().to_vec(),
   );
 
-  // create_to_sign sets a witness_utxo, but a non-segwit challenge (P2PKH or
-  // bare P2SH) requires the full to_spend transaction instead.
-  if !is_segwit_input(&to_spend.output[0].script_pubkey, witness_script) {
-    to_sign.inputs[0].witness_utxo = None;
+  // BIP-174: a segwit challenge carries a witness_utxo, a legacy one the
+  // full to_spend transaction.
+  if is_segwit_input(&to_spend.output[0].script_pubkey, witness_script) {
+    to_sign.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
+  } else {
     to_sign.inputs[0].non_witness_utxo = Some(to_spend.clone());
   }
 
