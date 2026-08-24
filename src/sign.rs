@@ -7,7 +7,9 @@ pub struct ProofInput {
   pub outpoint: OutPoint,
   /// The previous output being spent
   pub prevout: TxOut,
-  /// Full previous transaction for this input's outpoint.
+  /// Full previous transaction for this input's outpoint. Required for legacy
+  /// (non-segwit) inputs. May be omitted if an earlier input spends another
+  /// output of the same transaction and carries it.
   pub prev_tx: Option<Transaction>,
   /// Key(s) that satisfy the input: one for single-sig, `m` for an `m`-of-`n` multisig
   pub private_keys: Vec<PrivateKey>,
@@ -91,6 +93,7 @@ pub fn sign_full_encoded(
   message: &str,
   wif_private_keys: &[impl AsRef<str>],
   witness_script_hex: Option<&str>,
+  locks: LockParams,
 ) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -105,7 +108,13 @@ pub fn sign_full_encoded(
     .map(|hex| ScriptBuf::from_hex(hex).context(error::WitnessScriptParse))
     .transpose()?;
 
-  let tx = sign_full(&address, message, &private_keys, witness_script.as_ref())?;
+  let tx = sign_full(
+    &address,
+    message,
+    &private_keys,
+    witness_script.as_ref(),
+    locks,
+  )?;
 
   let mut buffer = Vec::new();
 
@@ -118,7 +127,7 @@ pub fn sign_full_encoded(
   ))
 }
 
-/// Signs in the BIP-322 simple format and returns the witness.
+/// Signs the BIP-322 simple format and returns the witness.
 #[allow(clippy::result_large_err)]
 pub fn sign_simple(
   address: &Address,
@@ -132,7 +141,13 @@ pub fn sign_simple(
     });
   }
 
-  let tx = sign_full(address, message, private_keys, witness_script)?;
+  let tx = sign_full(
+    address,
+    message,
+    private_keys,
+    witness_script,
+    LockParams::default(),
+  )?;
 
   if tx.input[0].witness.is_empty() {
     return Err(Error::UnsupportedAddress {
@@ -143,23 +158,23 @@ pub fn sign_simple(
   Ok(tx.input[0].witness.clone())
 }
 
-/// Signs in the BIP-322 full format and returns the full transaction.
+/// Signs the BIP-322 full format and returns the full transaction.
 #[allow(clippy::result_large_err)]
 pub fn sign_full(
   address: &Address,
   message: impl AsRef<[u8]>,
   private_keys: &[PrivateKey],
   witness_script: Option<&ScriptBuf>,
+  locks: LockParams,
 ) -> Result<Transaction> {
-  let to_spend = create_to_spend(address, message)?;
-  let mut to_sign = create_to_sign(&to_spend, None)?;
-
   if private_keys.is_empty() {
     return Err(Error::NoPrivateKeys);
   }
 
-  let prevout = to_spend.output[0].clone();
+  let to_spend = create_to_spend(address, message)?;
+  let mut to_sign = create_to_sign(&to_spend, None, locks)?;
 
+  let prevout = to_spend.output[0].clone();
   sign_input(&mut to_sign, &[prevout], private_keys, witness_script, 0)?;
 
   to_sign.extract_tx().context(error::TransactionExtract)
@@ -173,6 +188,7 @@ pub fn sign_pof_encoded(
   wif_private_keys: &[impl AsRef<str>],
   witness_script_hex: Option<&str>,
   inputs: &[ProofInput],
+  locks: LockParams,
 ) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -193,6 +209,7 @@ pub fn sign_pof_encoded(
     &private_keys,
     witness_script.as_ref(),
     inputs,
+    locks,
   )?;
 
   let mut buffer = Vec::new();
@@ -214,6 +231,7 @@ pub fn sign_pof(
   private_keys: &[PrivateKey],
   witness_script: Option<&ScriptBuf>,
   inputs: &[ProofInput],
+  locks: LockParams,
 ) -> Result<Psbt> {
   if private_keys.is_empty() {
     return Err(Error::NoPrivateKeys);
@@ -225,17 +243,38 @@ pub fn sign_pof(
 
   let to_spend = create_to_spend(address, &message)?;
 
-  let mut to_sign = create_to_sign(&to_spend, None)?;
+  let mut tx_in = vec![TxIn {
+    previous_output: OutPoint {
+      txid: to_spend.compute_txid(),
+      vout: 0,
+    },
+    script_sig: ScriptBuf::new(),
+    sequence: locks.sequence,
+    witness: Witness::new(),
+  }];
 
   for input in inputs {
-    to_sign.unsigned_tx.input.push(TxIn {
+    tx_in.push(TxIn {
       previous_output: input.outpoint,
       script_sig: ScriptBuf::new(),
       sequence: Sequence::ZERO,
       witness: Witness::new(),
     });
-    to_sign.inputs.push(Default::default());
   }
+
+  let unsigned = Transaction {
+    version: locks.version(),
+    lock_time: locks.lock_time,
+    input: tx_in,
+    output: vec![TxOut {
+      value: Amount::from_sat(0),
+      script_pubkey: ScriptBuf::builder()
+        .push_opcode(opcodes::all::OP_RETURN)
+        .into_script(),
+    }],
+  };
+
+  let mut to_sign = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
 
   to_sign.unknown.insert(
     bitcoin::psbt::raw::Key {
@@ -245,10 +284,11 @@ pub fn sign_pof(
     message.as_ref().to_vec(),
   );
 
-  // create_to_sign sets a witness_utxo, but a non-segwit challenge (P2PKH or
-  // bare P2SH) requires the full to_spend transaction instead.
-  if !is_segwit_input(&to_spend.output[0].script_pubkey, witness_script) {
-    to_sign.inputs[0].witness_utxo = None;
+  // BIP-174: a segwit challenge carries a witness_utxo, a legacy one the
+  // full to_spend transaction.
+  if is_segwit_input(&to_spend.output[0].script_pubkey, witness_script) {
+    to_sign.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
+  } else {
     to_sign.inputs[0].non_witness_utxo = Some(to_spend.clone());
   }
 
