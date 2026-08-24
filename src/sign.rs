@@ -7,7 +7,9 @@ pub struct ProofInput {
   pub outpoint: OutPoint,
   /// The previous output being spent
   pub prevout: TxOut,
-  /// Full previous transaction for this input's outpoint.
+  /// Full previous transaction for this input's outpoint. Required for legacy
+  /// (non-segwit) inputs. May be omitted if an earlier input spends another
+  /// output of the same transaction and carries it.
   pub prev_tx: Option<Transaction>,
   /// Key(s) that satisfy the input: one for single-sig, `m` for an `m`-of-`n` multisig
   pub private_keys: Vec<PrivateKey>,

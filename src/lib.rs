@@ -1853,5 +1853,83 @@ mod tests {
       verify_pof(&address, POF_P2TR_MESSAGE, psbt),
       Err(Error::ToSignInvalid)
     ));
+
+    // the fallback rejects an earlier input's non_witness_utxo for a
+    // different transaction (input 1 itself resolves via witness_utxo)
+    let mut psbt = sign();
+    let mut wrong_tx = prev_tx.clone();
+    wrong_tx.version = Version(1);
+    psbt.inputs[1].witness_utxo = Some(prev_tx.output[0].clone());
+    psbt.inputs[1].non_witness_utxo = Some(wrong_tx);
+    psbt.inputs[2].non_witness_utxo = None;
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn pof_duplicate_outpoint_is_rejected() {
+    let address = Address::from_str(POF_P2TR_ADDRESS)
+      .unwrap()
+      .assume_checked();
+
+    let proof_input = pof_p2tr_proof_input();
+    let psbt = sign_pof(
+      &address,
+      POF_P2TR_MESSAGE,
+      &[PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap()],
+      None,
+      &[proof_input.clone(), proof_input],
+      LockParams::default(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn verify_p2tr_rejects_extra_witness_items() {
+    let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+
+    let mut to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
+
+    to_sign.input[0].witness.push([0u8; 32]);
+
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
+      Err(Error::InvalidWitness)
+    ));
+  }
+
+  #[test]
+  fn verify_simple_reports_default_locks() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+
+    let signature = sign::sign_simple(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+    )
+    .unwrap();
+
+    assert_eq!(
+      verify::verify_simple(&address, "foo", signature).unwrap(),
+      Verification::Valid {
+        time: LockTime::ZERO,
+        age: Sequence(0),
+      }
+    );
   }
 }

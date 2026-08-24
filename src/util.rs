@@ -11,10 +11,14 @@ pub const SIMPLE_SIGNATURE_PREFIX: &str = "smp";
 pub const FULL_SIGNATURE_PREFIX: &str = "ful";
 pub const POF_SIGNATURE_PREFIX: &str = "pof";
 
-/// Timelock fields for FULL-format signatures.
+/// Timelock fields for signatures in the full format, including proofs of
+/// funds.
 #[derive(Debug, Clone, Copy)]
 pub struct LockParams {
+  /// `nLockTime` of the `to_sign` transaction — the time T at which the proof
+  /// is valid.
   pub lock_time: LockTime,
+  /// `nSequence` of `to_sign`'s first input — the age S of the proof.
   pub sequence: Sequence,
 }
 
@@ -271,7 +275,7 @@ pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Re
 
 /// Enforces the LOW_S rule, a valid ECDSA signature must have a low-S value.
 #[allow(clippy::result_large_err)]
-pub fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
+pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
   let mut normalized = *signature;
   normalized.normalize_s();
   if normalized != *signature {

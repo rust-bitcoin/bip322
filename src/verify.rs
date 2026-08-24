@@ -125,7 +125,7 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 
 /// Verifies a BIP-322 full proof of funds.
 ///
-/// See [`verify_pof`] for the expected contents of `prevouts`.
+/// See [`verify_pof`] for how each proven input's previous output is resolved.
 #[allow(clippy::result_large_err)]
 pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
   let address = Address::from_str(address)
@@ -225,6 +225,11 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
 /// `witness_utxo`, or from a `non_witness_utxo` on that input or on an
 /// earlier input spending the same transaction. An input with neither is
 /// rejected.
+///
+/// Note that the UTXO data is supplied by the prover: verification only
+/// checks that it is internally consistent and signed for. Callers must
+/// independently confirm on-chain that each outpoint exists with the claimed
+/// script and value.
 #[allow(clippy::result_large_err)]
 pub fn verify_pof(
   address: &Address,
@@ -266,6 +271,16 @@ pub fn verify_pof(
     || unsigned_tx.output[0].value != Amount::ZERO
   {
     return Err(Error::ToSignInvalid);
+  }
+
+  // Consensus: no two inputs may spend the same outpoint.
+  for (i, input) in unsigned_tx.input.iter().enumerate() {
+    if unsigned_tx.input[..i]
+      .iter()
+      .any(|earlier| earlier.previous_output == input.previous_output)
+    {
+      return Err(Error::ToSignInvalid);
+    }
   }
 
   let mut all_prevouts = Vec::with_capacity(unsigned_tx.input.len());
@@ -461,6 +476,12 @@ fn verify_full_p2tr(
 
   if witness.is_empty() {
     return Err(Error::WitnessEmpty);
+  }
+
+  // A key-path spend has exactly one witness item; more items would be
+  // interpreted by consensus as a script-path spend.
+  if witness.len() != 1 {
+    return Err(Error::InvalidWitness);
   }
 
   let encoded_signature = witness.to_vec()[0].clone();
