@@ -267,7 +267,7 @@ pub fn sign_pof(
     lock_time: locks.lock_time,
     input: tx_in,
     output: vec![TxOut {
-      value: Amount::from_sat(0),
+      value: Amount::ZERO,
       script_pubkey: ScriptBuf::builder()
         .push_opcode(opcodes::all::OP_RETURN)
         .into_script(),

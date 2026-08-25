@@ -87,7 +87,7 @@ pub fn create_to_spend_from_script(
       witness: Witness::new(),
     }],
     output: vec![TxOut {
-      value: Amount::from_sat(0),
+      value: Amount::ZERO,
       script_pubkey: script_pubkey.clone(),
     }],
   })
@@ -115,7 +115,7 @@ pub fn create_to_sign(
     lock_time: locks.lock_time,
     input: inputs,
     output: vec![TxOut {
-      value: Amount::from_sat(0),
+      value: Amount::ZERO,
       script_pubkey: script::Builder::new()
         .push_opcode(opcodes::all::OP_RETURN)
         .into_script(),
@@ -125,7 +125,7 @@ pub fn create_to_sign(
   let mut psbt = Psbt::from_unsigned_tx(to_sign).context(error::PsbtExtract)?;
 
   psbt.inputs[0].witness_utxo = Some(TxOut {
-    value: Amount::from_sat(0),
+    value: Amount::ZERO,
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
 
