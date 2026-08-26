@@ -302,43 +302,9 @@ pub fn sign_pof(
 
   for (proof_index, input) in inputs.iter().enumerate() {
     let input_index = proof_index + 1;
-    let spk = &input.prevout.script_pubkey;
 
-    if is_segwit_input(spk, input.witness_script.as_ref()) {
-      to_sign.inputs[input_index].witness_utxo = Some(input.prevout.clone());
-    } else {
-      let prev_tx = input
-        .prev_tx
-        .as_ref()
-        .ok_or_else(|| Error::InvalidProofInput {
-          index: proof_index,
-          reason: "legacy input requires prev_tx".into(),
-        })?;
+    set_proof_input_utxo(&mut to_sign.inputs[input_index], input, proof_index)?;
 
-      if prev_tx.compute_txid() != input.outpoint.txid {
-        return Err(Error::InvalidProofInput {
-          index: proof_index,
-          reason: "prev_tx txid does not match outpoint".into(),
-        });
-      }
-
-      let claimed = prev_tx
-        .output
-        .get(input.outpoint.vout as usize)
-        .ok_or_else(|| Error::InvalidProofInput {
-          index: proof_index,
-          reason: "outpoint vout exceeds prev_tx outputs".into(),
-        })?;
-
-      if *claimed != input.prevout {
-        return Err(Error::InvalidProofInput {
-          index: proof_index,
-          reason: "prevout does not match prev_tx output".into(),
-        });
-      }
-
-      to_sign.inputs[input_index].non_witness_utxo = Some(prev_tx.clone());
-    }
     sign_input(
       &mut to_sign,
       &prevouts,
@@ -349,22 +315,6 @@ pub fn sign_pof(
   }
 
   Ok(to_sign)
-}
-
-/// Whether the input is spent via segwit, which decides if BIP-174 requires a
-/// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
-/// if it wraps a witness program.
-fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
-  if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
-    true
-  } else if spk.is_p2sh() {
-    match witness_script {
-      Some(ws) => *spk != ScriptBuf::new_p2sh(&ws.script_hash()),
-      None => true,
-    }
-  } else {
-    false
-  }
 }
 
 /// Signs input

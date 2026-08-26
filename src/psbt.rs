@@ -60,18 +60,53 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
   })
 }
 
-/// Builds an unsigned BIP-322 PSBT for the given address and
-/// message, with UTXO and script fields set so signers can produce partial
-/// signatures. `witness_script` is the multisig witness or redeem script.
+/// Builds an unsigned BIP-322 PSBT for the given address and message, with
+/// UTXO and script fields set so signers can produce partial signatures.
+/// `witness_script` is the multisig witness or redeem script for the
+/// challenge. `inputs` are additional UTXOs to prove control of, making this
+/// a proof of funds.
 #[allow(clippy::result_large_err)]
 pub fn create_bip322_psbt(
   address: &Address,
   message: impl AsRef<[u8]>,
   witness_script: Option<&ScriptBuf>,
+  inputs: &[ProofInput],
   locks: LockParams,
 ) -> Result<Psbt> {
   let to_spend = create_to_spend(address, &message)?;
-  let mut psbt = create_to_sign(&to_spend, None, locks)?;
+
+  let mut tx_in = vec![TxIn {
+    previous_output: OutPoint {
+      txid: to_spend.compute_txid(),
+      vout: 0,
+    },
+    script_sig: ScriptBuf::new(),
+    sequence: locks.sequence,
+    witness: Witness::new(),
+  }];
+
+  for input in inputs {
+    tx_in.push(TxIn {
+      previous_output: input.outpoint,
+      script_sig: ScriptBuf::new(),
+      sequence: Sequence::ZERO,
+      witness: Witness::new(),
+    });
+  }
+
+  let unsigned = Transaction {
+    version: locks.version(),
+    lock_time: locks.lock_time,
+    input: tx_in,
+    output: vec![TxOut {
+      value: Amount::ZERO,
+      script_pubkey: ScriptBuf::builder()
+        .push_opcode(opcodes::all::OP_RETURN)
+        .into_script(),
+    }],
+  };
+
+  let mut psbt = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
 
   psbt.unknown.insert(
     bitcoin::psbt::raw::Key {
@@ -81,20 +116,22 @@ pub fn create_bip322_psbt(
     message.as_ref().to_vec(),
   );
 
+  psbt.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
+
+  for (proof_index, input) in inputs.iter().enumerate() {
+    set_proof_input_utxo(&mut psbt.inputs[proof_index + 1], input, proof_index)?;
+  }
+
   let spk = &to_spend.output[0].script_pubkey;
 
-  if spk.is_p2wpkh() || spk.is_p2tr() {
+  if spk.is_p2wpkh() || spk.is_p2tr() || spk.is_p2pkh() {
     if witness_script.is_some() {
       return Err(Error::InvalidWitness);
     }
-    return Ok(psbt);
-  }
-  if spk.is_p2pkh() {
-    if witness_script.is_some() {
-      return Err(Error::InvalidWitness);
+    if spk.is_p2pkh() {
+      psbt.inputs[0].witness_utxo = None;
+      psbt.inputs[0].non_witness_utxo = Some(to_spend);
     }
-    psbt.inputs[0].witness_utxo = None;
-    psbt.inputs[0].non_witness_utxo = Some(to_spend);
     return Ok(psbt);
   }
 
@@ -126,41 +163,65 @@ pub fn create_bip322_psbt(
   Ok(psbt)
 }
 
-/// Confirms the PSBT is a BIP-322 request via [`detect_bip322_psbt`],
-/// then signs the first input, adding a partial signature for ECDSA scripts
-/// or `tap_key_sig` for taproot. Does not finalize.
+/// Confirms the PSBT is a BIP-322 request via [`detect_bip322_psbt`], then
+/// signs `input_index`, adding a partial signature for ECDSA scripts or
+/// `tap_key_sig` for taproot. Does not finalize.
+///
+/// Input 0 is the message challenge; later inputs are proof-of-funds UTXOs
+/// and are signed against their own previous output.
 ///
 /// Returns the detected message and challenge, which integrators must
 /// display to the user as message signing, not transaction signing.
 #[allow(clippy::result_large_err)]
-pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Result<Bip322Psbt> {
+pub fn sign_bip322_psbt_input(
+  psbt: &mut Psbt,
+  private_key: &PrivateKey,
+  input_index: usize,
+) -> Result<Bip322Psbt> {
   let Some(detected) = detect_bip322_psbt(psbt) else {
     return Err(Error::OrdinaryPsbt);
   };
 
-  if psbt.unsigned_tx.input.len() != 1 {
+  if input_index >= psbt.unsigned_tx.input.len()
+    || psbt.inputs.len() != psbt.unsigned_tx.input.len()
+  {
     return Err(Error::ToSignInvalid);
   }
 
   let secp = Secp256k1::new();
   let pub_key = private_key.public_key(&secp);
-  let challenge = &detected.message_challenge;
+
+  // Taproot sighashes commit to every prevout, so resolve them all.
+  let mut prevouts = Vec::with_capacity(psbt.inputs.len());
+  for index in 0..psbt.inputs.len() {
+    prevouts.push(psbt_input_prevout(psbt, index)?);
+  }
+
+  // Input 0 is bound to the challenge; a proof input to its own prevout.
+  let challenge = if input_index == 0 {
+    detected.message_challenge.clone()
+  } else {
+    prevouts[input_index].script_pubkey.clone()
+  };
+
+  let challenge = &challenge;
+  let value = prevouts[input_index].value;
 
   if challenge.is_p2tr() {
     let key_pair = Keypair::from_secret_key(&secp, &private_key.inner);
     let (x_only_public_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
-    psbt.inputs[0].tap_internal_key = Some(x_only_public_key);
+    psbt.inputs[input_index].tap_internal_key = Some(x_only_public_key);
 
-    let prevouts = [TxOut {
-      value: Amount::ZERO,
-      script_pubkey: challenge.clone(),
-    }];
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
-      .taproot_key_spend_signature_hash(0, &sighash::Prevouts::All(&prevouts), TapSighashType::All)
+      .taproot_key_spend_signature_hash(
+        input_index,
+        &sighash::Prevouts::All(&prevouts),
+        TapSighashType::All,
+      )
       .expect("signature hash should compute");
 
     let key_pair = key_pair
-      .tap_tweak(&secp, psbt.inputs[0].tap_merkle_root)
+      .tap_tweak(&secp, psbt.inputs[input_index].tap_merkle_root)
       .to_keypair();
 
     let (output_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
@@ -174,7 +235,7 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       &key_pair,
     );
 
-    psbt.inputs[0].tap_key_sig = Some(bitcoin::taproot::Signature {
+    psbt.inputs[input_index].tap_key_sig = Some(bitcoin::taproot::Signature {
       signature,
       sighash_type: TapSighashType::All,
     });
@@ -196,7 +257,7 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
     }
 
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
-      .p2wpkh_signature_hash(0, challenge, Amount::ZERO, sighash_type)
+      .p2wpkh_signature_hash(input_index, challenge, value, sighash_type)
       .expect("signature hash should compute");
     secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash")
@@ -205,13 +266,13 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       return Err(Error::PublicKeyMismatch);
     }
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
-      .legacy_signature_hash(0, challenge, sighash_type.to_u32())
+      .legacy_signature_hash(input_index, challenge, sighash_type.to_u32())
       .expect("signature hash should compute");
     secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash")
   } else if challenge.is_p2sh()
-    && psbt.inputs[0].witness_script.is_none()
-    && psbt.inputs[0]
+    && psbt.inputs[input_index].witness_script.is_none()
+    && psbt.inputs[input_index]
       .redeem_script
       .as_ref()
       .map_or(true, |redeem| redeem.is_p2wpkh())
@@ -223,16 +284,16 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
     if *challenge != ScriptBuf::new_p2sh(&redeem.script_hash()) {
       return Err(Error::PublicKeyMismatch);
     }
-    psbt.inputs[0].redeem_script = Some(redeem.clone());
+    psbt.inputs[input_index].redeem_script = Some(redeem.clone());
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
-      .p2wpkh_signature_hash(0, &redeem, Amount::ZERO, sighash_type)
+      .p2wpkh_signature_hash(input_index, &redeem, value, sighash_type)
       .expect("signature hash should compute");
     secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash")
   } else {
     let script = match (
-      &psbt.inputs[0].witness_script,
-      &psbt.inputs[0].redeem_script,
+      &psbt.inputs[input_index].witness_script,
+      &psbt.inputs[input_index].redeem_script,
     ) {
       (Some(witness_script), _) => witness_script.clone(),
       (None, Some(redeem_script)) => redeem_script.clone(),
@@ -243,7 +304,6 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       }
     };
 
-    // Only sign if this key is actually part of the multisig script.
     let (_, pubkeys) = parse_multisig(&script)?;
     if !pubkeys.contains(&pub_key) {
       return Err(Error::UnknownSigner);
@@ -257,14 +317,14 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
       return Err(Error::PublicKeyMismatch);
     }
 
-    let sighash = if psbt.inputs[0].witness_script.is_some() {
+    let sighash = if psbt.inputs[input_index].witness_script.is_some() {
       SighashCache::new(psbt.unsigned_tx.clone())
-        .p2wsh_signature_hash(0, &script, Amount::ZERO, sighash_type)
+        .p2wsh_signature_hash(input_index, &script, value, sighash_type)
         .expect("signature hash should compute")
         .to_byte_array()
     } else {
       SighashCache::new(psbt.unsigned_tx.clone())
-        .legacy_signature_hash(0, &script, sighash_type.to_u32())
+        .legacy_signature_hash(input_index, &script, sighash_type.to_u32())
         .expect("signature hash should compute")
         .to_byte_array()
     };
@@ -274,7 +334,7 @@ pub fn sign_bip322_psbt_input(psbt: &mut Psbt, private_key: &PrivateKey) -> Resu
 
   let signature = secp.sign_ecdsa(&message, &private_key.inner);
 
-  psbt.inputs[0].partial_sigs.insert(
+  psbt.inputs[input_index].partial_sigs.insert(
     pub_key,
     bitcoin::ecdsa::Signature {
       signature,
@@ -313,86 +373,120 @@ fn single_partial_sig(
   Ok((pub_key, signature))
 }
 
-/// Assembles the collected partial signatures in multisig script
-/// order, finalizes the first input per BIP174, and returns the
-/// variant-prefixed encoded signature (`ful`).
+/// Assembles the collected partial signatures and finalizes every input per
+/// BIP174, returning the variant-prefixed encoded signature — `ful` for a
+/// single-input request, `pof` for a proof of funds.
 #[allow(clippy::result_large_err)]
 pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   let Some(detected) = detect_bip322_psbt(&psbt) else {
     return Err(Error::OrdinaryPsbt);
   };
 
-  if psbt.unsigned_tx.input.len() != 1 {
+  if psbt.inputs.len() != psbt.unsigned_tx.input.len() {
     return Err(Error::ToSignInvalid);
   }
 
+  finalize_input(&mut psbt, 0, &detected.message_challenge)?;
+
+  for index in 1..psbt.inputs.len() {
+    let challenge = psbt_input_prevout(&psbt, index)?.script_pubkey;
+    finalize_input(&mut psbt, index, &challenge)?;
+  }
+
+  if psbt.unsigned_tx.input.len() > 1 {
+    // A proof of funds is encoded as the finalized PSBT itself.
+    let mut buffer = Vec::new();
+    psbt
+      .serialize_to_writer(&mut buffer)
+      .context(error::TransactionEncode)?;
+
+    return Ok(format!(
+      "{POF_SIGNATURE_PREFIX}{}",
+      general_purpose::STANDARD.encode(buffer)
+    ));
+  }
+
+  let to_sign = psbt.extract_tx_unchecked_fee_rate();
+
+  let mut buffer = Vec::new();
+  to_sign
+    .consensus_encode(&mut buffer)
+    .context(error::TransactionEncode)?;
+
+  Ok(format!(
+    "{FULL_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(buffer)
+  ))
+}
+
+/// Finalizes one input against the script pubkey it spends.
+#[allow(clippy::result_large_err)]
+fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Result<()> {
   // Taproot key path: the tap_key_sig becomes a one-element witness.
-  if let Some(signature) = psbt.inputs[0].tap_key_sig {
-    if !detected.message_challenge.is_p2tr() {
+  if let Some(signature) = psbt.inputs[index].tap_key_sig {
+    if !challenge.is_p2tr() {
       return Err(Error::PublicKeyMismatch);
     }
 
     let mut witness = Witness::new();
     witness.push(signature.to_vec());
-    psbt.inputs[0].final_script_witness = Some(witness);
-    psbt.inputs[0].tap_key_sig = None;
-    psbt.inputs[0].tap_internal_key = None;
-    return encode_finalized(psbt);
+    psbt.inputs[index].final_script_witness = Some(witness);
+    psbt.inputs[index].tap_key_sig = None;
+    psbt.inputs[index].tap_internal_key = None;
+    return Ok(());
   }
 
-  // P2WPKH: one partial signature plus its public key.
-  if let Some(redeem_script) = psbt.inputs[0].redeem_script.clone() {
+  // P2SH-P2WPKH: the redeem script is pushed in the script_sig.
+  if let Some(redeem_script) = psbt.inputs[index].redeem_script.clone() {
     if redeem_script.is_p2wpkh() {
-      let (pub_key, signature) =
-        single_partial_sig(&psbt.inputs[0], &detected.message_challenge, |pk| {
-          let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
-          Ok(ScriptBuf::new_p2sh(
-            &ScriptBuf::new_p2wpkh(&wpkh).script_hash(),
-          ))
-        })?;
+      let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
+        let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
+        Ok(ScriptBuf::new_p2sh(
+          &ScriptBuf::new_p2wpkh(&wpkh).script_hash(),
+        ))
+      })?;
 
       let mut witness = Witness::new();
       witness.push(signature.to_vec());
       witness.push(pub_key.to_bytes());
-      psbt.inputs[0].final_script_witness = Some(witness);
-      psbt.inputs[0].final_script_sig = Some(push_only_script(&redeem_script));
-      psbt.inputs[0].partial_sigs.clear();
-      psbt.inputs[0].redeem_script = None;
-      return encode_finalized(psbt);
+      psbt.inputs[index].final_script_witness = Some(witness);
+      psbt.inputs[index].final_script_sig = Some(push_only_script(&redeem_script));
+      psbt.inputs[index].partial_sigs.clear();
+      psbt.inputs[index].redeem_script = None;
+      return Ok(());
     }
   }
 
-  if detected.message_challenge.is_p2wpkh() {
-    let (pub_key, signature) =
-      single_partial_sig(&psbt.inputs[0], &detected.message_challenge, |pk| {
-        let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
-        Ok(ScriptBuf::new_p2wpkh(&wpkh))
-      })?;
+  if challenge.is_p2wpkh() {
+    let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
+      let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
+      Ok(ScriptBuf::new_p2wpkh(&wpkh))
+    })?;
+
     let mut witness = Witness::new();
     witness.push(signature.to_vec());
     witness.push(pub_key.to_bytes());
-    psbt.inputs[0].final_script_witness = Some(witness);
-    psbt.inputs[0].partial_sigs.clear();
-    return encode_finalized(psbt);
+    psbt.inputs[index].final_script_witness = Some(witness);
+    psbt.inputs[index].partial_sigs.clear();
+    return Ok(());
   }
 
-  if detected.message_challenge.is_p2pkh() {
-    let (pub_key, signature) =
-      single_partial_sig(&psbt.inputs[0], &detected.message_challenge, |pk| {
-        Ok(ScriptBuf::new_p2pkh(&pk.pubkey_hash()))
-      })?;
+  if challenge.is_p2pkh() {
+    let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
+      Ok(ScriptBuf::new_p2pkh(&pk.pubkey_hash()))
+    })?;
 
-    psbt.inputs[0].final_script_sig = Some(
+    psbt.inputs[index].final_script_sig = Some(
       ScriptBuf::builder()
         .push_slice(push_bytes(&signature.to_vec()))
         .push_slice(push_bytes(&pub_key.to_bytes()))
         .into_script(),
     );
-    psbt.inputs[0].partial_sigs.clear();
-    return encode_finalized(psbt);
+    psbt.inputs[index].partial_sigs.clear();
+    return Ok(());
   }
 
-  let input = &psbt.inputs[0];
+  let input = &psbt.inputs[index];
   let (script, is_witness) = match (&input.witness_script, &input.redeem_script) {
     (Some(witness_script), _) => (witness_script.clone(), true),
     (None, Some(redeem_script)) => (redeem_script.clone(), false),
@@ -401,6 +495,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
 
   let (required, pubkeys) = parse_multisig(&script)?;
 
+  // CHECKMULTISIG requires signatures in script pubkey order.
   let mut signatures = Vec::with_capacity(required);
   for pub_key in &pubkeys {
     if let Some(signature) = input.partial_sigs.get(pub_key) {
@@ -422,11 +517,11 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
       witness.push(signature);
     }
     witness.push(script.as_bytes());
-    psbt.inputs[0].final_script_witness = Some(witness);
+    psbt.inputs[index].final_script_witness = Some(witness);
 
     // P2SH-wrapped P2WSH also needs the program pushed in script_sig.
-    if let Some(redeem_script) = psbt.inputs[0].redeem_script.clone() {
-      psbt.inputs[0].final_script_sig = Some(push_only_script(&redeem_script));
+    if let Some(redeem_script) = psbt.inputs[index].redeem_script.clone() {
+      psbt.inputs[index].final_script_sig = Some(push_only_script(&redeem_script));
     }
   } else {
     // OP_0 <sig_1> .. <sig_m> <redeemScript>
@@ -434,32 +529,16 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
     for signature in &signatures {
       builder = builder.push_slice(push_bytes(signature));
     }
-    psbt.inputs[0].final_script_sig = Some(
+    psbt.inputs[index].final_script_sig = Some(
       builder
         .push_slice(push_bytes(script.as_bytes()))
         .into_script(),
     );
   }
 
-  psbt.inputs[0].partial_sigs.clear();
-  psbt.inputs[0].witness_script = None;
-  psbt.inputs[0].redeem_script = None;
+  psbt.inputs[index].partial_sigs.clear();
+  psbt.inputs[index].witness_script = None;
+  psbt.inputs[index].redeem_script = None;
 
-  encode_finalized(psbt)
-}
-
-/// Extracts the finalized transaction and encodes it as a `ful` signature.
-#[allow(clippy::result_large_err)]
-fn encode_finalized(psbt: Psbt) -> Result<String> {
-  let to_sign = psbt.extract_tx_unchecked_fee_rate();
-
-  let mut buffer = Vec::new();
-  to_sign
-    .consensus_encode(&mut buffer)
-    .context(error::TransactionEncode)?;
-
-  Ok(format!(
-    "{FULL_SIGNATURE_PREFIX}{}",
-    general_purpose::STANDARD.encode(buffer)
-  ))
+  Ok(())
 }
