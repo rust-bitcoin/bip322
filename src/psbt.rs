@@ -108,6 +108,8 @@ pub fn create_bip322_psbt(
 
   let mut psbt = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
 
+  // rust-bitcoin has no typed field for PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE
+  // yet, so it goes in the unknown map. Switch once upstream adds one.
   psbt.unknown.insert(
     bitcoin::psbt::raw::Key {
       type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
