@@ -285,7 +285,7 @@ pub fn verify_pof(
 
   let mut all_prevouts = Vec::with_capacity(unsigned_tx.input.len());
   all_prevouts.push(TxOut {
-    value: Amount::from_sat(0),
+    value: Amount::ZERO,
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
 
