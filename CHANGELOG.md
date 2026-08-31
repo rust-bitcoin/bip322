@@ -1,6 +1,14 @@
 Changelog
 =========
 
+[0.0.12](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.12) - 2026-08-31
+---------------------------------------------------------------------------------
+
+### Added
+- Implement verification states, time locks and required consensus rules (#73)
+- Add key mismatch tests and hardening (#81)
+- Add BIP-322 signature variant prefixes (#71)
+
 [0.0.11](https://github.com/rust-bitcoin/bip322/releases/tag/0.0.11) - 2026-08-02
 ---------------------------------------------------------------------------------
 
