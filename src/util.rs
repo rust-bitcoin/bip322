@@ -55,6 +55,15 @@ pub fn tagged_hash(tag: &str, message: impl AsRef<[u8]>) -> [u8; 32] {
 /// Create the `to_spend` transaction.
 #[allow(clippy::result_large_err)]
 pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<Transaction> {
+  create_to_spend_from_script(&address.script_pubkey(), message)
+}
+
+/// Create the `to_spend` transaction from a raw script pubkey.
+#[allow(clippy::result_large_err)]
+pub fn create_to_spend_from_script(
+  script_pubkey: &ScriptBuf,
+  message: impl AsRef<[u8]>,
+) -> Result<Transaction> {
   Ok(Transaction {
     version: Version(0),
     lock_time: LockTime::ZERO,
@@ -78,8 +87,8 @@ pub fn create_to_spend(address: &Address, message: impl AsRef<[u8]>) -> Result<T
       witness: Witness::new(),
     }],
     output: vec![TxOut {
-      value: Amount::from_sat(0),
-      script_pubkey: address.script_pubkey(),
+      value: Amount::ZERO,
+      script_pubkey: script_pubkey.clone(),
     }],
   })
 }
@@ -106,7 +115,7 @@ pub fn create_to_sign(
     lock_time: locks.lock_time,
     input: inputs,
     output: vec![TxOut {
-      value: Amount::from_sat(0),
+      value: Amount::ZERO,
       script_pubkey: script::Builder::new()
         .push_opcode(opcodes::all::OP_RETURN)
         .into_script(),
@@ -116,7 +125,7 @@ pub fn create_to_sign(
   let mut psbt = Psbt::from_unsigned_tx(to_sign).context(error::PsbtExtract)?;
 
   psbt.inputs[0].witness_utxo = Some(TxOut {
-    value: Amount::from_sat(0),
+    value: Amount::ZERO,
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   });
 
@@ -284,4 +293,97 @@ pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) ->
     });
   }
   Ok(())
+}
+
+/// Whether the input is spent via segwit, which decides if BIP-174 requires a
+/// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
+/// if it wraps a witness program.
+pub(crate) fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
+  if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
+    true
+  } else if spk.is_p2sh() {
+    match witness_script {
+      Some(ws) => *spk != ScriptBuf::new_p2sh(&ws.script_hash()),
+      None => true,
+    }
+  } else {
+    false
+  }
+}
+
+/// Sets the UTXO field a proof input requires per BIP-174, validating
+/// `prev_tx` against the outpoint for legacy inputs.
+#[allow(clippy::result_large_err)]
+pub(crate) fn set_proof_input_utxo(
+  psbt_input: &mut bitcoin::psbt::Input,
+  input: &ProofInput,
+  index: usize,
+) -> Result<()> {
+  if is_segwit_input(&input.prevout.script_pubkey, input.witness_script.as_ref()) {
+    psbt_input.witness_utxo = Some(input.prevout.clone());
+    return Ok(());
+  }
+
+  let prev_tx = input
+    .prev_tx
+    .as_ref()
+    .ok_or_else(|| Error::InvalidProofInput {
+      index,
+      reason: "legacy input requires prev_tx".into(),
+    })?;
+
+  if prev_tx.compute_txid() != input.outpoint.txid {
+    return Err(Error::InvalidProofInput {
+      index,
+      reason: "prev_tx txid does not match outpoint".into(),
+    });
+  }
+
+  let claimed = prev_tx
+    .output
+    .get(input.outpoint.vout as usize)
+    .ok_or_else(|| Error::InvalidProofInput {
+      index,
+      reason: "outpoint vout exceeds prev_tx outputs".into(),
+    })?;
+
+  if *claimed != input.prevout {
+    return Err(Error::InvalidProofInput {
+      index,
+      reason: "prevout does not match prev_tx output".into(),
+    });
+  }
+
+  psbt_input.non_witness_utxo = Some(prev_tx.clone());
+
+  Ok(())
+}
+
+/// Resolves an input's previous output from its PSBT UTXO fields.
+#[allow(clippy::result_large_err)]
+pub(crate) fn psbt_input_prevout(psbt: &Psbt, index: usize) -> Result<TxOut> {
+  let input = &psbt.inputs[index];
+
+  if let Some(txout) = &input.witness_utxo {
+    return Ok(txout.clone());
+  }
+
+  let outpoint = psbt.unsigned_tx.input[index].previous_output;
+
+  let tx = input
+    .non_witness_utxo
+    .as_ref()
+    .or_else(|| {
+      (1..index).find_map(|i| {
+        (psbt.unsigned_tx.input[i].previous_output.txid == outpoint.txid)
+          .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
+          .flatten()
+      })
+    })
+    .ok_or(Error::ToSignInvalid)?;
+
+  tx.output
+    .get(outpoint.vout as usize)
+    .cloned()
+    .ok_or(Error::ToSignInvalid)
 }
