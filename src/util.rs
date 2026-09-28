@@ -297,7 +297,9 @@ pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) ->
 
 /// Whether the input is spent via segwit, which decides if BIP-174 requires a
 /// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
-/// if it wraps a witness program.
+/// if it wraps a witness program; with no script known (`witness_script:
+/// None`) it is assumed to be P2SH-P2WPKH, whose redeem script the signer
+/// derives from its own key.
 pub(crate) fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
   if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
     true
@@ -381,6 +383,10 @@ pub(crate) fn psbt_input_prevout(psbt: &Psbt, index: usize) -> Result<TxOut> {
       })
     })
     .ok_or(Error::ToSignInvalid)?;
+
+  if tx.compute_txid() != outpoint.txid {
+    return Err(Error::ToSignInvalid);
+  }
 
   tx.output
     .get(outpoint.vout as usize)

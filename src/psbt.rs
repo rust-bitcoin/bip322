@@ -46,10 +46,16 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
     return None;
   }
 
+  if !matches!(psbt.unsigned_tx.version, Version(0) | Version(2)) {
+    return None;
+  }
+
+  let op_return = script::Builder::new()
+    .push_opcode(opcodes::all::OP_RETURN)
+    .into_script();
+
   let outputs = &psbt.unsigned_tx.output;
-  if outputs.len() != 1
-    || !outputs[0].script_pubkey.is_op_return()
-    || outputs[0].value != Amount::ZERO
+  if outputs.len() != 1 || outputs[0].script_pubkey != op_return || outputs[0].value != Amount::ZERO
   {
     return None;
   }
@@ -210,7 +216,6 @@ pub fn sign_bip322_psbt_input(
   if challenge.is_p2tr() {
     let key_pair = Keypair::from_secret_key(&secp, &private_key.inner);
     let (x_only_public_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
-    psbt.inputs[input_index].tap_internal_key = Some(x_only_public_key);
 
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
       .taproot_key_spend_signature_hash(
@@ -228,6 +233,8 @@ pub fn sign_bip322_psbt_input(
     if *challenge != ScriptBuf::new_p2tr_tweaked(output_key.dangerous_assume_tweaked()) {
       return Err(Error::PublicKeyMismatch);
     }
+
+    psbt.inputs[input_index].tap_internal_key = Some(x_only_public_key);
 
     let signature = secp.sign_schnorr_no_aux_rand(
       &secp256k1::Message::from_digest_slice(sighash.as_ref())
@@ -250,7 +257,7 @@ pub fn sign_bip322_psbt_input(
       != ScriptBuf::new_p2wpkh(
         &pub_key
           .wpubkey_hash()
-          .map_err(|_| Error::InvalidPublicKey)?,
+          .context(error::UncompressedPublicKey)?,
       )
     {
       return Err(Error::PublicKeyMismatch);
@@ -279,7 +286,7 @@ pub fn sign_bip322_psbt_input(
   {
     let wpkh = pub_key
       .wpubkey_hash()
-      .map_err(|_| Error::InvalidPublicKey)?;
+      .context(error::UncompressedPublicKey)?;
     let redeem = ScriptBuf::new_p2wpkh(&wpkh);
     if *challenge != ScriptBuf::new_p2sh(&redeem.script_hash()) {
       return Err(Error::PublicKeyMismatch);
@@ -291,12 +298,12 @@ pub fn sign_bip322_psbt_input(
     secp256k1::Message::from_digest_slice(sighash.as_ref())
       .expect("should be cryptographically secure hash")
   } else {
-    let script = match (
+    let (script, is_witness) = match (
       &psbt.inputs[input_index].witness_script,
       &psbt.inputs[input_index].redeem_script,
     ) {
-      (Some(witness_script), _) => witness_script.clone(),
-      (None, Some(redeem_script)) => redeem_script.clone(),
+      (Some(witness_script), _) => (witness_script.clone(), true),
+      (None, Some(redeem_script)) => (redeem_script.clone(), false),
       (None, None) => {
         return Err(Error::UnsupportedAddress {
           address: challenge.to_string(),
@@ -309,15 +316,9 @@ pub fn sign_bip322_psbt_input(
       return Err(Error::UnknownSigner);
     }
 
-    let p2wsh = ScriptBuf::new_p2wsh(&script.wscript_hash());
-    if *challenge != p2wsh
-      && *challenge != ScriptBuf::new_p2sh(&p2wsh.script_hash())
-      && *challenge != ScriptBuf::new_p2sh(&script.script_hash())
-    {
-      return Err(Error::PublicKeyMismatch);
-    }
+    require_multisig_challenge(&script, challenge, is_witness)?;
 
-    let sighash = if psbt.inputs[input_index].witness_script.is_some() {
+    let sighash = if is_witness {
       SighashCache::new(psbt.unsigned_tx.clone())
         .p2wsh_signature_hash(input_index, &script, value, sighash_type)
         .expect("signature hash should compute")
@@ -343,6 +344,30 @@ pub fn sign_bip322_psbt_input(
   );
 
   Ok(detected)
+}
+
+/// Binds a multisig script to the challenge it claims to satisfy: a segwit
+/// spend (`is_witness`) requires the script's P2WSH program, or that program
+/// wrapped in P2SH; a legacy spend requires the bare P2SH of the script.
+#[allow(clippy::result_large_err)]
+fn require_multisig_challenge(
+  script: &ScriptBuf,
+  challenge: &ScriptBuf,
+  is_witness: bool,
+) -> Result<()> {
+  let p2wsh = ScriptBuf::new_p2wsh(&script.wscript_hash());
+
+  let matches = if is_witness {
+    *challenge == p2wsh || *challenge == ScriptBuf::new_p2sh(&p2wsh.script_hash())
+  } else {
+    *challenge == ScriptBuf::new_p2sh(&script.script_hash())
+  };
+
+  if !matches {
+    return Err(Error::PublicKeyMismatch);
+  }
+
+  Ok(())
 }
 
 /// Takes the partial signature, requiring exactly one whose public key satisfies the challenge.
@@ -440,7 +465,7 @@ fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Resul
   if let Some(redeem_script) = psbt.inputs[index].redeem_script.clone() {
     if redeem_script.is_p2wpkh() {
       let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
-        let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
+        let wpkh = pk.wpubkey_hash().context(error::UncompressedPublicKey)?;
         Ok(ScriptBuf::new_p2sh(
           &ScriptBuf::new_p2wpkh(&wpkh).script_hash(),
         ))
@@ -459,7 +484,7 @@ fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Resul
 
   if challenge.is_p2wpkh() {
     let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
-      let wpkh = pk.wpubkey_hash().map_err(|_| Error::InvalidPublicKey)?;
+      let wpkh = pk.wpubkey_hash().context(error::UncompressedPublicKey)?;
       Ok(ScriptBuf::new_p2wpkh(&wpkh))
     })?;
 
@@ -492,6 +517,8 @@ fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Resul
     (None, Some(redeem_script)) => (redeem_script.clone(), false),
     (None, None) => return Err(Error::InvalidWitness),
   };
+
+  require_multisig_challenge(&script, challenge, is_witness)?;
 
   let (required, pubkeys) = parse_multisig(&script)?;
 
