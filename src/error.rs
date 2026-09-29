@@ -62,8 +62,6 @@ pub enum Error {
   },
   #[snafu(display("Unsupported sighash type `{sighash_type}`"))]
   SigHashTypeUnsupported { sighash_type: String },
-  #[snafu(display("Not key path spend"))]
-  NotKeyPathSpend,
   #[snafu(display("Invalid public key"))]
   InvalidPublicKey,
   #[snafu(display("Invalid witness"))]

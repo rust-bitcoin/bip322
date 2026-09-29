@@ -171,7 +171,7 @@ pub fn sign_full(
     return Err(Error::NoPrivateKeys);
   }
 
-  let to_spend = create_to_spend(address, message)?;
+  let to_spend = create_to_spend(address, message);
   let mut to_sign = create_to_sign(&to_spend, None, locks)?;
 
   let prevout = to_spend.output[0].clone();
@@ -241,7 +241,7 @@ pub fn sign_pof(
     return Err(Error::NoProofInputs);
   }
 
-  let to_spend = create_to_spend(address, &message)?;
+  let to_spend = create_to_spend(address, &message);
 
   let mut tx_in = vec![TxIn {
     previous_output: OutPoint {

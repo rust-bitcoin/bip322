@@ -41,7 +41,7 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
     return None;
   };
 
-  let to_spend = create_to_spend_from_script(&message_challenge, &message).ok()?;
+  let to_spend = create_to_spend_from_script(&message_challenge, &message);  
   if first_txin.previous_output.txid != to_spend.compute_txid() {
     return None;
   }
@@ -79,7 +79,7 @@ pub fn create_bip322_psbt(
   inputs: &[ProofInput],
   locks: LockParams,
 ) -> Result<Psbt> {
-  let to_spend = create_to_spend(address, &message)?;
+  let to_spend = create_to_spend(address, &message);
 
   let mut tx_in = vec![TxIn {
     previous_output: OutPoint {
