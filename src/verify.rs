@@ -29,7 +29,6 @@ enum InputVerification {
 }
 
 /// Verifies a BIP-137 legacy proof from string inputs.
-#[allow(clippy::result_large_err)]
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -57,7 +56,6 @@ pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> R
 }
 
 /// Verifies a BIP-137 legacy proof from proper Rust types.
-#[allow(clippy::result_large_err)]
 pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignature) -> Result<()> {
   if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
     return Err(Error::UnsupportedAddress {
@@ -77,7 +75,6 @@ pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignatu
 }
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
 pub fn verify_simple_encoded(
   address: &str,
   message: &str,
@@ -102,7 +99,6 @@ pub fn verify_simple_encoded(
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
 pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -128,7 +124,6 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
 /// Verifies a BIP-322 full proof of funds.
 ///
 /// See [`verify_pof`] for how each proven input's previous output is resolved.
-#[allow(clippy::result_large_err)]
 pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -165,7 +160,11 @@ pub fn verify_simple(
 
   let to_sign = match psbt.extract_tx() {
     Ok(to_sign) => to_sign,
-    Err(source) => return Verification::Invalid(Error::TransactionExtract { source }),
+    Err(source) => {
+      return Verification::Invalid(Error::TransactionExtract {
+        source: Box::new(source),
+      })
+    }
   };
 
   verify_full(address, &message, to_sign)

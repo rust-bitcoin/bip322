@@ -92,7 +92,6 @@ pub fn create_to_spend_from_script(
 }
 
 /// Create the `to_sign` transaction.
-#[allow(clippy::result_large_err)]
 pub fn create_to_sign(
   to_spend: &Transaction,
   witness: Option<Witness>,
@@ -132,7 +131,6 @@ pub fn create_to_sign(
   Ok(psbt)
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
   let instructions = script
     .instructions()
@@ -191,7 +189,6 @@ pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<Pub
 /// Sign with each private key, ordering signatures by the position of the
 /// corresponding public key in the multisig script, as required by
 /// OP_CHECKMULTISIG's forward-only matching.
-#[allow(clippy::result_large_err)]
 pub(crate) fn ordered_multisig_signatures(
   secp: &Secp256k1<secp256k1::All>,
   script: &ScriptBuf,
@@ -259,7 +256,6 @@ pub(crate) fn push_bytes(bytes: &[u8]) -> PushBytesBuf {
 
 /// Strips the variant prefix, rejecting a signature encoded for a different variant.
 /// An unprefixed signature is returned unchanged.
-#[allow(clippy::result_large_err)]
 pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Result<&'a str> {
   for prefix in [
     SIMPLE_SIGNATURE_PREFIX,
@@ -281,7 +277,6 @@ pub(crate) fn strip_variant_prefix<'a>(signature: &'a str, expected: &str) -> Re
 }
 
 /// Enforces the LOW_S rule, a valid ECDSA signature must have a low-S value.
-#[allow(clippy::result_large_err)]
 pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
   let mut normalized = *signature;
   normalized.normalize_s();
@@ -313,7 +308,6 @@ pub(crate) fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf
 
 /// Sets the UTXO field a proof input requires per BIP-174, validating
 /// `prev_tx` against the outpoint for legacy inputs.
-#[allow(clippy::result_large_err)]
 pub(crate) fn set_proof_input_utxo(
   psbt_input: &mut bitcoin::psbt::Input,
   input: &ProofInput,
@@ -360,7 +354,6 @@ pub(crate) fn set_proof_input_utxo(
 }
 
 /// Resolves an input's previous output from its PSBT UTXO fields.
-#[allow(clippy::result_large_err)]
 pub(crate) fn psbt_input_prevout(psbt: &Psbt, index: usize) -> Result<TxOut> {
   let input = &psbt.inputs[index];
 

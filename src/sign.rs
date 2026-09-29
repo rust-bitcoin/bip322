@@ -18,7 +18,6 @@ pub struct ProofInput {
 }
 
 /// Signs a message in the BIP-137 legacy format from string inputs.
-#[allow(clippy::result_large_err)]
 pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -29,7 +28,6 @@ pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) 
 }
 
 /// Signs a message in the BIP-137 legacy format from proper Rust types.
-#[allow(clippy::result_large_err)]
 pub fn sign_legacy(
   address: &Address,
   message: &str,
@@ -52,7 +50,6 @@ pub fn sign_legacy(
 }
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
 pub fn sign_simple_encoded(
   address: &str,
   message: &str,
@@ -87,7 +84,6 @@ pub fn sign_simple_encoded(
 }
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
 pub fn sign_full_encoded(
   address: &str,
   message: &str,
@@ -128,7 +124,6 @@ pub fn sign_full_encoded(
 }
 
 /// Signs the BIP-322 simple format and returns the witness.
-#[allow(clippy::result_large_err)]
 pub fn sign_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -159,7 +154,6 @@ pub fn sign_simple(
 }
 
 /// Signs the BIP-322 full format and returns the full transaction.
-#[allow(clippy::result_large_err)]
 pub fn sign_full(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -181,7 +175,6 @@ pub fn sign_full(
 }
 
 /// Signs the BIP-322 full proof of funds from string inputs.
-#[allow(clippy::result_large_err)]
 pub fn sign_pof_encoded(
   address: &str,
   message: &str,
@@ -224,7 +217,6 @@ pub fn sign_pof_encoded(
 }
 
 /// Signs a BIP-322 full proof
-#[allow(clippy::result_large_err)]
 pub fn sign_pof(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -318,7 +310,6 @@ pub fn sign_pof(
 }
 
 /// Signs input
-#[allow(clippy::result_large_err)]
 fn sign_input(
   to_sign: &mut Psbt,
   prevouts: &[TxOut],
@@ -440,7 +431,6 @@ fn sign_input(
 }
 
 /// Sign for segwit inputs
-#[allow(clippy::result_large_err)]
 pub fn create_message_signature_p2wpkh(
   to_sign: &Psbt,
   private_key: &PrivateKey,
@@ -501,7 +491,6 @@ pub fn create_message_signature_p2wpkh(
 }
 
 /// Sign for taproot inputs
-#[allow(clippy::result_large_err)]
 pub fn create_message_signature_taproot(
   to_sign: &Psbt,
   private_key: &PrivateKey,
@@ -560,7 +549,6 @@ pub fn create_message_signature_taproot(
 }
 
 /// Sign for multisig
-#[allow(clippy::result_large_err)]
 pub fn create_message_signature_p2wsh(
   to_sign: &Psbt,
   private_keys: &[PrivateKey],
@@ -594,7 +582,6 @@ pub fn create_message_signature_p2wsh(
 }
 
 /// Sign for p2sh multisig
-#[allow(clippy::result_large_err)]
 pub fn create_message_signature_p2sh_multisig(
   to_sign: &mut Psbt,
   private_keys: &[PrivateKey],
@@ -630,7 +617,6 @@ pub fn create_message_signature_p2sh_multisig(
 }
 
 /// Sign for p2pkh
-#[allow(clippy::result_large_err)]
 pub fn create_message_signature_p2pkh(
   to_sign: &mut Psbt,
   private_key: &PrivateKey,
@@ -667,7 +653,6 @@ pub fn create_message_signature_p2pkh(
   Ok(Witness::new())
 }
 
-#[allow(clippy::result_large_err)]
 fn single_key(private_keys: &[PrivateKey]) -> Result<&PrivateKey> {
   if private_keys.len() != 1 {
     return Err(Error::SignatureCount {
