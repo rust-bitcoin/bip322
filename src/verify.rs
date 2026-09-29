@@ -352,8 +352,8 @@ fn verify_input(
 /// Fallback verification via the miniscript interpreter for scripts the
 /// templates cannot classify.
 ///
-/// Returns `Inconclusive` when the interpreter cannot parse the spend,
-/// `Err` when the witness fails to satisfy it.
+/// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
+/// script this validator does not understand is neither accepted nor rejected.
 #[allow(clippy::result_large_err)]
 fn verify_with_interpreter(
   to_sign: &Transaction,
@@ -402,6 +402,14 @@ fn verify_with_interpreter(
         }
       },
       Ok(_) => {}
+      Err(miniscript::interpreter::Error::EcdsaSig(_))
+      | Err(miniscript::interpreter::Error::SchnorrSig(_))
+      | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_)) => {
+        return Err(Error::SignatureInvalid {
+          source: bitcoin::secp256k1::Error::IncorrectSignature,
+        })
+      }
       Err(_) => return Err(Error::ScriptNotSatisfied),
     }
   }
@@ -552,10 +560,10 @@ fn verify_full_p2tr(
     return Err(Error::WitnessEmpty);
   }
 
-  // A key-path spend has exactly one witness item; more items would be
-  // interpreted by consensus as a script-path spend.
+  // A key-path spend is exactly one item. More items mean a script-path
+  // spend or an annex, which only the interpreter can evaluate.
   if witness.len() != 1 {
-    return Err(Error::InvalidWitness);
+    return Ok(InputVerification::Inconclusive);
   }
 
   let encoded_signature = witness.to_vec()[0].clone();
