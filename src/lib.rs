@@ -18,7 +18,6 @@ use {
     Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Witness,
   },
-  miniscript::interpreter::{KeySigPair, SatisfiedConstraint},
   sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::str::FromStr,
@@ -680,12 +679,9 @@ mod tests {
     }
 
     #[track_caller]
-    fn not_valid(address: &str, message: &str, signature: &str, full: bool) {
+    fn inconclusive(address: &str, message: &str, signature: &str, full: bool) {
       let result = run(address, message, signature, full);
-      assert!(
-        !matches!(result, Ok(Verification::Valid { .. })),
-        "got {result:?}"
-      );
+      assert_eq!(result.unwrap(), Verification::Inconclusive);
     }
 
     fn run(
@@ -702,9 +698,18 @@ mod tests {
       .map_err(Box::new)
     }
 
-    // time-locked script types are not supported
-    not_valid("bc1p6vffkx7vcyezrjq7pg9qqdjv7vmtanfhk8ukwsn4syejwmarmhxqp0rw5x", "AY2VOQOXYI5CN2EHZKLOX7ZI37", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
-    not_valid("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "MGKMA2MJUBDHT55J7MHOLM7UPE", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
+    // The spec's valid p2tr-time-lock and p2wsh-time-lock vectors. Their
+    // scripts (`<n> OP_CHECKSEQUENCEVERIFY OP_DROP`) are not expressible in
+    // miniscript — `older` is a K-type fragment with no `v:` wrapper — so the
+    // interpreter cannot parse them and the spec-mandated outcome for this
+    // validator is inconclusive.
+    inconclusive("bc1p6vffkx7vcyezrjq7pg9qqdjv7vmtanfhk8ukwsn4syejwmarmhxqp0rw5x", "AY2VOQOXYI5CN2EHZKLOX7ZI37", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
+    inconclusive("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "MGKMA2MJUBDHT55J7MHOLM7UPE", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
+
+    // wrong message for p2tr-time-lock full signature
+    case("bc1p6vffkx7vcyezrjq7pg9qqdjv7vmtanfhk8ukwsn4syejwmarmhxqp0rw5x", "ATGH7VC42BMKAAJAMBG3KNGQGR", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
+    // wrong message for p2wsh-time-lock full signature
+    case("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "QMSIBU4KPG4CGHGBGFRFHXVYLR", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
 
     // wrong message for p2wsh-multisig-2of2 simple signature
     case("bc1qw6g0rgrpuxvj4edkwtvzpmt3c5m08mhp8nuk3mrk4erufvlczp5ssdscjd", "DL2KXDPQAN63YIQPIP34O3XYVX", "BABIMEUCIQCKl1f9Cj26k0fFWE48+O4ibhYJYPytbDZWJRaaG9BybwIgCbk+3BViWkpuu2RI+41dwtlQ/m/01G860pTFCzDFfokBSDBFAiEA0O77DJsaM7IO+Ht06sp3umzXB64CNNOwf2isZuPfdmwCIGlggOwRSkXsqlPhE1gMdd5hf7ycL33Orfrr4v/XnMGSAUdSIQNsu/OwZurHvJMoiJoSAmmCHLoqIc5Wblh+rek+7rhASCECgYVkUspeAxwRfM6v4GRBhN/gGxTfpPqZuOlBIYZxTJZSrg==", false);
@@ -2875,6 +2880,68 @@ mod tests {
   }
 
   #[test]
+  fn interpreter_csv_satisfied_valid() {
+    let secp = Secp256k1::new();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let witness_script = format!("and_v(v:pk({}),older(10))", private_key.public_key(&secp))
+      .parse::<miniscript::Miniscript<bitcoin::PublicKey, miniscript::Segwitv0>>()
+      .unwrap()
+      .encode();
+
+    let locks = LockParams {
+      lock_time: LockTime::ZERO,
+      sequence: Sequence(10),
+    };
+
+    let (address, mut tx, signature) =
+      p2wsh_interpreter_spend(&witness_script, &private_key, EcdsaSighashType::All, locks);
+
+    let mut witness = Witness::new();
+    witness.push(signature.to_vec());
+    witness.push(witness_script.as_bytes());
+    tx.input[0].witness = witness;
+
+    assert_eq!(
+      verify_full(&address, "foo", tx).unwrap(),
+      Verification::Valid {
+        time: LockTime::ZERO,
+        age: Sequence(10)
+      }
+    );
+  }
+
+  #[test]
+  fn interpreter_csv_unsatisfied_rejected() {
+    let secp = Secp256k1::new();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    let witness_script = format!("and_v(v:pk({}),older(10))", private_key.public_key(&secp))
+      .parse::<miniscript::Miniscript<bitcoin::PublicKey, miniscript::Segwitv0>>()
+      .unwrap()
+      .encode();
+
+    // the script requires a relative age of 10; to_sign's input is 5
+    let locks = LockParams {
+      lock_time: LockTime::ZERO,
+      sequence: Sequence(5),
+    };
+
+    let (address, mut tx, signature) =
+      p2wsh_interpreter_spend(&witness_script, &private_key, EcdsaSighashType::All, locks);
+
+    let mut witness = Witness::new();
+    witness.push(signature.to_vec());
+    witness.push(witness_script.as_bytes());
+    tx.input[0].witness = witness;
+
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
+      Err(Error::ScriptNotSatisfied)
+    ));
+  }
+
+  #[test]
   fn interpreter_p2sh_single_key_valid() {
     let secp = Secp256k1::new();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
@@ -2918,7 +2985,6 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "blocked on P2SH witness-length dispatch"]
   fn interpreter_p2sh_p2wsh_single_key_valid() {
     let secp = Secp256k1::new();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
@@ -2959,6 +3025,160 @@ mod tests {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
+    );
+  }
+
+  /// Builds a P2TR script-path spend of `tapscript`, signing with
+  /// `private_key` over the BIP-341 tapscript sighash.
+  fn p2tr_script_path_spend(
+    tapscript: &ScriptBuf,
+    private_key: &PrivateKey,
+    sighash_type: TapSighashType,
+  ) -> (Address, Transaction, bitcoin::taproot::Signature, Vec<u8>) {
+    let secp = Secp256k1::new();
+    let internal_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&secp)
+      .inner
+      .x_only_public_key()
+      .0;
+
+    let spend_info = bitcoin::taproot::TaprootBuilder::new()
+      .add_leaf(0, tapscript.clone())
+      .unwrap()
+      .finalize(&secp, internal_key)
+      .unwrap();
+    let address = Address::p2tr(
+      &secp,
+      internal_key,
+      spend_info.merkle_root(),
+      bitcoin::Network::Bitcoin,
+    );
+    let control_block = spend_info
+      .control_block(&(tapscript.clone(), bitcoin::taproot::LeafVersion::TapScript))
+      .unwrap();
+
+    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+
+    let prevout = TxOut {
+      value: Amount::ZERO,
+      script_pubkey: address.script_pubkey(),
+    };
+
+    let sighash = SighashCache::new(psbt.unsigned_tx.clone())
+      .taproot_script_spend_signature_hash(
+        0,
+        &sighash::Prevouts::All(&[prevout]),
+        bitcoin::taproot::TapLeafHash::from_script(
+          tapscript,
+          bitcoin::taproot::LeafVersion::TapScript,
+        ),
+        sighash_type,
+      )
+      .unwrap();
+
+    let keypair = Keypair::from_secret_key(&secp, &private_key.inner);
+    let signature = bitcoin::taproot::Signature {
+      signature: secp.sign_schnorr_no_aux_rand(
+        &Message::from_digest_slice(sighash.as_ref()).unwrap(),
+        &keypair,
+      ),
+      sighash_type,
+    };
+
+    (
+      address,
+      psbt.unsigned_tx,
+      signature,
+      control_block.serialize(),
+    )
+  }
+
+  fn single_key_tapscript(private_key: &PrivateKey) -> ScriptBuf {
+    let secp = Secp256k1::new();
+    ScriptBuf::builder()
+      .push_x_only_key(&private_key.public_key(&secp).inner.x_only_public_key().0)
+      .push_opcode(opcodes::all::OP_CHECKSIG)
+      .into_script()
+  }
+
+  #[test]
+  fn interpreter_p2tr_script_path_valid() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let tapscript = single_key_tapscript(&private_key);
+
+    let (address, mut tx, signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+
+    let mut witness = Witness::new();
+    witness.push(signature.to_vec());
+    witness.push(tapscript.as_bytes());
+    witness.push(control_block);
+    tx.input[0].witness = witness;
+
+    assert_eq!(
+      verify_full(&address, "foo", tx).unwrap(),
+      Verification::Valid {
+        time: LockTime::ZERO,
+        age: Sequence(0)
+      }
+    );
+  }
+
+  #[test]
+  fn interpreter_p2tr_script_path_tampered_rejected() {
+    // the script names private_key; wrong_key signs, so the spend is
+    // well-formed but the signature does not verify
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let wrong_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap();
+
+    let tapscript = single_key_tapscript(&private_key);
+
+    let (address, mut tx, signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &wrong_key, TapSighashType::Default);
+
+    let mut witness = Witness::new();
+    witness.push(signature.to_vec());
+    witness.push(tapscript.as_bytes());
+    witness.push(control_block);
+    tx.input[0].witness = witness;
+
+    let result = verify_full(&address, "foo", tx);
+
+    assert!(
+      matches!(result, Err(Error::SignatureInvalid { .. })),
+      "got {result:?}"
+    );
+  }
+
+  #[test]
+  fn interpreter_p2tr_inexpressible_tapscript_inconclusive() {
+    use bitcoin::hashes::sha256;
+
+    // A bare hashlock without miniscript's OP_SIZE 32 OP_EQUALVERIFY prefix
+    // is not an expressible fragment, so the interpreter cannot parse it.
+    let tapscript = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_SHA256)
+      .push_slice(sha256::Hash::hash(&[7u8; 32]).to_byte_array())
+      .push_opcode(opcodes::all::OP_EQUAL)
+      .into_script();
+
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    // no signature is needed: the script fails to parse before any sig check
+    let (address, mut tx, _signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+
+    let mut witness = Witness::new();
+    witness.push([7u8; 32]);
+    witness.push(tapscript.as_bytes());
+    witness.push(control_block);
+    tx.input[0].witness = witness;
+
+    assert_eq!(
+      verify_full(&address, "foo", tx).unwrap(),
+      Verification::Inconclusive
     );
   }
 }

@@ -360,7 +360,7 @@ fn verify_with_interpreter(
   prevouts: &[TxOut],
   input_index: usize,
 ) -> Result<InputVerification> {
-  use miniscript::interpreter::Interpreter;
+  use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
 
   let prevout = &prevouts[input_index];
   let txin = &to_sign.input[input_index];
@@ -405,7 +405,8 @@ fn verify_with_interpreter(
       Err(miniscript::interpreter::Error::EcdsaSig(_))
       | Err(miniscript::interpreter::Error::SchnorrSig(_))
       | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
-      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_)) => {
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
         return Err(Error::SignatureInvalid {
           source: bitcoin::secp256k1::Error::IncorrectSignature,
         })
@@ -436,12 +437,35 @@ fn verify_standard_script(
     verify_full_p2wpkh(to_sign, prevout, input_index, false)
   } else if spk.is_p2sh() {
     let witness = &to_sign.input[input_index].witness;
+    let script_sig = &to_sign.input[input_index].script_sig;
 
-    match witness.len() {
-      0 => verify_full_p2sh_multisig(to_sign, prevout, input_index),
-      2 => verify_full_p2wpkh(to_sign, prevout, input_index, true),
-      n if n > 2 => verify_full_p2wsh(to_sign, prevout, input_index),
-      _ => Ok(InputVerification::Inconclusive),
+    // The redeem script is the last scriptSig push. Dispatch on its shape
+    // rather than the witness length, so a nested P2WSH spend with few
+    // witness items is not mistaken for a nested P2WPKH spend.
+    let redeem_program = script_sig
+      .instructions_minimal()
+      .last()
+      .and_then(|instruction| match instruction {
+        Ok(Instruction::PushBytes(bytes)) => Some(bytes.as_bytes()),
+        _ => None,
+      });
+
+    match redeem_program {
+      Some(program) if program.len() == 22 && program[..2] == [0x00, 0x14] => {
+        verify_full_p2wpkh(to_sign, prevout, input_index, true)
+      }
+      Some(program) if program.len() == 34 && program[..2] == [0x00, 0x20] => {
+        verify_full_p2wsh(to_sign, prevout, input_index)
+      }
+      Some(_) => verify_full_p2sh_multisig(to_sign, prevout, input_index),
+      // No redeem script in the scriptSig: keep the witness-length heuristic
+      // for the nested-segwit cases that tolerate an empty scriptSig.
+      None => match witness.len() {
+        0 => verify_full_p2sh_multisig(to_sign, prevout, input_index),
+        2 => verify_full_p2wpkh(to_sign, prevout, input_index, true),
+        n if n > 2 => verify_full_p2wsh(to_sign, prevout, input_index),
+        _ => Ok(InputVerification::Inconclusive),
+      },
     }
   } else if spk.is_p2pkh() {
     verify_full_p2pkh(to_sign, prevout, input_index)
