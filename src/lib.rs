@@ -37,6 +37,15 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 mod tests {
   use {super::*, bitcoin::hashes::sha256, pretty_assertions::assert_eq, rand::RngCore};
 
+  /// Asserts an encoded verify call decoded the proof and reported it valid.
+  #[track_caller]
+  fn assert_valid(result: Result<Verification>) {
+    assert!(
+      matches!(result, Ok(Verification::Valid { .. })),
+      "got {result:?}"
+    );
+  }
+
   // From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
   // and https://github.com/ACken2/bip322-js/blob/main/test/Verifier.test.ts
   // and https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747
@@ -118,7 +127,6 @@ mod tests {
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         ""
       )
-      .unwrap()
       .compute_txid()
       .to_string(),
       "c5680aa69bb8d860bf82d4e9cd3504b55dde018de765a91bb566283c545a99a7"
@@ -129,7 +137,6 @@ mod tests {
         &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
         "Hello World"
       )
-      .unwrap()
       .compute_txid()
       .to_string(),
       "b79d196740ad5217771c1098fc4a4b51e0535c32236c71f1ea4d61a2d603352b"
@@ -141,8 +148,7 @@ mod tests {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
       "",
-    )
-    .unwrap();
+    );
 
     let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
@@ -154,8 +160,7 @@ mod tests {
     let to_spend = create_to_spend(
       &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
       "Hello World",
-    )
-    .unwrap();
+    );
 
     let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
@@ -167,22 +172,20 @@ mod tests {
 
   #[test]
   fn simple_verify_and_falsify_taproot() {
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World", 
         "smpAUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      ).is_ok()
-    );
+    ));
 
-    assert_eq!(
+    assert!(matches!(
       verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "smpAUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      ).unwrap_err().to_string(),
-      "Invalid signature"
-    );
+      ).unwrap(),
+      Verification::Invalid(_)
+    ));
   }
 
   #[test]
@@ -195,17 +198,16 @@ mod tests {
 
   #[test]
   fn roundtrip_taproot_simple() {
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
-      &sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
-    )
-    .is_ok());
+      &sign::sign_simple_encoded(TAPROOT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_taproot_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       TAPROOT_ADDRESS,
       "Hello World",
       &sign::sign_full_encoded(
@@ -213,11 +215,10 @@ mod tests {
         "Hello World",
         &[WIF_PRIVATE_KEY],
         None,
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
@@ -245,53 +246,47 @@ mod tests {
 
   #[test]
   fn simple_verify_and_falsify_p2wpkh() {
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World",
         "smpAkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).is_ok()
-    );
+    ));
 
-    assert!(
+    assert!(matches!(
       verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World - this should fail",
         "smpAkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).is_err()
-    );
+      ).unwrap(),
+      Verification::Invalid(_)
+    ));
 
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "Hello World",
         "smpAkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
-      ).is_ok()
-    );
+    ));
 
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "",
         "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).is_ok()
-    );
+    ));
 
-    assert!(
+    assert!(matches!(
       verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "fail",
         "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).is_err()
-    );
+      ).unwrap(),
+      Verification::Invalid(_)
+    ));
 
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "",
         "smpAkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
-      ).is_ok()
-    );
+    ));
   }
 
   #[test]
@@ -301,13 +296,11 @@ mod tests {
     // the usual 71/72. It is valid and `sign_simple` produces it, so `verify`
     // must accept it. Regenerate with:
     //   sign::sign_simple_encoded(SEGWIT_ADDRESS, "probe-266", WIF_PRIVATE_KEY)
-    assert!(
-      verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
         SEGWIT_ADDRESS,
         "probe-266",
         "AkYwQwIgdHvqo7c5BbXCr0O5xWkT1qoihgF5oaKXoFlzuegR+ZICHxoQGPcMKj+iUTymjR5tC+uN7arZcZHUv7BMyf6rwJoBIQLH8SADGWRClD2FiOAa7oQEI8xU/BUhUmo7hcKwy9WIcg=="
-      ).is_ok()
-    );
+    ));
   }
 
   #[test]
@@ -325,17 +318,16 @@ mod tests {
 
   #[test]
   fn roundtrip_p2wpkh_simple() {
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
-      &sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap()
-    )
-    .is_ok());
+      &sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2wpkh_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       SEGWIT_ADDRESS,
       "Hello World",
       &sign::sign_full_encoded(
@@ -343,28 +335,27 @@ mod tests {
         "Hello World",
         &[WIF_PRIVATE_KEY],
         None,
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn simple_verify_and_falsify_p2sh_p2wpkh() {
-    assert!(verify::verify_simple_encoded(
-        NESTED_SEGWIT_ADDRESS,
-        "Hello World",
-        "smpAkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
-      ).is_ok()
-    );
+    assert_valid(verify::verify_simple_encoded(
+      NESTED_SEGWIT_ADDRESS,
+      "Hello World",
+      "smpAkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
+    ));
 
-    assert!(verify::verify_simple_encoded(
+    assert!(matches!(verify::verify_simple_encoded(
         NESTED_SEGWIT_ADDRESS,
         "Hello World - this should fail",
         "smpAkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
-      ).is_err()
-    );
+      ).unwrap(),
+      Verification::Invalid(Error::SignatureInvalid { .. })
+    ));
   }
 
   #[test]
@@ -377,23 +368,22 @@ mod tests {
 
   #[test]
   fn roundtrip_p2sh_p2wpkh_simple() {
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       NESTED_SEGWIT_ADDRESS,
       "Hello World",
       &sign::sign_simple_encoded(
         NESTED_SEGWIT_ADDRESS,
         "Hello World",
         &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
-        None
+        None,
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2sh_p2wpkh_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       NESTED_SEGWIT_ADDRESS,
       "Hello World",
       &sign::sign_full_encoded(
@@ -401,18 +391,17 @@ mod tests {
         "Hello World",
         &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
         None,
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn adding_aux_randomness_roundtrips() {
     let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
     let message = "Hello World with aux randomness";
-    let to_spend = create_to_spend(&address, message).unwrap();
+    let to_spend = create_to_spend(&address, message);
     let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
@@ -428,12 +417,15 @@ mod tests {
       create_message_signature_taproot(&to_sign, &private_key, &prevouts, 0, Some(aux_rand))
         .unwrap();
 
-    assert!(verify_simple(&address, message, witness).is_ok());
+    assert!(matches!(
+      verify_simple(&address, message, witness),
+      Verification::Valid { .. }
+    ));
   }
 
   #[test]
   fn roundtrip_p2wsh_2of2_simple() {
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       P2WSH_2OF2_ADDRESS,
       P2WSH_2OF2_MESSAGE,
       &sign::sign_simple_encoded(
@@ -442,14 +434,13 @@ mod tests {
         &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2WSH_2OF2_WITNESS_SCRIPT),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2sh_p2wsh_2of2_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       P2SH_P2WSH_2OF2_ADDRESS,
       P2SH_P2WSH_2OF2_MESSAGE,
       &sign::sign_full_encoded(
@@ -457,16 +448,15 @@ mod tests {
         P2SH_P2WSH_2OF2_MESSAGE,
         &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2wsh_2of2_shuffled_keys() {
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       P2WSH_2OF2_ADDRESS,
       P2WSH_2OF2_MESSAGE,
       &sign::sign_simple_encoded(
@@ -475,14 +465,13 @@ mod tests {
         &[P2WSH_2OF2_PRIVATE_KEY_2, P2WSH_2OF2_PRIVATE_KEY_1],
         Some(P2WSH_2OF2_WITNESS_SCRIPT),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2sh_p2wsh_2of2_shuffled_keys() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       P2SH_P2WSH_2OF2_ADDRESS,
       P2SH_P2WSH_2OF2_MESSAGE,
       &sign::sign_full_encoded(
@@ -490,16 +479,15 @@ mod tests {
         P2SH_P2WSH_2OF2_MESSAGE,
         &[P2SH_P2WSH_2OF2_PRIVATE_KEY_2, P2SH_P2WSH_2OF2_PRIVATE_KEY_1],
         Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok())
+      .unwrap(),
+    ));
   }
 
   #[test]
   fn roundtrip_p2pkh_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       LEGACY_ADDRESS,
       "Hello World",
       &sign::sign_full_encoded(
@@ -507,11 +495,10 @@ mod tests {
         "Hello World",
         &[WIF_PRIVATE_KEY],
         None,
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
@@ -602,7 +589,7 @@ mod tests {
 
       assert!(matches!(
         verify::verify_full(&address, "foo", to_sign),
-        Err(Error::ToSignInvalid)
+        Verification::Invalid(Error::ToSignInvalid)
       ));
     }
 
@@ -634,7 +621,7 @@ mod tests {
         "foo",
         to_sign
       ),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -642,7 +629,7 @@ mod tests {
   fn official_vectors_simple() {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str) {
-      assert!(verify::verify_simple_encoded(address, message, signature).is_ok());
+      assert_valid(verify::verify_simple_encoded(address, message, signature));
     }
 
     case("bc1qqthe0hz8klx90e7stf6shclhsvqd5ly96pn53v", "2V6TUTMSH4VQ3Z7WZWKYD7DFNH", "AkgwRQIhALC6hdfxNy1n45d7UXSskRBdfZW0Al259E1kDMpipdYkAiAJPfZqb+WurZuf1apU5xeE6Igui9dvt5tihQLDvxlY1AEhAqbnruyo677ktQjio7XOchO3w51Dh9AbRVngha5jtNfT");
@@ -659,7 +646,7 @@ mod tests {
   fn official_vectors_full() {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str) {
-      assert!(verify::verify_full_encoded(address, message, signature).is_ok());
+      assert_valid(verify::verify_full_encoded(address, message, signature));
     }
 
     case("bc1qrqtlzcq86850yzgsyq9sssawx2qxlx5yq3xpkd", "KLE5MMJBTNF4AVZXIO3GIL5UWF", "AgAAAAABAUrfzHHOLAKmgCIFSTT3krp+cQxj1BDPBN4GBg3tRmFXAAAAAADgBwAAAQAAAAAAAAAAAWoCSDBFAiEAjYj85zyhQKa9DbMO0reDwdhkNwKJkF3q2qFcijXDgMUCIAaQ75s3fwqrCeYIUJugLvhxZFxQIVquGN90vIKCW3QLASEDMurnDzvc0zABUwVwCADfGXoDx/M3SQnYt7e3IHDoU3PgBwAA");
@@ -675,13 +662,20 @@ mod tests {
   fn official_vectors_rejected() {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str, full: bool) {
-      assert!(run(address, message, signature, full).is_err());
+      let result = run(address, message, signature, full);
+      assert!(
+        matches!(result, Ok(Verification::Invalid(_))),
+        "got {result:?}"
+      );
     }
 
     #[track_caller]
     fn inconclusive(address: &str, message: &str, signature: &str, full: bool) {
       let result = run(address, message, signature, full);
-      assert_eq!(result.unwrap(), Verification::Inconclusive);
+      assert!(
+        matches!(result, Ok(Verification::Inconclusive)),
+        "got {result:?}"
+      );
     }
 
     fn run(
@@ -765,7 +759,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&address, P2WSH_2OF2_MESSAGE, witness),
-      Err(Error::InvalidWitness)
+      Verification::Invalid(Error::InvalidWitness)
     ));
   }
 
@@ -785,7 +779,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&address, P2WSH_2OF2_MESSAGE, witness),
-      Err(Error::SignatureInvalid { .. })
+      Verification::Invalid(Error::SignatureInvalid { .. })
     ));
   }
 
@@ -808,7 +802,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&address, P2WSH_2OF2_MESSAGE, witness),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -822,7 +816,7 @@ mod tests {
         "foo",
         Witness::new()
       ),
-      Err(Error::InvalidWitness)
+      Verification::Invalid(Error::InvalidWitness)
     ));
   }
 
@@ -842,7 +836,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&victim, "foo", witness),
-      Err(Error::PublicKeyMismatch)
+      Verification::Invalid(Error::PublicKeyMismatch)
     ));
   }
 
@@ -850,7 +844,7 @@ mod tests {
   fn verify_p2pkh_rejects_mismatched_key() {
     let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
 
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
 
     let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
       .unwrap()
@@ -868,7 +862,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_full(&address, "foo", to_sign),
-      Err(Error::PublicKeyMismatch)
+      Verification::Invalid(Error::PublicKeyMismatch)
     ));
   }
 
@@ -932,7 +926,10 @@ mod tests {
 
       for address in addresses {
         if let Ok(witness) = sign::sign_simple(&address, "foo", &[k2], None) {
-          assert!(verify::verify_simple(&address, "foo", witness).is_err());
+          assert!(matches!(
+            verify::verify_simple(&address, "foo", witness),
+            Verification::Invalid(_)
+          ));
         }
       }
     }
@@ -944,7 +941,7 @@ mod tests {
       .unwrap()
       .assume_checked();
 
-    let to_spend = create_to_spend(&victim, "foo").unwrap();
+    let to_spend = create_to_spend(&victim, "foo");
     let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     let witness = create_message_signature_p2wpkh(
@@ -958,7 +955,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&victim, "foo", witness),
-      Err(Error::PublicKeyMismatch)
+      Verification::Invalid(Error::PublicKeyMismatch)
     ));
   }
 
@@ -980,7 +977,7 @@ mod tests {
         "foo",
         witness
       ),
-      Err(Error::UncompressedPublicKey { .. })
+      Verification::Invalid(Error::UncompressedPublicKey { .. })
     ));
   }
 
@@ -999,7 +996,7 @@ mod tests {
 
   #[test]
   fn roundtrip_p2sh_multisig_full() {
-    assert!(verify::verify_full_encoded(
+    assert_valid(verify::verify_full_encoded(
       P2SH_MULTISIG_2OF2_ADDRESS,
       "foo",
       &sign::sign_full_encoded(
@@ -1007,14 +1004,13 @@ mod tests {
         "foo",
         &[
           P2SH_MULTISIG_2OF2_PRIVATE_KEY_1,
-          P2SH_MULTISIG_2OF2_PRIVATE_KEY_2
+          P2SH_MULTISIG_2OF2_PRIVATE_KEY_2,
         ],
         Some(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT),
-        LockParams::default()
+        LockParams::default(),
       )
-      .unwrap()
-    )
-    .is_ok());
+      .unwrap(),
+    ));
   }
 
   #[test]
@@ -1051,7 +1047,7 @@ mod tests {
     *items[0].last_mut().unwrap() = 0x02;
     assert!(matches!(
       verify::verify_simple(&p2wpkh, "foo", Witness::from_slice(&items)),
-      Err(Error::SigHashTypeUnsupported { .. })
+      Verification::Invalid(Error::SigHashTypeUnsupported { .. })
     ));
 
     let p2tr = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
@@ -1061,7 +1057,7 @@ mod tests {
     *items[0].last_mut().unwrap() = 0x02;
     assert!(matches!(
       verify::verify_simple(&p2tr, "foo", Witness::from_slice(&items)),
-      Err(Error::SigHashTypeUnsupported { .. })
+      Verification::Invalid(Error::SigHashTypeUnsupported { .. })
     ));
 
     let p2wsh = Address::from_str(P2WSH_2OF2_ADDRESS)
@@ -1071,7 +1067,7 @@ mod tests {
     *items[1].last_mut().unwrap() = 0x02;
     assert!(matches!(
       verify::verify_simple(&p2wsh, P2WSH_2OF2_MESSAGE, Witness::from_slice(&items)),
-      Err(Error::SigHashTypeUnsupported { .. })
+      Verification::Invalid(Error::SigHashTypeUnsupported { .. })
     ));
   }
 
@@ -1092,7 +1088,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_full(&address, "foo", to_sign),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -1118,7 +1114,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_full(&address, P2SH_P2WSH_2OF2_MESSAGE, to_sign),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -1192,9 +1188,8 @@ mod tests {
         LEGACY_ADDRESS,
         "",
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      )
-      .unwrap_err(),
-      Error::InvalidWitness
+      ).unwrap(),
+      Verification::Invalid(Error::InvalidWitness)
     ));
   }
 
@@ -1267,7 +1262,11 @@ mod tests {
     )
     .unwrap();
 
-    assert!(verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature).is_ok());
+    assert_valid(verify_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &signature,
+    ));
   }
 
   #[test]
@@ -1308,7 +1307,10 @@ mod tests {
       ScriptBuf::from_hex("5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca")
         .unwrap();
 
-    assert!(verify_pof(&address, POF_P2TR_MESSAGE, psbt).is_err());
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Verification::Invalid(_)
+    ));
   }
 
   #[test]
@@ -1339,7 +1341,7 @@ mod tests {
       witness_script: None,
     }];
 
-    assert!(verify_pof_encoded(
+    assert_valid(verify_pof_encoded(
       POF_P2TR_ADDRESS,
       POF_P2TR_MESSAGE,
       &sign_pof_encoded(
@@ -1348,11 +1350,10 @@ mod tests {
         &[POF_P2TR_CHALLENGE_KEY],
         None,
         &proof_inputs,
-        LockParams::default()
+        LockParams::default(),
       )
       .unwrap(),
-    )
-    .is_ok());
+    ));
   }
 
   #[test]
@@ -1419,14 +1420,16 @@ mod tests {
     assert!(to_sign.inputs[1].witness_utxo.is_none());
     assert!(to_sign.inputs[1].non_witness_utxo.is_some());
 
-    assert!(verify_pof(
-      &Address::from_str(POF_P2TR_ADDRESS)
-        .unwrap()
-        .assume_checked(),
-      POF_P2TR_MESSAGE,
-      to_sign
-    )
-    .is_ok());
+    assert!(matches!(
+      verify_pof(
+        &Address::from_str(POF_P2TR_ADDRESS)
+          .unwrap()
+          .assume_checked(),
+        POF_P2TR_MESSAGE,
+        to_sign
+      ),
+      Verification::Valid { .. }
+    ));
   }
 
   #[test]
@@ -1510,12 +1513,11 @@ mod tests {
   #[test]
   fn test_official_vector_prefix() {
     // official vector with no prefix fallback
-    assert!(verify::verify_simple_encoded(
+    assert_valid(verify::verify_simple_encoded(
       NO_PREFIX_ADDRESS,
       NO_PREFIX_MESSAGE,
-      NO_PREFIX_SIGNATURE
-    )
-    .is_ok());
+      NO_PREFIX_SIGNATURE,
+    ));
 
     // official vector with incorrect prefix type
     assert!(matches!(
@@ -1539,16 +1541,16 @@ mod tests {
     let program = bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[0u8; 32]).unwrap();
     let address = Address::from_witness_program(program, bitcoin::Network::Bitcoin);
     let to_sign = create_to_sign(
-      &create_to_spend(&address, "msg").unwrap(),
+      &create_to_spend(&address, "msg"),
       None,
       LockParams::default(),
     )
     .unwrap()
     .extract_tx_unchecked_fee_rate();
-    assert_eq!(
-      verify_full(&address, "msg", to_sign).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "msg", to_sign),
       Verification::Inconclusive
-    );
+    ));
   }
 
   #[test]
@@ -1558,7 +1560,7 @@ mod tests {
       sequence: Sequence(144),
     };
 
-    assert_eq!(
+    assert!(matches!(
       verify::verify_full_encoded(
         SEGWIT_ADDRESS,
         "Hello World",
@@ -1572,11 +1574,9 @@ mod tests {
         .unwrap()
       )
       .unwrap(),
-      Verification::Valid {
-        time: locks.lock_time,
-        age: locks.sequence
-      }
-    );
+      Verification::Valid { time, age }
+        if time == locks.lock_time && age == locks.sequence
+    ));
   }
 
   #[test]
@@ -1585,10 +1585,10 @@ mod tests {
 
     to_sign.version = Version(3);
 
-    assert_eq!(
-      verify::verify_full(&address, "foo", to_sign).unwrap(),
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
       Verification::Inconclusive
-    );
+    ));
   }
 
   fn pof_p2tr_proof_input() -> ProofInput {
@@ -1629,13 +1629,11 @@ mod tests {
     )
     .unwrap();
 
-    assert_eq!(
+    assert!(matches!(
       verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature).unwrap(),
-      Verification::Valid {
-        time: locks.lock_time,
-        age: locks.sequence
-      }
-    );
+     Verification::Valid { time, age }
+        if time == locks.lock_time && age == locks.sequence
+    ));
   }
 
   #[test]
@@ -1656,10 +1654,10 @@ mod tests {
       ScriptBuf::from_hex("52200000000000000000000000000000000000000000000000000000000000000000")
         .unwrap();
 
-    assert_eq!(
-      verify_pof(&address, POF_P2TR_MESSAGE, psbt).unwrap(),
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
       Verification::Inconclusive
-    );
+    ));
   }
 
   #[test]
@@ -1674,7 +1672,7 @@ mod tests {
 
     let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
 
-    let to_spend = create_to_spend(&address, "msg").unwrap();
+    let to_spend = create_to_spend(&address, "msg");
     let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     let mut witness = Witness::new();
@@ -1683,10 +1681,10 @@ mod tests {
     witness.push(witness_script.as_bytes());
     psbt.inputs[0].final_script_witness = Some(witness);
 
-    assert_eq!(
-      verify_full(&address, "msg", psbt.extract_tx().unwrap()).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "msg", psbt.extract_tx().unwrap()),
       Verification::Inconclusive
-    );
+    ));
   }
 
   #[test]
@@ -1728,7 +1726,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_simple(&address, "foo", Witness::from_slice(&items)),
-      Err(Error::SignatureInvalid { .. })
+      Verification::Invalid(Error::SignatureInvalid { .. })
     ));
   }
 
@@ -1745,7 +1743,10 @@ mod tests {
     )
     .unwrap();
 
-    assert!(verify::verify_full(&address, "foo", to_sign.clone()).is_ok());
+    assert!(matches!(
+      verify_full(&address, "foo", to_sign.clone()),
+      Verification::Valid { .. }
+    ));
 
     let mut instructions = to_sign.input[0].script_sig.instructions();
 
@@ -1767,7 +1768,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_full(&address, "foo", to_sign),
-      Err(Error::InvalidWitness)
+      Verification::Invalid(Error::InvalidWitness)
     ));
   }
 
@@ -1789,7 +1790,10 @@ mod tests {
     )
     .unwrap();
 
-    assert!(verify::verify_full(&address, "foo", to_sign.clone()).is_ok());
+    assert!(matches!(
+      verify_full(&address, "foo", to_sign.clone()),
+      Verification::Valid { .. }
+    ));
 
     let pushes: Vec<Vec<u8>> = to_sign.input[0]
       .script_sig
@@ -1813,7 +1817,7 @@ mod tests {
 
     assert!(matches!(
       verify::verify_full(&address, "foo", to_sign),
-      Err(Error::InvalidWitness)
+      Verification::Invalid(Error::InvalidWitness)
     ));
   }
 
@@ -1869,15 +1873,17 @@ mod tests {
     // the second proof input resolves via the first input's non_witness_utxo
     let mut psbt = sign();
     psbt.inputs[2].non_witness_utxo = None;
-    assert!(verify_pof(&address, POF_P2TR_MESSAGE, psbt).is_ok());
-
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Verification::Valid { .. }
+    ));
     // neither input carries the previous transaction
     let mut psbt = sign();
     psbt.inputs[1].non_witness_utxo = None;
     psbt.inputs[2].non_witness_utxo = None;
     assert!(matches!(
       verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
 
     // the fallback rejects an earlier input's non_witness_utxo for a
@@ -1890,7 +1896,7 @@ mod tests {
     psbt.inputs[2].non_witness_utxo = None;
     assert!(matches!(
       verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -1913,7 +1919,7 @@ mod tests {
 
     assert!(matches!(
       verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-      Err(Error::ToSignInvalid)
+      Verification::Invalid(Error::ToSignInvalid)
     ));
   }
 
@@ -1932,10 +1938,10 @@ mod tests {
 
     to_sign.input[0].witness.push([0u8; 32]);
 
-    assert_eq!(
-      verify::verify_full(&address, "foo", to_sign).unwrap(),
+    assert!(matches!(
+      verify::verify_full(&address, "foo", to_sign),
       Verification::Inconclusive
-    );
+    ));
   }
 
   #[test]
@@ -1950,13 +1956,13 @@ mod tests {
     )
     .unwrap();
 
-    assert_eq!(
-      verify::verify_simple(&address, "foo", signature).unwrap(),
+    assert!(matches!(
+      verify::verify_simple(&address, "foo", signature),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0),
       }
-    );
+    ));
   }
 
   #[test]
@@ -2134,7 +2140,7 @@ mod tests {
   #[test]
   fn psbt_roles_reject_ordinary_psbt() {
     let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
 
     // no PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE
     let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
@@ -2585,7 +2591,7 @@ mod tests {
 
     // a coordinator swapping in an unrelated previous transaction
     psbt.inputs[1].witness_utxo = None;
-    psbt.inputs[1].non_witness_utxo = Some(create_to_spend(&address, "bar").unwrap());
+    psbt.inputs[1].non_witness_utxo = Some(create_to_spend(&address, "bar"));
 
     assert!(matches!(
       sign_bip322_psbt_input(
@@ -2623,7 +2629,7 @@ mod tests {
     let secp = Secp256k1::new();
     let address = Address::p2wsh(witness_script, bitcoin::Network::Bitcoin);
 
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
     let psbt = create_to_sign(&to_spend, None, locks).unwrap();
 
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
@@ -2664,13 +2670,13 @@ mod tests {
     witness.push(witness_script.as_bytes());
     tx.input[0].witness = witness;
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
-    );
+    ));
   }
 
   #[test]
@@ -2702,7 +2708,10 @@ mod tests {
     let result = verify_full(&address, "foo", tx);
 
     assert!(
-      matches!(result, Err(Error::SignatureInvalid { .. })),
+      matches!(
+        result,
+        Verification::Invalid(Error::SignatureInvalid { .. })
+      ),
       "got {result:?}"
     );
   }
@@ -2725,7 +2734,7 @@ mod tests {
     let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
 
     // no signature, so this builds the spend directly rather than via p2wsh_interpreter_spend
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
     let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     let mut witness = Witness::new();
@@ -2733,13 +2742,13 @@ mod tests {
     witness.push(witness_script.as_bytes());
     psbt.inputs[0].final_script_witness = Some(witness);
 
-    assert_eq!(
-      verify_full(&address, "foo", psbt.extract_tx().unwrap()).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", psbt.extract_tx().unwrap()),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
-    );
+    ));
   }
 
   #[test]
@@ -2766,7 +2775,7 @@ mod tests {
 
     assert!(matches!(
       verify_full(&address, "foo", tx),
-      Err(Error::SigHashTypeUnsupported { .. })
+      Verification::Invalid(Error::SigHashTypeUnsupported { .. })
     ));
   }
 
@@ -2811,7 +2820,7 @@ mod tests {
 
     assert!(matches!(
       verify_full(&address, "foo", tx),
-      Err(Error::SignatureInvalid { .. })
+      Verification::Invalid(Error::SignatureInvalid { .. })
     ));
   }
 
@@ -2840,13 +2849,11 @@ mod tests {
     witness.push(witness_script.as_bytes());
     tx.input[0].witness = witness;
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
-      Verification::Valid {
-        time: LockTime::from_height(100).unwrap(),
-        age: Sequence(0)
-      }
-    );
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
+      Verification::Valid { time, age }
+        if time == LockTime::from_height(100).unwrap() && age == Sequence(0)
+    ));
   }
 
   #[test]
@@ -2875,7 +2882,7 @@ mod tests {
 
     assert!(matches!(
       verify_full(&address, "foo", tx),
-      Err(Error::ScriptNotSatisfied)
+      Verification::Invalid(Error::ScriptNotSatisfied)
     ));
   }
 
@@ -2902,13 +2909,13 @@ mod tests {
     witness.push(witness_script.as_bytes());
     tx.input[0].witness = witness;
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(10)
       }
-    );
+    ));
   }
 
   #[test]
@@ -2937,7 +2944,7 @@ mod tests {
 
     assert!(matches!(
       verify_full(&address, "foo", tx),
-      Err(Error::ScriptNotSatisfied)
+      Verification::Invalid(Error::ScriptNotSatisfied)
     ));
   }
 
@@ -2953,7 +2960,7 @@ mod tests {
 
     let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
 
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
     let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
     let mut tx = psbt.unsigned_tx;
 
@@ -2975,13 +2982,13 @@ mod tests {
       .push_slice(push_bytes(redeem_script.as_bytes()))
       .into_script();
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
-    );
+    ));
   }
 
   #[test]
@@ -2997,7 +3004,7 @@ mod tests {
     let p2wsh_program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
     let address = Address::p2sh(&p2wsh_program, bitcoin::Network::Bitcoin).unwrap();
 
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
     let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
     let mut tx = psbt.unsigned_tx;
 
@@ -3019,13 +3026,13 @@ mod tests {
     tx.input[0].witness = witness;
     tx.input[0].script_sig = push_only_script(&p2wsh_program);
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
-    );
+    ));
   }
 
   /// Builds a P2TR script-path spend of `tapscript`, signing with
@@ -3058,7 +3065,7 @@ mod tests {
       .control_block(&(tapscript.clone(), bitcoin::taproot::LeafVersion::TapScript))
       .unwrap();
 
-    let to_spend = create_to_spend(&address, "foo").unwrap();
+    let to_spend = create_to_spend(&address, "foo");
     let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
     let prevout = TxOut {
@@ -3117,13 +3124,13 @@ mod tests {
     witness.push(control_block);
     tx.input[0].witness = witness;
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Valid {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
-    );
+    ));
   }
 
   #[test]
@@ -3147,7 +3154,10 @@ mod tests {
     let result = verify_full(&address, "foo", tx);
 
     assert!(
-      matches!(result, Err(Error::SignatureInvalid { .. })),
+      matches!(
+        result,
+        Verification::Invalid(Error::SignatureInvalid { .. })
+      ),
       "got {result:?}"
     );
   }
@@ -3176,9 +3186,9 @@ mod tests {
     witness.push(control_block);
     tx.input[0].witness = witness;
 
-    assert_eq!(
-      verify_full(&address, "foo", tx).unwrap(),
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Inconclusive
-    );
+    ));
   }
 }

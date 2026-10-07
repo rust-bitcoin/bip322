@@ -21,7 +21,8 @@ pub enum Error {
   TransactionEncode { source: bitcoin::io::Error },
   #[snafu(display("Transaction extract error"))]
   TransactionExtract {
-    source: bitcoin::psbt::ExtractTxError,
+    #[snafu(source(from(bitcoin::psbt::ExtractTxError, Box::new)))]
+    source: Box<bitcoin::psbt::ExtractTxError>,
   },
   #[snafu(display("To sign transaction invalid"))]
   ToSignInvalid,
