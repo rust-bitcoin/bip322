@@ -165,8 +165,8 @@ pub fn sign_full(
     return Err(Error::NoPrivateKeys);
   }
 
-  let to_spend = create_to_spend(address, message);
-  let mut to_sign = create_to_sign(&to_spend, None, locks)?;
+  let to_spend = create_to_spend(address, &message);
+  let mut to_sign = create_to_sign(&to_spend, None, locks);
 
   let prevout = to_spend.output[0].clone();
   sign_input(&mut to_sign, &[prevout], private_keys, witness_script, 0)?;

@@ -150,7 +150,7 @@ mod tests {
       "",
     );
 
-    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default());
 
     assert_eq!(
       to_sign.unsigned_tx.compute_txid().to_string(),
@@ -162,7 +162,7 @@ mod tests {
       "Hello World",
     );
 
-    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default());
 
     assert_eq!(
       to_sign.unsigned_tx.compute_txid().to_string(),
@@ -402,7 +402,7 @@ mod tests {
     let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
     let message = "Hello World with aux randomness";
     let to_spend = create_to_spend(&address, message);
-    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default());
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
     let mut aux_rand = [0u8; 32];
@@ -847,7 +847,6 @@ mod tests {
     let to_spend = create_to_spend(&address, "foo");
 
     let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
-      .unwrap()
       .extract_tx()
       .unwrap();
 
@@ -942,7 +941,7 @@ mod tests {
       .assume_checked();
 
     let to_spend = create_to_spend(&victim, "foo");
-    let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let to_sign = create_to_sign(&to_spend, None, LockParams::default());
 
     let witness = create_message_signature_p2wpkh(
       &to_sign,
@@ -1545,7 +1544,6 @@ mod tests {
       None,
       LockParams::default(),
     )
-    .unwrap()
     .extract_tx_unchecked_fee_rate();
     assert!(matches!(
       verify_full(&address, "msg", to_sign),
@@ -1673,7 +1671,7 @@ mod tests {
     let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
 
     let to_spend = create_to_spend(&address, "msg");
-    let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
 
     let mut witness = Witness::new();
     witness.push::<&[u8]>(&[]);
@@ -2143,7 +2141,7 @@ mod tests {
     let to_spend = create_to_spend(&address, "foo");
 
     // no PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE
-    let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
     assert!(detect_bip322_psbt(&psbt).is_none());
 
     assert!(matches!(
@@ -2630,7 +2628,7 @@ mod tests {
     let address = Address::p2wsh(witness_script, bitcoin::Network::Bitcoin);
 
     let to_spend = create_to_spend(&address, "foo");
-    let psbt = create_to_sign(&to_spend, None, locks).unwrap();
+    let psbt = create_to_sign(&to_spend, None, locks);
 
     let sighash = SighashCache::new(psbt.unsigned_tx.clone())
       .p2wsh_signature_hash(0, witness_script, Amount::ZERO, sighash_type)
@@ -2735,7 +2733,7 @@ mod tests {
 
     // no signature, so this builds the spend directly rather than via p2wsh_interpreter_spend
     let to_spend = create_to_spend(&address, "foo");
-    let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
 
     let mut witness = Witness::new();
     witness.push(preimage);
@@ -2961,7 +2959,7 @@ mod tests {
     let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
 
     let to_spend = create_to_spend(&address, "foo");
-    let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let psbt = create_to_sign(&to_spend, None, LockParams::default());
     let mut tx = psbt.unsigned_tx;
 
     let sighash = SighashCache::new(tx.clone())
@@ -3005,7 +3003,7 @@ mod tests {
     let address = Address::p2sh(&p2wsh_program, bitcoin::Network::Bitcoin).unwrap();
 
     let to_spend = create_to_spend(&address, "foo");
-    let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let psbt = create_to_sign(&to_spend, None, LockParams::default());
     let mut tx = psbt.unsigned_tx;
 
     let sighash = SighashCache::new(tx.clone())
@@ -3066,7 +3064,7 @@ mod tests {
       .unwrap();
 
     let to_spend = create_to_spend(&address, "foo");
-    let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+    let psbt = create_to_sign(&to_spend, None, LockParams::default());
 
     let prevout = TxOut {
       value: Amount::ZERO,

@@ -1,6 +1,7 @@
 use super::*;
 
 /// Outcome of BIP-322 verification, per the spec's three validator states.
+#[must_use]
 #[derive(Debug)]
 pub enum Verification {
   /// "valid at time T and age S": `time` is `to_sign`'s `nLockTime`, `age`
@@ -26,6 +27,15 @@ enum InputVerification {
   Inconclusive,
   /// The proof failed a required check.
   Invalid(Error),
+}
+
+impl Verification {
+  /// Whether the proof verified. Note that `Result::is_ok` on the encoded
+  /// functions only means the signature decoded — the proof may still be
+  /// `Invalid` or `Inconclusive`.
+  pub fn is_valid(&self) -> bool {
+    matches!(self, Verification::Valid { .. })
+  }
 }
 
 /// Verifies a BIP-137 legacy proof from string inputs.
@@ -149,23 +159,13 @@ pub fn verify_simple(
   message: impl AsRef<[u8]>,
   signature: Witness,
 ) -> Verification {
-  let psbt = match create_to_sign(
+  let to_sign = create_to_sign(
     &create_to_spend(address, &message),
     Some(signature),
     LockParams::default(),
-  ) {
-    Ok(psbt) => psbt,
-    Err(reason) => return Verification::Invalid(reason),
-  };
-
-  let to_sign = match psbt.extract_tx() {
-    Ok(to_sign) => to_sign,
-    Err(source) => {
-      return Verification::Invalid(Error::TransactionExtract {
-        source: Box::new(source),
-      })
-    }
-  };
+  )
+  .extract_tx()
+  .expect("extracting a freshly built transaction cannot fail");
 
   verify_full(address, &message, to_sign)
 }
@@ -178,9 +178,9 @@ pub fn verify_full(
 ) -> Verification {
   let to_spend = create_to_spend(address, &message);
 
-  if let Some(reason) = check_to_sign(&to_spend, &to_sign) {
-    return Verification::Invalid(reason);
-  };
+  if !check_to_sign(&to_spend, &to_sign) {
+    return Verification::Invalid(Error::ToSignInvalid);
+  }
 
   // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
   if !matches!(to_sign.version, Version(0) | Version(2)) {
@@ -202,7 +202,7 @@ pub fn verify_full(
   }
 }
 
-fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Option<Error> {
+fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> bool {
   let to_spend_outpoint = OutPoint {
     txid: to_spend.compute_txid(),
     vout: 0,
@@ -212,16 +212,11 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Option<Error>
     .push_opcode(opcodes::all::OP_RETURN)
     .into_script();
 
-  if to_sign.input.len() != 1
-    || to_sign.input[0].previous_output != to_spend_outpoint
-    || to_sign.output.len() != 1
-    || to_sign.output[0].value != Amount::ZERO
-    || to_sign.output[0].script_pubkey != op_return
-  {
-    return Some(Error::ToSignInvalid);
-  }
-
-  None
+  to_sign.input.len() == 1
+    && to_sign.input[0].previous_output == to_spend_outpoint
+    && to_sign.output.len() == 1
+    && to_sign.output[0].value == Amount::ZERO
+    && to_sign.output[0].script_pubkey == op_return
 }
 
 /// Verifies a BIP-322 full proof of funds.

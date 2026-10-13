@@ -92,11 +92,7 @@ pub fn create_to_spend_from_script(
 }
 
 /// Create the `to_sign` transaction.
-pub fn create_to_sign(
-  to_spend: &Transaction,
-  witness: Option<Witness>,
-  locks: LockParams,
-) -> Result<Psbt> {
+pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>, locks: LockParams) -> Psbt {
   let inputs = vec![TxIn {
     previous_output: OutPoint {
       txid: to_spend.compute_txid(),
@@ -119,7 +115,8 @@ pub fn create_to_sign(
     }],
   };
 
-  let mut psbt = Psbt::from_unsigned_tx(to_sign).context(error::PsbtExtract)?;
+  let mut psbt = Psbt::from_unsigned_tx(to_sign)
+    .expect("unsigned transaction has empty script_sigs and witnesses");
 
   psbt.inputs[0].witness_utxo = Some(TxOut {
     value: Amount::ZERO,
@@ -128,7 +125,7 @@ pub fn create_to_sign(
 
   psbt.inputs[0].final_script_witness = witness;
 
-  Ok(psbt)
+  psbt
 }
 
 pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
