@@ -270,9 +270,14 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
     key: vec![],
   };
-  match psbt.unknown.get(&msg_key) {
-    Some(val) if val == message.as_ref() => {}
-    _ => return Verification::Invalid(Error::ToSignInvalid),
+  // The message is already a validator input and is bound by to_spend's
+  // scriptSig; the PSBT field exists for the signing flow. Official BIP-322
+  // proof-of-funds vectors omit it, so it is optional here — but when
+  // present it must match the message.
+  if let Some(val) = psbt.unknown.get(&msg_key) {
+    if val != message.as_ref() {
+      return Verification::Invalid(Error::ToSignInvalid);
+    }
   }
 
   let to_spend = create_to_spend(address, &message);
