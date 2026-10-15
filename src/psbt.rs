@@ -41,7 +41,7 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
     return None;
   };
 
-  let to_spend = create_to_spend_from_script(&message_challenge, &message).ok()?;
+  let to_spend = create_to_spend_from_script(&message_challenge, &message);
   if first_txin.previous_output.txid != to_spend.compute_txid() {
     return None;
   }
@@ -71,7 +71,6 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
 /// `witness_script` is the multisig witness or redeem script for the
 /// challenge. `inputs` are additional UTXOs to prove control of, making this
 /// a proof of funds.
-#[allow(clippy::result_large_err)]
 pub fn create_bip322_psbt(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -79,7 +78,7 @@ pub fn create_bip322_psbt(
   inputs: &[ProofInput],
   locks: LockParams,
 ) -> Result<Psbt> {
-  let to_spend = create_to_spend(address, &message)?;
+  let to_spend = create_to_spend(address, &message);
 
   let mut tx_in = vec![TxIn {
     previous_output: OutPoint {
@@ -180,7 +179,6 @@ pub fn create_bip322_psbt(
 ///
 /// Returns the detected message and challenge, which integrators must
 /// display to the user as message signing, not transaction signing.
-#[allow(clippy::result_large_err)]
 pub fn sign_bip322_psbt_input(
   psbt: &mut Psbt,
   private_key: &PrivateKey,
@@ -351,7 +349,6 @@ pub fn sign_bip322_psbt_input(
 /// Binds a multisig script to the challenge it claims to satisfy: a segwit
 /// spend (`is_witness`) requires the script's P2WSH program, or that program
 /// wrapped in P2SH; a legacy spend requires the bare P2SH of the script.
-#[allow(clippy::result_large_err)]
 fn require_multisig_challenge(
   script: &ScriptBuf,
   challenge: &ScriptBuf,
@@ -373,7 +370,6 @@ fn require_multisig_challenge(
 }
 
 /// Takes the partial signature, requiring exactly one whose public key satisfies the challenge.
-#[allow(clippy::result_large_err)]
 fn single_partial_sig(
   input: &bitcoin::psbt::Input,
   challenge: &ScriptBuf,
@@ -403,7 +399,6 @@ fn single_partial_sig(
 /// Assembles the collected partial signatures and finalizes every input per
 /// BIP174, returning the variant-prefixed encoded signature — `ful` for a
 /// single-input request, `pof` for a proof of funds.
-#[allow(clippy::result_large_err)]
 pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   let Some(detected) = detect_bip322_psbt(&psbt) else {
     return Err(Error::OrdinaryPsbt);
@@ -447,7 +442,6 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
 }
 
 /// Finalizes one input against the script pubkey it spends.
-#[allow(clippy::result_large_err)]
 fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Result<()> {
   // Taproot key path: the tap_key_sig becomes a one-element witness.
   if let Some(signature) = psbt.inputs[index].tap_key_sig {

@@ -1,8 +1,10 @@
 use super::*;
 
 /// Outcome of BIP-322 verification, per the spec's three validator states.
-/// The third state, invalid, is reported as `Err` by the verify functions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The verify functions always return a verdict: [`Verification::Invalid`]
+/// covers both malformed encodings and proofs that failed a required check.
+#[must_use]
+#[derive(Debug)]
 pub enum Verification {
   /// "valid at time T and age S": `time` is `to_sign`'s `nLockTime`, `age`
   /// is the `nSequence` of its first input.
@@ -14,11 +16,15 @@ pub enum Verification {
   },
   /// The validator could not interpret the script; neither accepted nor rejected.
   Inconclusive,
+  /// The proof failed a required check.
+  Invalid(Error),
 }
 
-/// Per-input outcome. Inputs carry no lock fields, so this is a plain tri-state:
-/// `Valid`, `Inconclusive`, or `Err` for invalid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Per-input outcome: `Valid`, or `Inconclusive` when this validator cannot
+/// interpret the input's script. Failed checks travel in the `Err` channel of
+/// the internal helpers and become [`Verification::Invalid`] at the public
+/// boundary.
+#[derive(Debug)]
 enum InputVerification {
   /// The input's script was interpreted and its signature(s) check out.
   Valid,
@@ -26,8 +32,25 @@ enum InputVerification {
   Inconclusive,
 }
 
+impl Verification {
+  /// Whether the proof verified.
+  pub fn is_valid(&self) -> bool {
+    matches!(self, Verification::Valid { .. })
+  }
+
+  /// Whether the validator could not interpret the script; the proof is
+  /// neither accepted nor rejected.
+  pub fn is_inconclusive(&self) -> bool {
+    matches!(self, Verification::Inconclusive)
+  }
+
+  /// Whether the proof was malformed or failed a required check.
+  pub fn is_invalid(&self) -> bool {
+    matches!(self, Verification::Invalid(_))
+  }
+}
+
 /// Verifies a BIP-137 legacy proof from string inputs.
-#[allow(clippy::result_large_err)]
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
@@ -55,7 +78,6 @@ pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> R
 }
 
 /// Verifies a BIP-137 legacy proof from proper Rust types.
-#[allow(clippy::result_large_err)]
 pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignature) -> Result<()> {
   if !matches!(address.to_address_data(), AddressData::P2pkh { .. }) {
     return Err(Error::UnsupportedAddress {
@@ -75,12 +97,16 @@ pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignatu
 }
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
-pub fn verify_simple_encoded(
-  address: &str,
-  message: &str,
-  signature: &str,
-) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Verification {
+  decode_simple(address, signature)
+    .map(|(address, witness)| verify_simple(&address, message, witness))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -96,12 +122,20 @@ pub fn verify_simple_encoded(
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
 
-  verify_simple(&address, message, witness)
+  Ok((address, witness))
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
-#[allow(clippy::result_large_err)]
-pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
+  decode_full(address, to_sign)
+    .map(|(address, to_sign)| verify_full(&address, message, to_sign))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_full(address: &str, to_sign: &str) -> Result<(Address, Transaction)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -120,14 +154,22 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     },
   )?;
 
-  verify_full(&address, message, to_sign)
+  Ok((address, to_sign))
 }
 
 /// Verifies a BIP-322 full proof of funds.
 ///
 /// See [`verify_pof`] for how each proven input's previous output is resolved.
-#[allow(clippy::result_large_err)]
-pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
+  decode_pof(address, to_sign)
+    .map(|(address, psbt)| verify_pof(&address, message, psbt))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -143,43 +185,41 @@ pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result
 
   let psbt = Psbt::deserialize(&bytes).map_err(|_| Error::ToSignInvalid)?;
 
-  verify_pof(&address, message, psbt)
+  Ok((address, psbt))
 }
 
 /// Verifies the BIP-322 simple format.
-#[allow(clippy::result_large_err)]
 pub fn verify_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
   signature: Witness,
-) -> Result<Verification> {
-  verify_full(
-    address,
-    &message,
-    create_to_sign(
-      &create_to_spend(address, &message)?,
-      Some(signature),
-      LockParams::default(),
-    )?
-    .extract_tx()
-    .context(error::TransactionExtract)?,
+) -> Verification {
+  let to_sign = create_to_sign(
+    &create_to_spend(address, &message),
+    Some(signature),
+    LockParams::default(),
   )
+  .extract_tx()
+  .expect("extracting a freshly built transaction cannot fail");
+
+  verify_full(address, &message, to_sign)
 }
 
 /// Verifies the BIP-322 full format.
-#[allow(clippy::result_large_err)]
 pub fn verify_full(
   address: &Address,
   message: impl AsRef<[u8]>,
   to_sign: Transaction,
-) -> Result<Verification> {
-  let to_spend = create_to_spend(address, &message)?;
+) -> Verification {
+  let to_spend = create_to_spend(address, &message);
 
-  check_to_sign(&to_spend, &to_sign)?;
+  if !check_to_sign(&to_spend, &to_sign) {
+    return Verification::Invalid(Error::ToSignInvalid);
+  }
 
   // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
   if !matches!(to_sign.version, Version(0) | Version(2)) {
-    return Ok(Verification::Inconclusive);
+    return Verification::Inconclusive;
   }
 
   let challenge_prevout = TxOut {
@@ -187,17 +227,17 @@ pub fn verify_full(
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   };
 
-  match verify_input(&to_sign, &[challenge_prevout], 0)? {
-    InputVerification::Inconclusive => Ok(Verification::Inconclusive),
-    InputVerification::Valid => Ok(Verification::Valid {
+  match verify_input(&to_sign, &[challenge_prevout], 0) {
+    Ok(InputVerification::Valid) => Verification::Valid {
       time: to_sign.lock_time,
       age: to_sign.input[0].sequence,
-    }),
+    },
+    Ok(InputVerification::Inconclusive) => Verification::Inconclusive,
+    Err(error) => Verification::Invalid(error),
   }
 }
 
-#[allow(clippy::result_large_err)]
-fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
+fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> bool {
   let to_spend_outpoint = OutPoint {
     txid: to_spend.compute_txid(),
     vout: 0,
@@ -207,16 +247,11 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
     .push_opcode(opcodes::all::OP_RETURN)
     .into_script();
 
-  if to_sign.input.len() != 1
-    || to_sign.input[0].previous_output != to_spend_outpoint
-    || to_sign.output.len() != 1
-    || to_sign.output[0].value != Amount::ZERO
-    || to_sign.output[0].script_pubkey != op_return
-  {
-    return Err(Error::ToSignInvalid);
-  }
-
-  Ok(())
+  to_sign.input.len() == 1
+    && to_sign.input[0].previous_output == to_spend_outpoint
+    && to_sign.output.len() == 1
+    && to_sign.output[0].value == Amount::ZERO
+    && to_sign.output[0].script_pubkey == op_return
 }
 
 /// Verifies a BIP-322 full proof of funds.
@@ -230,22 +265,17 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> Result<()> {
 /// checks that it is internally consistent and signed for. Callers must
 /// independently confirm on-chain that each outpoint exists with the claimed
 /// script and value.
-#[allow(clippy::result_large_err)]
-pub fn verify_pof(
-  address: &Address,
-  message: impl AsRef<[u8]>,
-  psbt: Psbt,
-) -> Result<Verification> {
+pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> Verification {
   let msg_key = bitcoin::psbt::raw::Key {
     type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
     key: vec![],
   };
   match psbt.unknown.get(&msg_key) {
     Some(val) if val == message.as_ref() => {}
-    _ => return Err(Error::ToSignInvalid),
+    _ => return Verification::Invalid(Error::ToSignInvalid),
   }
 
-  let to_spend = create_to_spend(address, &message)?;
+  let to_spend = create_to_spend(address, &message);
   let to_spend_outpoint = OutPoint {
     txid: to_spend.compute_txid(),
     vout: 0,
@@ -254,23 +284,23 @@ pub fn verify_pof(
   let unsigned_tx = &psbt.unsigned_tx;
 
   if !matches!(unsigned_tx.version, Version(0) | Version(2)) {
-    return Ok(Verification::Inconclusive);
+    return Verification::Inconclusive;
   }
   if unsigned_tx.input.len() < 2 {
-    return Err(Error::ToSignInvalid);
+    return Verification::Invalid(Error::ToSignInvalid);
   }
   if unsigned_tx.input[0].previous_output != to_spend_outpoint {
-    return Err(Error::ToSignInvalid);
+    return Verification::Invalid(Error::ToSignInvalid);
   }
   if psbt.inputs.len() != unsigned_tx.input.len() {
-    return Err(Error::ToSignInvalid);
+    return Verification::Invalid(Error::ToSignInvalid);
   }
 
   if unsigned_tx.output.len() != 1
     || !unsigned_tx.output[0].script_pubkey.is_op_return()
     || unsigned_tx.output[0].value != Amount::ZERO
   {
-    return Err(Error::ToSignInvalid);
+    return Verification::Invalid(Error::ToSignInvalid);
   }
 
   // Consensus: no two inputs may spend the same outpoint.
@@ -279,7 +309,7 @@ pub fn verify_pof(
       .iter()
       .any(|earlier| earlier.previous_output == input.previous_output)
     {
-      return Err(Error::ToSignInvalid);
+      return Verification::Invalid(Error::ToSignInvalid);
     }
   }
 
@@ -296,26 +326,25 @@ pub fn verify_pof(
     let prevout = if let Some(txout) = &psbt_input.witness_utxo {
       txout.clone()
     } else {
-      let tx = psbt_input
-        .non_witness_utxo
-        .as_ref()
-        .or_else(|| {
-          (1..index).find_map(|i| {
-            (unsigned_tx.input[i].previous_output.txid == outpoint.txid)
-              .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
-              .flatten()
-          })
+      let Some(tx) = psbt_input.non_witness_utxo.as_ref().or_else(|| {
+        (1..index).find_map(|i| {
+          (unsigned_tx.input[i].previous_output.txid == outpoint.txid)
+            .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
+            .flatten()
         })
-        .ok_or(Error::ToSignInvalid)?;
+      }) else {
+        return Verification::Invalid(Error::ToSignInvalid);
+      };
 
       if tx.compute_txid() != outpoint.txid {
-        return Err(Error::ToSignInvalid);
+        return Verification::Invalid(Error::ToSignInvalid);
       }
 
-      tx.output
-        .get(outpoint.vout as usize)
-        .ok_or(Error::ToSignInvalid)?
-        .clone()
+      let Some(txout) = tx.output.get(outpoint.vout as usize) else {
+        return Verification::Invalid(Error::ToSignInvalid);
+      };
+
+      txout.clone()
     };
 
     all_prevouts.push(prevout);
@@ -324,20 +353,20 @@ pub fn verify_pof(
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
 
   for input_index in 0..to_sign.input.len() {
-    match verify_input(&to_sign, &all_prevouts, input_index)? {
-      InputVerification::Valid => {}
-      InputVerification::Inconclusive => return Ok(Verification::Inconclusive),
+    match verify_input(&to_sign, &all_prevouts, input_index) {
+      Ok(InputVerification::Valid) => {}
+      Ok(InputVerification::Inconclusive) => return Verification::Inconclusive,
+      Err(error) => return Verification::Invalid(error),
     }
   }
 
-  Ok(Verification::Valid {
+  Verification::Valid {
     time: to_sign.lock_time,
     age: to_sign.input[0].sequence,
-  })
+  }
 }
 
 /// Verifies input.
-#[allow(clippy::result_large_err)]
 fn verify_input(
   to_sign: &Transaction,
   prevouts: &[TxOut],
@@ -354,7 +383,6 @@ fn verify_input(
 ///
 /// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
 /// script this validator does not understand is neither accepted nor rejected.
-#[allow(clippy::result_large_err)]
 fn verify_with_interpreter(
   to_sign: &Transaction,
   prevouts: &[TxOut],
@@ -420,7 +448,6 @@ fn verify_with_interpreter(
 
 /// Verifies the standard script types by template. Returns `Inconclusive`
 /// for anything else, which [`verify_input`] hands to the interpreter.
-#[allow(clippy::result_large_err)]
 fn verify_standard_script(
   to_sign: &Transaction,
   prevouts: &[TxOut],
@@ -474,7 +501,6 @@ fn verify_standard_script(
   }
 }
 
-#[allow(clippy::result_large_err)]
 fn verify_full_p2wpkh(
   to_sign: &Transaction,
   prevout: &TxOut,
@@ -496,11 +522,11 @@ fn verify_full_p2wpkh(
 
   let pub_key = PublicKey::from_slice(witness_pub_key).map_err(|_| Error::InvalidPublicKey)?;
 
-  let p2wpkh_script = ScriptBuf::new_p2wpkh(
-    &pub_key
-      .wpubkey_hash()
-      .context(error::UncompressedPublicKey)?,
-  );
+  let wpubkey_hash = pub_key
+    .wpubkey_hash()
+    .context(error::UncompressedPublicKey)?;
+
+  let p2wpkh_script = ScriptBuf::new_p2wpkh(&wpubkey_hash);
 
   let expected_script_pubkey = if is_p2sh {
     ScriptBuf::new_p2sh(&p2wpkh_script.script_hash())
@@ -563,7 +589,6 @@ fn verify_full_p2wpkh(
   Ok(InputVerification::Valid)
 }
 
-#[allow(clippy::result_large_err)]
 fn verify_full_p2tr(
   to_sign: &Transaction,
   prevouts: &[TxOut],
@@ -634,7 +659,6 @@ fn verify_full_p2tr(
 }
 
 /// Verify a BIP-322 proof for a P2WSH
-#[allow(clippy::result_large_err)]
 fn verify_full_p2wsh(
   to_sign: &Transaction,
   prevout: &TxOut,
@@ -734,7 +758,6 @@ fn verify_full_p2wsh(
 }
 
 /// Verify a BIP-322 proof for a P2SH multisig address
-#[allow(clippy::result_large_err)]
 fn verify_full_p2sh_multisig(
   to_sign: &Transaction,
   prevout: &TxOut,
@@ -743,8 +766,8 @@ fn verify_full_p2sh_multisig(
   let mut pushes: Vec<Vec<u8>> = Vec::new();
 
   for instruction in to_sign.input[input_index].script_sig.instructions_minimal() {
-    match instruction.map_err(|_| Error::InvalidWitness)? {
-      Instruction::PushBytes(b) => pushes.push(b.as_bytes().to_vec()),
+    match instruction {
+      Ok(Instruction::PushBytes(b)) => pushes.push(b.as_bytes().to_vec()),
       _ => return Err(Error::InvalidWitness),
     }
   }
@@ -806,6 +829,7 @@ fn verify_full_p2sh_multisig(
       .ok_or(Error::SignatureInvalid {
         source: bitcoin::secp256k1::Error::IncorrectSignature,
       })?;
+
     key_index += offset + 1;
   }
 
@@ -813,7 +837,6 @@ fn verify_full_p2sh_multisig(
 }
 
 /// Verify a BIP-322 proof for a P2PKH
-#[allow(clippy::result_large_err)]
 fn verify_full_p2pkh(
   to_sign: &Transaction,
   prevout: &TxOut,

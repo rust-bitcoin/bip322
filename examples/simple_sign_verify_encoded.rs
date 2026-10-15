@@ -7,5 +7,5 @@ fn main() {
 
   let base64_signature = sign_simple_encoded(address, message, &[wif_private_key], None).unwrap();
 
-  assert!(verify_simple_encoded(address, message, &base64_signature).is_ok());
+  assert!(verify_simple_encoded(address, message, &base64_signature).is_valid());
 }
