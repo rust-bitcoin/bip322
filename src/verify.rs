@@ -1,6 +1,8 @@
 use super::*;
 
 /// Outcome of BIP-322 verification, per the spec's three validator states.
+/// The verify functions always return a verdict: [`Verification::Invalid`]
+/// covers both malformed encodings and proofs that failed a required check.
 #[must_use]
 #[derive(Debug)]
 pub enum Verification {
@@ -18,23 +20,33 @@ pub enum Verification {
   Invalid(Error),
 }
 
-/// Per-input outcome. Inputs carry no lock fields, so this is a plain tri-state.
+/// Per-input outcome: `Valid`, or `Inconclusive` when this validator cannot
+/// interpret the input's script. Failed checks travel in the `Err` channel of
+/// the internal helpers and become [`Verification::Invalid`] at the public
+/// boundary.
 #[derive(Debug)]
 enum InputVerification {
   /// The input's script was interpreted and its signature(s) check out.
   Valid,
   /// The input's script cannot be interpreted by this validator
   Inconclusive,
-  /// The proof failed a required check.
-  Invalid(Error),
 }
 
 impl Verification {
-  /// Whether the proof verified. Note that `Result::is_ok` on the encoded
-  /// functions only means the signature decoded — the proof may still be
-  /// `Invalid` or `Inconclusive`.
+  /// Whether the proof verified.
   pub fn is_valid(&self) -> bool {
     matches!(self, Verification::Valid { .. })
+  }
+
+  /// Whether the validator could not interpret the script; the proof is
+  /// neither accepted nor rejected.
+  pub fn is_inconclusive(&self) -> bool {
+    matches!(self, Verification::Inconclusive)
+  }
+
+  /// Whether the proof was malformed or failed a required check.
+  pub fn is_invalid(&self) -> bool {
+    matches!(self, Verification::Invalid(_))
   }
 }
 
@@ -85,11 +97,16 @@ pub fn verify_legacy(address: &Address, message: &str, signature: MessageSignatu
 }
 
 /// Verifies the BIP-322 simple from spec-compliant string encodings.
-pub fn verify_simple_encoded(
-  address: &str,
-  message: &str,
-  signature: &str,
-) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Verification {
+  decode_simple(address, signature)
+    .map(|(address, witness)| verify_simple(&address, message, witness))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -105,11 +122,20 @@ pub fn verify_simple_encoded(
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
 
-  Ok(verify_simple(&address, message, witness))
+  Ok((address, witness))
 }
 
 /// Verifies the BIP-322 full from spec-compliant string encodings.
-pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
+  decode_full(address, to_sign)
+    .map(|(address, to_sign)| verify_full(&address, message, to_sign))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_full(address: &str, to_sign: &str) -> Result<(Address, Transaction)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -128,13 +154,22 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Resul
     },
   )?;
 
-  Ok(verify_full(&address, message, to_sign))
+  Ok((address, to_sign))
 }
 
 /// Verifies a BIP-322 full proof of funds.
 ///
 /// See [`verify_pof`] for how each proven input's previous output is resolved.
-pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result<Verification> {
+///
+/// A malformed encoding is reported as [`Verification::Invalid`], like any
+/// other failed check — the return value is always the verdict.
+pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
+  decode_pof(address, to_sign)
+    .map(|(address, psbt)| verify_pof(&address, message, psbt))
+    .unwrap_or_else(Verification::Invalid)
+}
+
+fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
   let address = Address::from_str(address)
     .context(error::AddressParse { address })?
     .assume_checked();
@@ -150,7 +185,7 @@ pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Result
 
   let psbt = Psbt::deserialize(&bytes).map_err(|_| Error::ToSignInvalid)?;
 
-  Ok(verify_pof(&address, message, psbt))
+  Ok((address, psbt))
 }
 
 /// Verifies the BIP-322 simple format.
@@ -193,12 +228,12 @@ pub fn verify_full(
   };
 
   match verify_input(&to_sign, &[challenge_prevout], 0) {
-    InputVerification::Inconclusive => Verification::Inconclusive,
-    InputVerification::Valid => Verification::Valid {
+    Ok(InputVerification::Valid) => Verification::Valid {
       time: to_sign.lock_time,
       age: to_sign.input[0].sequence,
     },
-    InputVerification::Invalid(error) => Verification::Invalid(error),
+    Ok(InputVerification::Inconclusive) => Verification::Inconclusive,
+    Err(error) => Verification::Invalid(error),
   }
 }
 
@@ -319,9 +354,9 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
 
   for input_index in 0..to_sign.input.len() {
     match verify_input(&to_sign, &all_prevouts, input_index) {
-      InputVerification::Valid => {}
-      InputVerification::Inconclusive => return Verification::Inconclusive,
-      InputVerification::Invalid(error) => return Verification::Invalid(error),
+      Ok(InputVerification::Valid) => {}
+      Ok(InputVerification::Inconclusive) => return Verification::Inconclusive,
+      Err(error) => return Verification::Invalid(error),
     }
   }
 
@@ -336,10 +371,10 @@ fn verify_input(
   to_sign: &Transaction,
   prevouts: &[TxOut],
   input_index: usize,
-) -> InputVerification {
-  match verify_standard_script(to_sign, prevouts, input_index) {
+) -> Result<InputVerification> {
+  match verify_standard_script(to_sign, prevouts, input_index)? {
     InputVerification::Inconclusive => verify_with_interpreter(to_sign, prevouts, input_index),
-    valid => valid,
+    valid => Ok(valid),
   }
 }
 
@@ -352,7 +387,7 @@ fn verify_with_interpreter(
   to_sign: &Transaction,
   prevouts: &[TxOut],
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
 
   let prevout = &prevouts[input_index];
@@ -366,7 +401,7 @@ fn verify_with_interpreter(
     to_sign.lock_time,
   ) {
     Ok(interpreter) => interpreter,
-    Err(_) => return InputVerification::Inconclusive,
+    Err(_) => return Ok(InputVerification::Inconclusive),
   };
 
   let secp = Secp256k1::verification_only();
@@ -378,19 +413,17 @@ fn verify_with_interpreter(
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
         KeySigPair::Ecdsa(_, signature) => {
           if signature.sighash_type != EcdsaSighashType::All {
-            return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+            return Err(Error::SigHashTypeUnsupported {
               sighash_type: signature.sighash_type.to_string(),
             });
           }
-          if let Err(reason) = require_low_s(&signature.signature) {
-            return InputVerification::Invalid(reason);
-          }
+          require_low_s(&signature.signature)?;
         }
         KeySigPair::Schnorr(_, signature) => {
           if signature.sighash_type != TapSighashType::All
             && signature.sighash_type != TapSighashType::Default
           {
-            return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+            return Err(Error::SigHashTypeUnsupported {
               sighash_type: signature.sighash_type.to_string(),
             });
           }
@@ -402,15 +435,15 @@ fn verify_with_interpreter(
       | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
       | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
       | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
-        return InputVerification::Invalid(Error::SignatureInvalid {
+        return Err(Error::SignatureInvalid {
           source: bitcoin::secp256k1::Error::IncorrectSignature,
         })
       }
-      Err(_) => return InputVerification::Invalid(Error::ScriptNotSatisfied),
+      Err(_) => return Err(Error::ScriptNotSatisfied),
     }
   }
 
-  InputVerification::Valid
+  Ok(InputVerification::Valid)
 }
 
 /// Verifies the standard script types by template. Returns `Inconclusive`
@@ -419,7 +452,7 @@ fn verify_standard_script(
   to_sign: &Transaction,
   prevouts: &[TxOut],
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   let prevout = &prevouts[input_index];
   let spk = &prevout.script_pubkey;
 
@@ -458,13 +491,13 @@ fn verify_standard_script(
         0 => verify_full_p2sh_multisig(to_sign, prevout, input_index),
         2 => verify_full_p2wpkh(to_sign, prevout, input_index, true),
         n if n > 2 => verify_full_p2wsh(to_sign, prevout, input_index),
-        _ => InputVerification::Inconclusive,
+        _ => Ok(InputVerification::Inconclusive),
       },
     }
   } else if spk.is_p2pkh() {
     verify_full_p2pkh(to_sign, prevout, input_index)
   } else {
-    InputVerification::Inconclusive
+    Ok(InputVerification::Inconclusive)
   }
 }
 
@@ -473,29 +506,25 @@ fn verify_full_p2wpkh(
   prevout: &TxOut,
   input_index: usize,
   is_p2sh: bool,
-) -> InputVerification {
+) -> Result<InputVerification> {
   let witness = to_sign.input[input_index].witness.clone();
 
   if witness.is_empty() {
-    return InputVerification::Invalid(Error::WitnessEmpty);
+    return Err(Error::WitnessEmpty);
   }
 
   if witness.len() != 2 {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   let encoded_signature = witness.to_vec()[0].clone();
   let witness_pub_key = &witness.to_vec()[1];
 
-  let pub_key: PublicKey = match PublicKey::from_slice(witness_pub_key) {
-    Ok(key) => key,
-    Err(_) => return InputVerification::Invalid(Error::InvalidPublicKey),
-  };
+  let pub_key = PublicKey::from_slice(witness_pub_key).map_err(|_| Error::InvalidPublicKey)?;
 
-  let wpubkey_hash = match pub_key.wpubkey_hash() {
-    Ok(hash) => hash,
-    Err(source) => return InputVerification::Invalid(Error::UncompressedPublicKey { source }),
-  };
+  let wpubkey_hash = pub_key
+    .wpubkey_hash()
+    .context(error::UncompressedPublicKey)?;
 
   let p2wpkh_script = ScriptBuf::new_p2wpkh(&wpubkey_hash);
 
@@ -506,20 +535,20 @@ fn verify_full_p2wpkh(
   };
 
   if prevout.script_pubkey != expected_script_pubkey {
-    return InputVerification::Invalid(Error::PublicKeyMismatch);
+    return Err(Error::PublicKeyMismatch);
   }
 
   let script_sig = &to_sign.input[input_index].script_sig;
   if is_p2sh {
     if !script_sig.is_empty() && *script_sig != push_only_script(&p2wpkh_script) {
-      return InputVerification::Invalid(Error::ToSignInvalid);
+      return Err(Error::ToSignInvalid);
     }
   } else if !script_sig.is_empty() {
-    return InputVerification::Invalid(Error::ToSignInvalid);
+    return Err(Error::ToSignInvalid);
   }
 
   if encoded_signature.is_empty() {
-    return InputVerification::Invalid(Error::SignatureLength {
+    return Err(Error::SignatureLength {
       length: 0,
       encoded_signature,
     });
@@ -527,25 +556,19 @@ fn verify_full_p2wpkh(
 
   let signature_length = encoded_signature.len();
 
-  let signature = match bitcoin::secp256k1::ecdsa::Signature::from_der(
+  let signature = bitcoin::secp256k1::ecdsa::Signature::from_der(
     &encoded_signature.as_slice()[..signature_length - 1],
-  ) {
-    Ok(result) => result,
-    Err(source) => return InputVerification::Invalid(Error::SignatureInvalid { source }),
-  };
+  )
+  .context(error::SignatureInvalid)?;
 
   let sighash_type =
-    match EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32) {
-      Ok(result) => result,
-      Err(source) => return InputVerification::Invalid(Error::SigHashTypeNonStandard { source }),
-    };
+    EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
-  if let Err(reason) = require_low_s(&signature) {
-    return InputVerification::Invalid(reason);
-  };
+  require_low_s(&signature)?;
 
   if !(sighash_type == EcdsaSighashType::All) {
-    return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+    return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
@@ -559,64 +582,54 @@ fn verify_full_p2wpkh(
   let message =
     Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
-  if let Err(source) =
-    Secp256k1::verification_only().verify_ecdsa(&message, &signature, &pub_key.inner)
-  {
-    return InputVerification::Invalid(Error::SignatureInvalid { source });
-  }
+  Secp256k1::verification_only()
+    .verify_ecdsa(&message, &signature, &pub_key.inner)
+    .context(error::SignatureInvalid)?;
 
-  InputVerification::Valid
+  Ok(InputVerification::Valid)
 }
 
 fn verify_full_p2tr(
   to_sign: &Transaction,
   prevouts: &[TxOut],
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   let prevout = &prevouts[input_index];
 
-  let Ok(pub_key) = XOnlyPublicKey::from_slice(&prevout.script_pubkey.as_bytes()[2..]) else {
-    return InputVerification::Invalid(Error::InvalidPublicKey);
-  };
+  let pub_key = XOnlyPublicKey::from_slice(&prevout.script_pubkey.as_bytes()[2..])
+    .map_err(|_| Error::InvalidPublicKey)?;
 
   if !to_sign.input[input_index].script_sig.is_empty() {
-    return InputVerification::Invalid(Error::ToSignInvalid);
+    return Err(Error::ToSignInvalid);
   }
 
   let witness = to_sign.input[input_index].witness.clone();
 
   if witness.is_empty() {
-    return InputVerification::Invalid(Error::WitnessEmpty);
+    return Err(Error::WitnessEmpty);
   }
 
   // A key-path spend is exactly one item. More items mean a script-path
   // spend or an annex, which only the interpreter can evaluate.
   if witness.len() != 1 {
-    return InputVerification::Inconclusive;
+    return Ok(InputVerification::Inconclusive);
   }
 
   let encoded_signature = witness.to_vec()[0].clone();
 
   let (signature, sighash_type) = match encoded_signature.len() {
-    65 => {
-      let signature = match Signature::from_slice(&encoded_signature.as_slice()[..64]) {
-        Ok(signature) => signature,
-        Err(source) => return InputVerification::Invalid(Error::SignatureInvalid { source }),
-      };
-
-      let sighash_type = match TapSighashType::from_consensus_u8(encoded_signature[64]) {
-        Ok(sighash_type) => sighash_type,
-        Err(source) => return InputVerification::Invalid(Error::SigHashTypeInvalid { source }),
-      };
-
-      (signature, sighash_type)
-    }
-    64 => match Signature::from_slice(encoded_signature.as_slice()) {
-      Ok(signature) => (signature, TapSighashType::Default),
-      Err(source) => return InputVerification::Invalid(Error::SignatureInvalid { source }),
-    },
+    65 => (
+      Signature::from_slice(&encoded_signature.as_slice()[..64])
+        .context(error::SignatureInvalid)?,
+      TapSighashType::from_consensus_u8(encoded_signature[64])
+        .context(error::SigHashTypeInvalid)?,
+    ),
+    64 => (
+      Signature::from_slice(encoded_signature.as_slice()).context(error::SignatureInvalid)?,
+      TapSighashType::Default,
+    ),
     _ => {
-      return InputVerification::Invalid(Error::SignatureLength {
+      return Err(Error::SignatureLength {
         length: encoded_signature.len(),
         encoded_signature,
       })
@@ -624,7 +637,7 @@ fn verify_full_p2tr(
   };
 
   if !(sighash_type == TapSighashType::All || sighash_type == TapSighashType::Default) {
-    return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+    return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
@@ -638,12 +651,11 @@ fn verify_full_p2tr(
   let message =
     Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
-  if let Err(source) = Secp256k1::verification_only().verify_schnorr(&signature, &message, &pub_key)
-  {
-    return InputVerification::Invalid(Error::SignatureInvalid { source });
-  }
+  Secp256k1::verification_only()
+    .verify_schnorr(&signature, &message, &pub_key)
+    .context(error::SignatureInvalid)?;
 
-  InputVerification::Valid
+  Ok(InputVerification::Valid)
 }
 
 /// Verify a BIP-322 proof for a P2WSH
@@ -651,11 +663,11 @@ fn verify_full_p2wsh(
   to_sign: &Transaction,
   prevout: &TxOut,
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   let witness_items = to_sign.input[input_index].witness.to_vec();
 
   if witness_items.is_empty() {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   let witness_script = ScriptBuf::from_bytes(witness_items[witness_items.len() - 1].clone());
@@ -665,27 +677,27 @@ fn verify_full_p2wsh(
 
   if prevout.script_pubkey == program {
     if !script_sig.is_empty() {
-      return InputVerification::Invalid(Error::ToSignInvalid);
+      return Err(Error::ToSignInvalid);
     }
   } else if prevout.script_pubkey == ScriptBuf::new_p2sh(&program.script_hash()) {
     if *script_sig != push_only_script(&program) {
-      return InputVerification::Invalid(Error::ToSignInvalid);
+      return Err(Error::ToSignInvalid);
     }
   } else {
-    return InputVerification::Invalid(Error::ToSignInvalid);
+    return Err(Error::ToSignInvalid);
   }
 
   let Ok((required_signatures, pubkeys)) = parse_multisig(&witness_script) else {
-    return InputVerification::Inconclusive;
+    return Ok(InputVerification::Inconclusive);
   };
 
   if witness_items.len() < 3 || !witness_items[0].is_empty() {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   let signatures = &witness_items[1..witness_items.len() - 1];
   if signatures.len() != required_signatures {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   let sighash = SighashCache::new(to_sign)
@@ -712,24 +724,20 @@ fn verify_full_p2wsh(
     let encoded = &signatures[sig_index];
     let length = encoded.len();
     if length < 1 {
-      return InputVerification::Invalid(Error::InvalidWitness);
+      return Err(Error::InvalidWitness);
     }
 
-    let sighash_type = match EcdsaSighashType::from_standard(encoded[length - 1] as u32) {
-      Ok(result) => result,
-      Err(source) => return InputVerification::Invalid(Error::SigHashTypeNonStandard { source }),
-    };
+    let sighash_type = EcdsaSighashType::from_standard(encoded[length - 1] as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
     if sighash_type != EcdsaSighashType::All {
-      return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+      return Err(Error::SigHashTypeUnsupported {
         sighash_type: sighash_type.to_string(),
       });
     }
 
     if let Ok(signature) = bitcoin::secp256k1::ecdsa::Signature::from_der(&encoded[..length - 1]) {
-      if let Err(reason) = require_low_s(&signature) {
-        return InputVerification::Invalid(reason);
-      };
+      require_low_s(&signature)?;
 
       if secp
         .verify_ecdsa(&message, &signature, &pub_key.inner)
@@ -741,9 +749,9 @@ fn verify_full_p2wsh(
   }
 
   if sig_index == signatures.len() {
-    InputVerification::Valid
+    Ok(InputVerification::Valid)
   } else {
-    InputVerification::Invalid(Error::SignatureInvalid {
+    Err(Error::SignatureInvalid {
       source: bitcoin::secp256k1::Error::IncorrectSignature,
     })
   }
@@ -754,37 +762,37 @@ fn verify_full_p2sh_multisig(
   to_sign: &Transaction,
   prevout: &TxOut,
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   let mut pushes: Vec<Vec<u8>> = Vec::new();
 
   for instruction in to_sign.input[input_index].script_sig.instructions_minimal() {
     match instruction {
       Ok(Instruction::PushBytes(b)) => pushes.push(b.as_bytes().to_vec()),
-      _ => return InputVerification::Invalid(Error::InvalidWitness),
+      _ => return Err(Error::InvalidWitness),
     }
   }
 
   let Some((redeem_bytes, sig_pushes)) = pushes.split_last() else {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   };
   let redeem_script = ScriptBuf::from_bytes(redeem_bytes.clone());
 
   if prevout.script_pubkey != ScriptBuf::new_p2sh(&redeem_script.script_hash()) {
-    return InputVerification::Invalid(Error::ToSignInvalid);
+    return Err(Error::ToSignInvalid);
   }
 
   let Ok((required_signatures, pubkeys)) = parse_multisig(&redeem_script) else {
-    return InputVerification::Inconclusive;
+    return Ok(InputVerification::Inconclusive);
   };
   let Some((null_dummy, signatures)) = sig_pushes.split_first() else {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   };
 
   if !null_dummy.is_empty()
     || signatures.iter().any(|signature| signature.is_empty())
     || signatures.len() != required_signatures
   {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   let sighash = SighashCache::new(to_sign)
@@ -798,42 +806,34 @@ fn verify_full_p2sh_multisig(
   let mut key_index = 0usize;
   for encoded in signatures {
     let Some((sighash_byte, der)) = encoded.split_last() else {
-      return InputVerification::Invalid(Error::InvalidWitness);
+      return Err(Error::InvalidWitness);
     };
 
-    let sighash_type = match EcdsaSighashType::from_standard(*sighash_byte as u32) {
-      Ok(result) => result,
-      Err(source) => return InputVerification::Invalid(Error::SigHashTypeNonStandard { source }),
-    };
+    let sighash_type = EcdsaSighashType::from_standard(*sighash_byte as u32)
+      .context(error::SigHashTypeNonStandard)?;
 
     if sighash_type != EcdsaSighashType::All {
-      return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+      return Err(Error::SigHashTypeUnsupported {
         sighash_type: sighash_type.to_string(),
       });
     }
 
-    let signature = match bitcoin::secp256k1::ecdsa::Signature::from_der(der) {
-      Ok(result) => result,
-      Err(source) => return InputVerification::Invalid(Error::SignatureInvalid { source }),
-    };
+    let signature =
+      bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
 
-    if let Err(reason) = require_low_s(&signature) {
-      return InputVerification::Invalid(reason);
-    };
+    require_low_s(&signature)?;
 
-    let Some(offset) = pubkeys[key_index..]
+    let offset = pubkeys[key_index..]
       .iter()
       .position(|pk| secp.verify_ecdsa(&message, &signature, &pk.inner).is_ok())
-    else {
-      return InputVerification::Invalid(Error::SignatureInvalid {
+      .ok_or(Error::SignatureInvalid {
         source: bitcoin::secp256k1::Error::IncorrectSignature,
-      });
-    };
+      })?;
 
     key_index += offset + 1;
   }
 
-  InputVerification::Valid
+  Ok(InputVerification::Valid)
 }
 
 /// Verify a BIP-322 proof for a P2PKH
@@ -841,57 +841,45 @@ fn verify_full_p2pkh(
   to_sign: &Transaction,
   prevout: &TxOut,
   input_index: usize,
-) -> InputVerification {
+) -> Result<InputVerification> {
   if !to_sign.input[input_index].witness.is_empty() {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
   // scriptSig: <sig> <pubkey>
   let mut instructions = to_sign.input[input_index].script_sig.instructions_minimal();
   let signature_bytes = match instructions.next() {
     Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
-    _ => return InputVerification::Invalid(Error::InvalidWitness),
+    _ => return Err(Error::InvalidWitness),
   };
   let pubkey_bytes = match instructions.next() {
     Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
-    _ => return InputVerification::Invalid(Error::InvalidWitness),
+    _ => return Err(Error::InvalidWitness),
   };
   if instructions.next().is_some() {
-    return InputVerification::Invalid(Error::InvalidWitness);
+    return Err(Error::InvalidWitness);
   }
 
-  let pub_key = match PublicKey::from_slice(pubkey_bytes) {
-    Ok(key) => key,
-    Err(_) => return InputVerification::Invalid(Error::InvalidPublicKey),
-  };
+  let pub_key = PublicKey::from_slice(pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
 
   if prevout.script_pubkey != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
-    return InputVerification::Invalid(Error::PublicKeyMismatch);
+    return Err(Error::PublicKeyMismatch);
   }
 
-  let (sighash_byte, der) = match signature_bytes.split_last() {
-    Some(parts) => parts,
-    None => return InputVerification::Invalid(Error::InvalidWitness),
-  };
+  let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
 
-  let sighash_type = match EcdsaSighashType::from_standard(*sighash_byte as u32) {
-    Ok(result) => result,
-    Err(source) => return InputVerification::Invalid(Error::SigHashTypeNonStandard { source }),
-  };
+  let sighash_type =
+    EcdsaSighashType::from_standard(*sighash_byte as u32).context(error::SigHashTypeNonStandard)?;
 
   if sighash_type != EcdsaSighashType::All {
-    return InputVerification::Invalid(Error::SigHashTypeUnsupported {
+    return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
-  let signature = match bitcoin::secp256k1::ecdsa::Signature::from_der(der) {
-    Ok(result) => result,
-    Err(source) => return InputVerification::Invalid(Error::SignatureInvalid { source }),
-  };
+  let signature =
+    bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
 
-  if let Err(reason) = require_low_s(&signature) {
-    return InputVerification::Invalid(reason);
-  }
+  require_low_s(&signature)?;
 
   let sighash = SighashCache::new(to_sign)
     .legacy_signature_hash(
@@ -903,10 +891,9 @@ fn verify_full_p2pkh(
   let msg =
     Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
 
-  if let Err(source) = Secp256k1::verification_only().verify_ecdsa(&msg, &signature, &pub_key.inner)
-  {
-    return InputVerification::Invalid(Error::SignatureInvalid { source });
-  }
+  Secp256k1::verification_only()
+    .verify_ecdsa(&msg, &signature, &pub_key.inner)
+    .context(error::SignatureInvalid)?;
 
-  InputVerification::Valid
+  Ok(InputVerification::Valid)
 }

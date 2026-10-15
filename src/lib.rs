@@ -37,13 +37,10 @@ type Result<T = (), E = Error> = std::result::Result<T, E>;
 mod tests {
   use {super::*, bitcoin::hashes::sha256, pretty_assertions::assert_eq, rand::RngCore};
 
-  /// Asserts an encoded verify call decoded the proof and reported it valid.
+  /// Asserts a verify call reported the proof valid.
   #[track_caller]
-  fn assert_valid(result: Result<Verification>) {
-    assert!(
-      matches!(result, Ok(Verification::Valid { .. })),
-      "got {result:?}"
-    );
+  fn assert_valid(result: Verification) {
+    assert!(result.is_valid(), "got {result:?}");
   }
 
   // From https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#test-vectors
@@ -183,7 +180,7 @@ mod tests {
         TAPROOT_ADDRESS,
         "Hello World -- This should fail",
         "smpAUHd69PrJQEv+oKTfZ8l+WROBHuy9HKrbFCJu7U1iK2iiEy1vMU5EfMtjc+VSHM7aU0SDbak5IUZRVno2P5mjSafAQ=="
-      ).unwrap(),
+      ),
       Verification::Invalid(_)
     ));
   }
@@ -224,22 +221,26 @@ mod tests {
   #[test]
   fn signature_decode_error() {
     assert_eq!(
-      verify::verify_simple_encoded(
+      match verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
         "Hello World",
         "invalid signature not in base64 encoding"
-      )
-      .unwrap_err()
-      .to_string(),
+      ) {
+        Verification::Invalid(error) => error.to_string(),
+        other => panic!("got {other:?}"),
+      },
       "Decode error for signature `invalid signature not in base64 encoding`"
     );
 
     assert_eq!(
-      verify::verify_simple_encoded(
+      match verify::verify_simple_encoded(
         TAPROOT_ADDRESS,
-        "Hello World", 
+        "Hello World",
         "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH"
-      ).unwrap_err().to_string(),
+      ) {
+        Verification::Invalid(error) => error.to_string(),
+        other => panic!("got {other:?}"),
+      },
       "Decode error for signature `AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViH`"
     )
   }
@@ -257,7 +258,7 @@ mod tests {
         SEGWIT_ADDRESS,
         "Hello World - this should fail",
         "smpAkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).unwrap(),
+      ),
       Verification::Invalid(_)
     ));
 
@@ -278,7 +279,7 @@ mod tests {
         SEGWIT_ADDRESS,
         "fail",
         "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).unwrap(),
+      ),
       Verification::Invalid(_)
     ));
 
@@ -353,7 +354,7 @@ mod tests {
         NESTED_SEGWIT_ADDRESS,
         "Hello World - this should fail",
         "smpAkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
-      ).unwrap(),
+      ),
       Verification::Invalid(Error::SignatureInvalid { .. })
     ));
   }
@@ -663,33 +664,24 @@ mod tests {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str, full: bool) {
       let result = run(address, message, signature, full);
-      assert!(
-        matches!(result, Ok(Verification::Invalid(_))),
-        "got {result:?}"
-      );
+      assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
     }
 
     #[track_caller]
     fn inconclusive(address: &str, message: &str, signature: &str, full: bool) {
       let result = run(address, message, signature, full);
       assert!(
-        matches!(result, Ok(Verification::Inconclusive)),
+        matches!(result, Verification::Inconclusive),
         "got {result:?}"
       );
     }
 
-    fn run(
-      address: &str,
-      message: &str,
-      signature: &str,
-      full: bool,
-    ) -> Result<Verification, Box<Error>> {
+    fn run(address: &str, message: &str, signature: &str, full: bool) -> Verification {
       if full {
         verify::verify_full_encoded(address, message, signature)
       } else {
         verify::verify_simple_encoded(address, message, signature)
       }
-      .map_err(Box::new)
     }
 
     // The spec's valid p2tr-time-lock and p2wsh-time-lock vectors. Their
@@ -1187,7 +1179,7 @@ mod tests {
         LEGACY_ADDRESS,
         "",
         "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
-      ).unwrap(),
+      ),
       Verification::Invalid(Error::InvalidWitness)
     ));
   }
@@ -1434,9 +1426,12 @@ mod tests {
   #[test]
   fn verify_rejects_mismatched_variant_prefix() {
     #[track_caller]
-    fn mismatch(result: Result<Verification>) {
+    fn mismatch(result: Verification) {
       assert!(
-        matches!(result, Err(Error::SignatureVariantMismatch { .. })),
+        matches!(
+          result,
+          Verification::Invalid(Error::SignatureVariantMismatch { .. })
+        ),
         "got {result:?}"
       );
     }
@@ -1525,14 +1520,47 @@ mod tests {
         INCORRECT_PREFIX_MESSAGE,
         INCORRECT_PREFIX_SIGNATURE
       ),
-      Err(Error::SignatureVariantMismatch { .. })
+      Verification::Invalid(Error::SignatureVariantMismatch { .. })
     ));
 
     // `foo` is not a known variant, so it fails to decode.
     assert!(matches!(
       verify::verify_simple_encoded(SEGWIT_ADDRESS, "foo", "fooAA=="),
-      Err(Error::SignatureDecode { .. })
+      Verification::Invalid(Error::SignatureDecode { .. })
     ));
+  }
+
+  #[test]
+  fn encoded_decode_failure_and_validation_failure_are_both_invalid() {
+    // malformed encoding: a decode failure
+    assert!(matches!(
+      verify::verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", "not base64!!!"),
+      Verification::Invalid(Error::SignatureDecode { .. })
+    ));
+
+    // well-formed encoding, wrong message: a validation failure
+    let signature =
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+    assert!(matches!(
+      verify::verify_simple_encoded(SEGWIT_ADDRESS, "wrong message", &signature),
+      Verification::Invalid(Error::SignatureInvalid { .. })
+    ));
+  }
+
+  #[test]
+  fn verification_predicates() {
+    let signature =
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+
+    let valid = verify::verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &signature);
+    assert!(valid.is_valid());
+    assert!(!valid.is_inconclusive());
+    assert!(!valid.is_invalid());
+
+    let invalid = verify::verify_simple_encoded(SEGWIT_ADDRESS, "wrong message", &signature);
+    assert!(!invalid.is_valid());
+    assert!(!invalid.is_inconclusive());
+    assert!(invalid.is_invalid());
   }
 
   #[test]
@@ -1570,8 +1598,7 @@ mod tests {
           locks
         )
         .unwrap()
-      )
-      .unwrap(),
+      ),
       Verification::Valid { time, age }
         if time == locks.lock_time && age == locks.sequence
     ));
@@ -1628,8 +1655,8 @@ mod tests {
     .unwrap();
 
     assert!(matches!(
-      verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature).unwrap(),
-     Verification::Valid { time, age }
+      verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &signature),
+      Verification::Valid { time, age }
         if time == locks.lock_time && age == locks.sequence
     ));
   }
@@ -1994,7 +2021,7 @@ mod tests {
       let encoded = finalize_bip322_psbt(Psbt::deserialize(&psbt.serialize()).unwrap()).unwrap();
 
       assert!(matches!(
-        verify_full_encoded(address, message, &encoded).unwrap(),
+        verify_full_encoded(address, message, &encoded),
         Verification::Valid { .. }
       ));
     }
@@ -2567,7 +2594,7 @@ mod tests {
     assert!(encoded.starts_with(POF_SIGNATURE_PREFIX));
 
     assert!(matches!(
-      verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &encoded).unwrap(),
+      verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &encoded),
       Verification::Valid { .. }
     ));
   }

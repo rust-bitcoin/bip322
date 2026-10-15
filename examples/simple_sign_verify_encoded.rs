@@ -1,4 +1,4 @@
-use bip322::{sign_simple_encoded, verify_simple_encoded, Verification};
+use bip322::{sign_simple_encoded, verify_simple_encoded};
 
 fn main() {
   let address = "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3";
@@ -7,8 +7,5 @@ fn main() {
 
   let base64_signature = sign_simple_encoded(address, message, &[wif_private_key], None).unwrap();
 
-  assert!(matches!(
-    verify_simple_encoded(address, message, &base64_signature),
-    Ok(Verification::Valid { .. })
-  ));
+  assert!(verify_simple_encoded(address, message, &base64_signature).is_valid());
 }

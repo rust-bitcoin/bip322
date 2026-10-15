@@ -26,8 +26,6 @@ pub enum Error {
   },
   #[snafu(display("To sign transaction invalid"))]
   ToSignInvalid,
-  #[snafu(display("PSBT extract error"))]
-  PsbtExtract { source: bitcoin::psbt::Error },
   #[snafu(display("Base64 decode error for transaction `{transaction}`"))]
   TransactionBase64Decode {
     source: base64::DecodeError,
