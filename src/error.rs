@@ -99,4 +99,8 @@ pub enum Error {
   OrdinaryPsbt,
   #[snafu(display("Script was interpreted but the witness does not satisfy it"))]
   ScriptNotSatisfied,
+  #[snafu(display("Script uses OP_CODESEPARATOR, which BIP-322 forbids"))]
+  CodeSeparator,
+  #[snafu(display("Encoding has trailing bytes after the decoded value"))]
+  TrailingBytes,
 }

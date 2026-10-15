@@ -113,14 +113,19 @@ fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
 
   let signature = strip_variant_prefix(signature, SIMPLE_SIGNATURE_PREFIX)?;
 
-  let mut cursor = bitcoin::io::Cursor::new(
-    general_purpose::STANDARD
-      .decode(signature)
-      .context(error::SignatureDecode { signature })?,
-  );
+  let bytes = general_purpose::STANDARD
+    .decode(signature)
+    .context(error::SignatureDecode { signature })?;
+  let length = bytes.len() as u64;
+
+  let mut cursor = bitcoin::io::Cursor::new(bytes);
 
   let witness =
     Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
+
+  if cursor.position() != length {
+    return Err(Error::TrailingBytes);
+  }
 
   Ok((address, witness))
 }
@@ -142,17 +147,25 @@ fn decode_full(address: &str, to_sign: &str) -> Result<(Address, Transaction)> {
 
   let to_sign = strip_variant_prefix(to_sign, FULL_SIGNATURE_PREFIX)?;
 
-  let mut cursor = bitcoin::io::Cursor::new(general_purpose::STANDARD.decode(to_sign).context(
-    error::TransactionBase64Decode {
-      transaction: to_sign,
-    },
-  )?);
+  let bytes =
+    general_purpose::STANDARD
+      .decode(to_sign)
+      .context(error::TransactionBase64Decode {
+        transaction: to_sign,
+      })?;
+  let length = bytes.len() as u64;
+
+  let mut cursor = bitcoin::io::Cursor::new(bytes);
 
   let to_sign = Transaction::consensus_decode_from_finite_reader(&mut cursor).context(
     error::TransactionConsensusDecode {
       transaction: to_sign,
     },
   )?;
+
+  if cursor.position() != length {
+    return Err(Error::TrailingBytes);
+  }
 
   Ok((address, to_sign))
 }
@@ -183,12 +196,29 @@ fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
         transaction: to_sign,
       })?;
 
-  let psbt = Psbt::deserialize(&bytes).map_err(|_| Error::ToSignInvalid)?;
+  let length = bytes.len() as u64;
+
+  let mut cursor = bitcoin::io::Cursor::new(bytes);
+
+  let psbt = Psbt::deserialize_from_reader(&mut cursor).map_err(|_| Error::ToSignInvalid)?;
+
+  if cursor.position() != length {
+    return Err(Error::TrailingBytes);
+  }
 
   Ok((address, psbt))
 }
 
 /// Verifies the BIP-322 simple format.
+///
+/// Accepts P2SH-wrapped scripts (P2SH-P2WPKH, P2SH multisig) in addition to
+/// the native segwit types the BIP's simple table lists — a deliberate
+/// superset, since verifier-side leniency is harmless.
+///
+/// The witness is verified by building the corresponding full `to_sign`
+/// transaction around it. That construction is infallible — a freshly built
+/// transaction with a final witness always extracts — so the internal
+/// `extract_tx` call uses `expect` rather than a fallible return.
 pub fn verify_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -206,6 +236,12 @@ pub fn verify_simple(
 }
 
 /// Verifies the BIP-322 full format.
+///
+/// The `to_sign` transaction must have exactly one input, spending the
+/// `to_spend` challenge output. The BIP's basic validation says "at least
+/// one input", but additional inputs' prevouts cannot be resolved outside a
+/// PSBT — proving further inputs is what [`verify_pof`] is for — so a
+/// multi-input `to_sign` is rejected.
 pub fn verify_full(
   address: &Address,
   message: impl AsRef<[u8]>,
@@ -270,9 +306,14 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
     key: vec![],
   };
-  match psbt.unknown.get(&msg_key) {
-    Some(val) if val == message.as_ref() => {}
-    _ => return Verification::Invalid(Error::ToSignInvalid),
+  // The message is already a validator input and is bound by to_spend's
+  // scriptSig; the PSBT field exists for the signing flow. Official BIP-322
+  // proof-of-funds vectors omit it, so it is optional here — but when
+  // present it must match the message.
+  if let Some(val) = psbt.unknown.get(&msg_key) {
+    if val != message.as_ref() {
+      return Verification::Invalid(Error::ToSignInvalid);
+    }
   }
 
   let to_spend = create_to_spend(address, &message);
@@ -372,10 +413,90 @@ fn verify_input(
   prevouts: &[TxOut],
   input_index: usize,
 ) -> Result<InputVerification> {
+  // Required rule: CODESEPARATOR (and FindAndDelete, which cannot occur in
+  // the standard templates) is forbidden. Neither the script templates nor
+  // the interpreter can evaluate such scripts, so scan every script this
+  // input executes and reject up front instead of reporting inconclusive.
+  if spends_codeseparator(to_sign, prevouts, input_index) {
+    return Err(Error::CodeSeparator);
+  }
+
   match verify_standard_script(to_sign, prevouts, input_index)? {
     InputVerification::Inconclusive => verify_with_interpreter(to_sign, prevouts, input_index),
     valid => Ok(valid),
   }
+}
+
+/// Whether any script executed by this input contains OP_CODESEPARATOR:
+/// the scriptSig itself, a P2SH redeem script, a native or nested P2WSH
+/// witness script, or a P2TR script-path tapscript.
+fn spends_codeseparator(to_sign: &Transaction, prevouts: &[TxOut], input_index: usize) -> bool {
+  let txin = &to_sign.input[input_index];
+  let script_pubkey = &prevouts[input_index].script_pubkey;
+
+  if contains_codeseparator(&txin.script_sig) {
+    return true;
+  }
+
+  if script_pubkey.is_p2sh() {
+    // The redeem script is the last scriptSig push. When it is a nested
+    // P2WSH program, the witness script is the last witness item.
+    if let Some(Ok(Instruction::PushBytes(redeem_script))) =
+      txin.script_sig.instructions_minimal().last()
+    {
+      if contains_codeseparator(Script::from_bytes(redeem_script.as_bytes())) {
+        return true;
+      }
+
+      let program = redeem_script.as_bytes();
+      if program.len() == 34 && program[..2] == [0x00, 0x20] {
+        if let Some(witness_script) = txin.witness.last() {
+          if contains_codeseparator(Script::from_bytes(witness_script)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  if script_pubkey.is_p2wsh() {
+    if let Some(witness_script) = txin.witness.last() {
+      if contains_codeseparator(Script::from_bytes(witness_script)) {
+        return true;
+      }
+    }
+  }
+
+  if script_pubkey.is_p2tr() && txin.witness.len() >= 2 {
+    let items: Vec<&[u8]> = txin.witness.iter().collect();
+
+    // An annex is the last item and begins with 0x50; the control block
+    // precedes it and the tapscript precedes the control block.
+    let mut control_index = items.len() - 1;
+    if items[control_index].first() == Some(&0x50) {
+      control_index -= 1;
+    }
+
+    let control_block = items[control_index];
+    if control_block.len() >= 33
+      && (control_block.len() - 33) % 32 == 0
+      && control_block[0] & 0xfe == 0xc0
+      && control_index >= 1
+      && contains_codeseparator(Script::from_bytes(items[control_index - 1]))
+    {
+      return true;
+    }
+  }
+
+  false
+}
+
+/// Whether a script contains OP_CODESEPARATOR as an executed opcode
+/// (occurrences inside pushed data do not count).
+fn contains_codeseparator(script: &Script) -> bool {
+  script.instructions().any(
+    |instruction| matches!(instruction, Ok(Instruction::Op(opcode)) if opcode == opcodes::all::OP_CODESEPARATOR),
+  )
 }
 
 /// Fallback verification via the miniscript interpreter for scripts the
