@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 #[snafu(context(suffix(false)), visibility(pub))]
 pub enum Error {
   #[snafu(display("Failed to parse address `{address}`"))]
@@ -99,4 +100,8 @@ pub enum Error {
   OrdinaryPsbt,
   #[snafu(display("Script was interpreted but the witness does not satisfy it"))]
   ScriptNotSatisfied,
+  #[snafu(display("Script uses OP_CODESEPARATOR, which BIP-322 forbids"))]
+  CodeSeparator,
+  #[snafu(display("Encoding has trailing bytes after the decoded value"))]
+  TrailingBytes,
 }

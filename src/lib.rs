@@ -15,8 +15,8 @@ use {
     sighash::{self, SighashCache, TapSighashType},
     sign_message::{signed_msg_hash, MessageSignature},
     transaction::Version,
-    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, PublicKey, Script, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Witness,
   },
   sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
@@ -727,6 +727,13 @@ mod tests {
   fn official_vectors_rejected() {
     #[track_caller]
     fn case(address: &str, message: &str, signature: &str, full: bool) {
+      // Guard against transcription drift: the address must be a valid
+      // mainnet address, so a typo cannot masquerade as a rejection.
+      Address::from_str(address)
+        .unwrap()
+        .require_network(bitcoin::Network::Bitcoin)
+        .unwrap();
+
       let result = run(address, message, signature, full);
       assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
     }
@@ -760,6 +767,29 @@ mod tests {
     case("bc1p6vffkx7vcyezrjq7pg9qqdjv7vmtanfhk8ukwsn4syejwmarmhxqp0rw5x", "ATGH7VC42BMKAAJAMBG3KNGQGR", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
     // wrong message for p2wsh-time-lock full signature
     case("bc1qhqcmw7ud03vqde3pe6hzajaylhucmlatrkcztzpnk8vpgvhg9dzq5ydark", "QMSIBU4KPG4CGHGBGFRFHXVYLR", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
+    // wrong signer for p2tr-time-lock full signature
+    case("bc1pfncmfyycsv5zpnrzy3hj7qna989kymm2ekps7ph2mwwyftjy3d6s2esen0", "AY2VOQOXYI5CN2EHZKLOX7ZI37", "AgAAAAABAaza7/ukfX9ZdxCUvK7CPJgADDdPdF7ikXVKWctd5EHrAAAAAADgBwAAAQAAAAAAAAAAAWoEQPvuT0enYGwsab2lsPZU0U3OcRkGng+o/PAt4QU2lc8hG7lTUmflkt0To+eoipv2vptf0TlGOBCsKU5xE3kXKcMAS2MgrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUgJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUBorCHBJjLn4tl5ytgC8CNTyITXmg4rx9ctxPedwRMPEBvfoUDgBwAA", true);
+    // wrong signer for p2wsh-time-lock full signature
+    case("bc1qlcg74qa5r0ltu6zruahaap3keqsksad6kpstqyysxu0y7tkz2jlqepjywu", "MGKMA2MJUBDHT55J7MHOLM7UPE", "AgAAAAABAYYJeOOOi3c33O+dholAwiF51Amy/E0qIf3ew2vFtDtTAAAAAADgBwAAAQAAAAAAAAAAAWoDSDBFAiEA64MwD2HkJjPLPAc2u5ia6ZdwCVO3okzVqGPEXnuJGZQCIE27BGOBQTdwJ2M/Wdsm6nFVunqaj+xZBSG/g/64FMbtAQBNYyEDrYfXhOkh0CvwuJpB+O3tal2ECfO0v7k1/A4PTlGcQiBnAuAHsnUhA4ZGGvodKgqeg/ZYffm6miaKaG57VkCSjmmRprCa+ulyaKzgBwAA", true);
+
+    // wrong message for p2wpkh simple signature
+    case("bc1qqthe0hz8klx90e7stf6shclhsvqd5ly96pn53v", "EFGJ4AZYXDV7NDUDSUDB3NCDUC", "AkgwRQIhALC6hdfxNy1n45d7UXSskRBdfZW0Al259E1kDMpipdYkAiAJPfZqb+WurZuf1apU5xeE6Igui9dvt5tihQLDvxlY1AEhAqbnruyo677ktQjio7XOchO3w51Dh9AbRVngha5jtNfT", false);
+    // wrong signer for p2wpkh simple signature
+    case("bc1qgg6lpr05az2l5kz402ddz5ez7fdu25kgmd40lf", "2V6TUTMSH4VQ3Z7WZWKYD7DFNH", "AkgwRQIhALC6hdfxNy1n45d7UXSskRBdfZW0Al259E1kDMpipdYkAiAJPfZqb+WurZuf1apU5xeE6Igui9dvt5tihQLDvxlY1AEhAqbnruyo677ktQjio7XOchO3w51Dh9AbRVngha5jtNfT", false);
+    // wrong message for p2tr simple signature
+    case(
+      "bc1pcquvhrqv0q68t4m0hfq6tpn006qrskyc7yrqnp2uyrf2emg3wynsdjyk38",
+      "56VM6YK6Y76XTBXNPITF232EPX",
+      "AUB6B2Rbupzua8LTQIF06516wzl+cwKy1be8RgoiW0riyXdKwe6GTz/5Hnb37m67pJwIKCh+D5jDueG6KpvYpmu8",
+      false,
+    );
+    // wrong signer for p2tr simple signature
+    case(
+      "bc1pltvk000nd54v3hrrcn7lsffdra72hphpm40rhzf9hn8arqkgermq2p9029",
+      "PURVOQ544B6HUATVBJZN5EZJUU",
+      "AUB6B2Rbupzua8LTQIF06516wzl+cwKy1be8RgoiW0riyXdKwe6GTz/5Hnb37m67pJwIKCh+D5jDueG6KpvYpmu8",
+      false,
+    );
 
     // wrong message for p2wsh-multisig-2of2 simple signature
     case("bc1qw6g0rgrpuxvj4edkwtvzpmt3c5m08mhp8nuk3mrk4erufvlczp5ssdscjd", "DL2KXDPQAN63YIQPIP34O3XYVX", "BABIMEUCIQCKl1f9Cj26k0fFWE48+O4ibhYJYPytbDZWJRaaG9BybwIgCbk+3BViWkpuu2RI+41dwtlQ/m/01G860pTFCzDFfokBSDBFAiEA0O77DJsaM7IO+Ht06sp3umzXB64CNNOwf2isZuPfdmwCIGlggOwRSkXsqlPhE1gMdd5hf7ycL33Orfrr4v/XnMGSAUdSIQNsu/OwZurHvJMoiJoSAmmCHLoqIc5Wblh+rek+7rhASCECgYVkUspeAxwRfM6v4GRBhN/gGxTfpPqZuOlBIYZxTJZSrg==", false);
@@ -769,6 +799,23 @@ mod tests {
     case("bc1qazhmhwl9sxgjmwnd96hh926s3x5l0cf64yy6hvyn6qms438x550qy5sgva", "UKLIJM5HKKQEIFJ44R7UIQFMYL", "BQBHMEQCICNI6H6b+VCZV9Z2H6EW5hPrE1buC6SJuy2ljSNmQlGfAiASbm5UrA8KH6TwF6evx7COV+i27ubiq2v9TyLYPOO63gFIMEUCIQCMOFnJbg0sy88G6wUXjv5stjVgfvAokOogWsisdkAnlAIgETfBw7kJhISFu9vIomFcEF/1NsN6c0h3KjNcpmNAZtMBSDBFAiEA/lUU+wBeA3prt8vHRpcQN763OYZ8L61DfN0QI/gkHpMCIB2qHwgoXNTH0sdqeAMD2ah7dSTie2bflax3Q3I/GibQAWlTIQKo003Zjj9Jg/kT7sOA7cTdIKmzsrIYBAuPd9hj8FZuHCEC6BdalMtwbjcx2vJjVelv7BJml0rY7Q5ze+PWen6tb5shAytperlYBs69tbn86t3pINqXy0NzttKZKi6Y8X+USQXaU64=", false);
     // wrong signer for p2wsh-multisig-3of3 simple signature
     case("bc1qnckc2q6804depn2240l66p93e0mscp7vd9ndptfuznex86ehpcvseq6e8a", "Z3SB7SRL555ZGOHVMYT5WG7RIZ", "BQBHMEQCICNI6H6b+VCZV9Z2H6EW5hPrE1buC6SJuy2ljSNmQlGfAiASbm5UrA8KH6TwF6evx7COV+i27ubiq2v9TyLYPOO63gFIMEUCIQCMOFnJbg0sy88G6wUXjv5stjVgfvAokOogWsisdkAnlAIgETfBw7kJhISFu9vIomFcEF/1NsN6c0h3KjNcpmNAZtMBSDBFAiEA/lUU+wBeA3prt8vHRpcQN763OYZ8L61DfN0QI/gkHpMCIB2qHwgoXNTH0sdqeAMD2ah7dSTie2bflax3Q3I/GibQAWlTIQKo003Zjj9Jg/kT7sOA7cTdIKmzsrIYBAuPd9hj8FZuHCEC6BdalMtwbjcx2vJjVelv7BJml0rY7Q5ze+PWen6tb5shAytperlYBs69tbn86t3pINqXy0NzttKZKi6Y8X+USQXaU64=", false);
+    // wrong message for p2pkh full signature
+    case("13vU5PUSuArDXJdCWZvUFEbgJ2wcmtSJWn", "TCHG6CQ5E2T5S4S7DPLAEFVDY2", "AgAAAAGn3Z6t/gsHNyHdgZTOVro0Hej+qbd/ilU1ACalKoHX3gAAAABqRzBEAiB+8t/tm8Jm6zYv9JGZZVlAUjmqg7ZglIA39U+bim8EKQIgDv3E5cHOagN+xYgN3ZQjTYlAJp/WyslwJWuFP1TmM3IBIQJcPK2h9SY+Ki1oussvHnMdFAhJgsYBFPl+rNcMv9P1ROAHAAABAAAAAAAAAAABauAHAAA=", true);
+    // wrong signer for p2pkh full signature
+    case("1BxMhvfWLnGLqVhJ3j39oDBk7qf5D86BFe", "MOISC5NCQ42ADH2SUXLELUJOWH", "AgAAAAGn3Z6t/gsHNyHdgZTOVro0Hej+qbd/ilU1ACalKoHX3gAAAABqRzBEAiB+8t/tm8Jm6zYv9JGZZVlAUjmqg7ZglIA39U+bim8EKQIgDv3E5cHOagN+xYgN3ZQjTYlAJp/WyslwJWuFP1TmM3IBIQJcPK2h9SY+Ki1oussvHnMdFAhJgsYBFPl+rNcMv9P1ROAHAAABAAAAAAAAAAABauAHAAA=", true);
+    // wrong message for p2wpkh full signature
+    case("bc1qrqtlzcq86850yzgsyq9sssawx2qxlx5yq3xpkd", "VENQMXVEGEJAAXJV5V24T6G5UU", "AgAAAAABAUrfzHHOLAKmgCIFSTT3krp+cQxj1BDPBN4GBg3tRmFXAAAAAADgBwAAAQAAAAAAAAAAAWoCSDBFAiEAjYj85zyhQKa9DbMO0reDwdhkNwKJkF3q2qFcijXDgMUCIAaQ75s3fwqrCeYIUJugLvhxZFxQIVquGN90vIKCW3QLASEDMurnDzvc0zABUwVwCADfGXoDx/M3SQnYt7e3IHDoU3PgBwAA", true);
+    // wrong signer for p2wpkh full signature
+    case("bc1q55chmwm4x8aeye0h9c0mryra2ly8k8fh3scqgj", "KLE5MMJBTNF4AVZXIO3GIL5UWF", "AgAAAAABAUrfzHHOLAKmgCIFSTT3krp+cQxj1BDPBN4GBg3tRmFXAAAAAADgBwAAAQAAAAAAAAAAAWoCSDBFAiEAjYj85zyhQKa9DbMO0reDwdhkNwKJkF3q2qFcijXDgMUCIAaQ75s3fwqrCeYIUJugLvhxZFxQIVquGN90vIKCW3QLASEDMurnDzvc0zABUwVwCADfGXoDx/M3SQnYt7e3IHDoU3PgBwAA", true);
+    // wrong message for p2tr full signature
+    case("bc1pve87s3l2levjmhetzr2f9xvep3y266xty0hnefmyv8tkxc3e4qssll2kdu", "P2RQWD264CW7Z5ZSSSDRW2JEDB", "AgAAAAABAROFPNY6Zt8hFK0YQq5Wb6wk/CnUYEPtQ0HTHDyzNROrAAAAAADgBwAAAQAAAAAAAAAAAWoBQNRdLOo5XZY0SBqAsLZNr/z3Bqrmo3OxVn7e4tD/OOD4H9U/L1unq5Nmdz+S1w7SHtt46bFwnd8xnRVan8BofFfgBwAA", true);
+    // wrong signer for p2tr full signature
+    case("bc1py2f3exluva2yqa877qnsj3vk4lm8yatw0up4fhrx04hf8ns87weswck94p", "XQMVC3YR6AOGZIHLSUQ2NSSBI2", "AgAAAAABAROFPNY6Zt8hFK0YQq5Wb6wk/CnUYEPtQ0HTHDyzNROrAAAAAADgBwAAAQAAAAAAAAAAAWoBQNRdLOo5XZY0SBqAsLZNr/z3Bqrmo3OxVn7e4tD/OOD4H9U/L1unq5Nmdz+S1w7SHtt46bFwnd8xnRVan8BofFfgBwAA", true);
+    // wrong message for p2sh-p2wpkh full signature
+    case("32Utb7Seg6EXq7UesMNJXhQ1gdohYNyzQ9", "CPVOBEXDTFAXS6N4YASD753CZV", "AgAAAAABAe5xLNMlYQH4OGjJ3h4lqQaVp0Cic7mwxkvyWswqFMXeAAAAABcWABSy/hpDH/KLAi4x25Tmb2UaO1xtWeAHAAABAAAAAAAAAAABagJHMEQCIDEleqb0n1R5c21TGkWRXNFae98wbwI0QOyh/YmRuQX1AiAcv1MhyTzPOVgZ1VIwuu0tDxrVJUHK8lhOUOXpsZnGwwEhAsjeDEoWX8hvEC8A/692yGQsPh6JBO8Zf4aITEQsKAcJ4AcAAA==", true);
+    // wrong signer for p2sh-p2wpkh full signature
+    case("3QMEQj2LTUtKKR1UatUK44z1NwrWrcVSGh", "EMYGZHEY3LIANYKCR7XJF3NMFQ", "AgAAAAABAe5xLNMlYQH4OGjJ3h4lqQaVp0Cic7mwxkvyWswqFMXeAAAAABcWABSy/hpDH/KLAi4x25Tmb2UaO1xtWeAHAAABAAAAAAAAAAABagJHMEQCIDEleqb0n1R5c21TGkWRXNFae98wbwI0QOyh/YmRuQX1AiAcv1MhyTzPOVgZ1VIwuu0tDxrVJUHK8lhOUOXpsZnGwwEhAsjeDEoWX8hvEC8A/692yGQsPh6JBO8Zf4aITEQsKAcJ4AcAAA==", true);
+
     // wrong message for p2wsh-multisig-2of2 full signature
     case("bc1qg8r3cl47rrr75dwvr7jhzdukptegnmq8v0nmjd2jdn4qvlczqkts0rqtav", "OANRY57VZNHOXZNYGCGZM5ADYG", "AgAAAAABAXshuDM6YKy1LClwk1ZOM5egX7RTFPOCvtxJkYFYk/FEAAAAAADgBwAAAQAAAAAAAAAAAWoEAEgwRQIhAI9uOxvqmBV0pldOoKWnSYhjobNhP4F+gxO0QlOdGtxFAiBROcNruLigZE4lj1DJEh8yGrqS00MeW463EO78TsaRFgFIMEUCIQCAhIqYuU4wDA2AYsU+QDVyucH4Tm/NSDP2+txyPMKEkAIgfuGlSh7ncxb2yV3S3aOF5uwHGqtIZjp3b4HW0d35EckBR1IhAkT3y4QqTOTzUs5AYq5eCl1g1vqgsHtiwgY0hKpSl7vOIQI07tYZDvxHcWuVOgULVj+LK1I63eqVWuQzUd0qkqpJ9FKu4AcAAA==", true);
     // wrong signer for p2wsh-multisig-2of2 full signature
@@ -785,6 +832,21 @@ mod tests {
     case("3Nye4j1GUFqCEBR3do2KEFZAs9oLe8NZ6X", "DAOHN7TAL75XRHJILGIO3RXAEM", "AgAAAAEvAyd4zsoz8gcVU5H19GLYokTAN5PxuKCBlEPjODJ86gAAAADaAEcwRAIgT6rcfxgCmG6b3DpzNV6UG0jiCQGclG9sfiSpV45HDXMCIGgtqjFBuJ7rbi+cgnG0TZiKZaxMk0KI+gQd0pHJfEYCAUgwRQIhANCvCLjGMuZMzH+nCEkNhWhR45T6QRYMLin8utpuF9r1AiBTjG2NLjkre7ec+HPg8UUhK1jL1vgq7YKjq5ROv+h07AFHUiEDhKjcb/Pv1/7AYutzOXwgec08wwD/VwiPm58Lc0xjohghAhycjpwdBuP33orQXAH1CAsrgSkuspxM2+FPQ4OCVhQWUq7gBwAAAQAAAAAAAAAAAWrgBwAA", true);
     // wrong signer for p2sh-multisig-2of2 full signature
     case("3L9uCVRBUfLgKQQK366dmutgsp3GpCwYGE", "7OKFLKRXSP6J42VQOMSG7MVXEP", "AgAAAAEvAyd4zsoz8gcVU5H19GLYokTAN5PxuKCBlEPjODJ86gAAAADaAEcwRAIgT6rcfxgCmG6b3DpzNV6UG0jiCQGclG9sfiSpV45HDXMCIGgtqjFBuJ7rbi+cgnG0TZiKZaxMk0KI+gQd0pHJfEYCAUgwRQIhANCvCLjGMuZMzH+nCEkNhWhR45T6QRYMLin8utpuF9r1AiBTjG2NLjkre7ec+HPg8UUhK1jL1vgq7YKjq5ROv+h07AFHUiEDhKjcb/Pv1/7AYutzOXwgec08wwD/VwiPm58Lc0xjohghAhycjpwdBuP33orQXAH1CAsrgSkuspxM2+FPQ4OCVhQWUq7gBwAAAQAAAAAAAAAAAWrgBwAA", true);
+
+    // From https://github.com/bitcoin/bips/blob/master/bip-0322/basic-test-vectors.json
+
+    // invalid base64 encoding
+    case(SEGWIT_ADDRESS, "", "not-valid-base64!!!", false);
+    // empty signature
+    case(SEGWIT_ADDRESS, "", "", false);
+    // empty witness stack (single zero byte)
+    case(SEGWIT_ADDRESS, "", "smpAA==", false);
+    // wrong message for valid simple p2wpkh signature (empty message was signed)
+    case(SEGWIT_ADDRESS, "Wrong message that was not signed", "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=", false);
+    // wrong address for valid simple p2wpkh signature (signed for different address)
+    case("bc1qp0ahvfh83088w49k405szqgg4f3pptr7p2g06tdxfjcd40z4lh4q95lsz9", "", "smpAkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=", false);
+    // wrong message for valid simple p2wsh 3-of-3 multisig signature
+    case("bc1qp0ahvfh83088w49k405szqgg4f3pptr7p2g06tdxfjcd40z4lh4q95lsz9", "This is not the message that was signed", "smpBQBHMEQCIFX9aaqPJWq2Ff2kpen5bFDTid+ehgUOpHV0LfjncXy4AiA3GNicF7aKPzdpa9PCpmaYQs3pHd+qbvvhXdxOCKCAMAFIMEUCIQD/ELXg6CNYyUQijCg96JtgvgjZb9dsl1Ctof4QAeyTcQIgVM/1AAblFl/DCt6A1gJg+T/i2qU5SQD09+chFJzolRwBSDBFAiEAlqRfSFyWNVQhvaCnmeV5tyneiCWMTcFbuujoD/pFa3wCIGnZjfQb8NolSYq9asV+ZeBSkCGHJcqnaV4JYS5MYPEGAWlTIQJ1aLEfEi/4p7wcV+XHZCBVvGGJZ7L3v+jhH+mZA8lN0yECCovfec+kIdllXpKCgA8RX/HZ2x5yHOtCSKP8/sf6pnwhAwxSng6kCgCXXSAmJOOZFdr3vdK3HzGqCFloOHgc5fM6U64=", false);
   }
 
   fn p2wsh_2of2_witness(address: &Address) -> Witness {
@@ -1612,6 +1674,58 @@ mod tests {
   }
 
   #[test]
+  fn encoded_verifiers_reject_trailing_bytes() {
+    // Appends a garbage byte after the decoded value and re-encodes.
+    fn with_trailing_byte(encoded: &str) -> String {
+      let (prefix, payload) = encoded.split_at(3);
+      let mut bytes = general_purpose::STANDARD.decode(payload).unwrap();
+      bytes.push(0);
+      format!("{prefix}{}", general_purpose::STANDARD.encode(bytes))
+    }
+
+    let simple =
+      sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
+
+    assert!(matches!(
+      verify::verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &with_trailing_byte(&simple)),
+      Verification::Invalid(Error::TrailingBytes)
+    ));
+
+    let full = sign::sign_full_encoded(
+      SEGWIT_ADDRESS,
+      "Hello World",
+      &[WIF_PRIVATE_KEY],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+      verify::verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &with_trailing_byte(&full)),
+      Verification::Invalid(Error::TrailingBytes)
+    ));
+
+    let pof = sign::sign_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &[POF_P2TR_CHALLENGE_KEY],
+      None,
+      &[pof_p2tr_proof_input()],
+      LockParams::default(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+      verify_pof_encoded(
+        POF_P2TR_ADDRESS,
+        POF_P2TR_MESSAGE,
+        &with_trailing_byte(&pof)
+      ),
+      Verification::Invalid(Error::TrailingBytes)
+    ));
+  }
+
+  #[test]
   fn verification_predicates() {
     let signature =
       sign::sign_simple_encoded(SEGWIT_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None).unwrap();
@@ -1767,6 +1881,120 @@ mod tests {
     let mut witness = Witness::new();
     witness.push::<&[u8]>(&[]);
     witness.push([7u8; 32]);
+    witness.push(witness_script.as_bytes());
+    psbt.inputs[0].final_script_witness = Some(witness);
+
+    assert!(matches!(
+      verify_full(&address, "msg", psbt.extract_tx().unwrap()),
+      Verification::Inconclusive
+    ));
+  }
+
+  #[test]
+  fn codeseparator_spend_is_invalid() {
+    // Required rule: CODESEPARATOR is forbidden, so a proof using it must
+    // verify invalid — not inconclusive, even though neither the templates
+    // nor the interpreter can evaluate such scripts.
+    let codeseparator_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_CODESEPARATOR)
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .into_script();
+
+    // P2WSH witness script.
+    let address = Address::p2wsh(&codeseparator_script, bitcoin::Network::Bitcoin);
+
+    let to_spend = create_to_spend(&address, "msg");
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+
+    let mut witness = Witness::new();
+    witness.push(codeseparator_script.as_bytes());
+    psbt.inputs[0].final_script_witness = Some(witness);
+
+    assert!(matches!(
+      verify_full(&address, "msg", psbt.extract_tx().unwrap()),
+      Verification::Invalid(Error::CodeSeparator)
+    ));
+
+    // P2SH redeem script.
+    let address = Address::p2sh(&codeseparator_script, bitcoin::Network::Bitcoin).unwrap();
+
+    let to_spend = create_to_spend(&address, "msg");
+    let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+      .extract_tx()
+      .unwrap();
+
+    to_sign.input[0].script_sig = ScriptBuf::builder()
+      .push_slice(push_bytes(codeseparator_script.as_bytes()))
+      .into_script();
+
+    assert!(matches!(
+      verify_full(&address, "msg", to_sign),
+      Verification::Invalid(Error::CodeSeparator)
+    ));
+
+    // P2TR script-path tapscript.
+    let secp = Secp256k1::new();
+    let internal_key = PrivateKey::from_wif(WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&secp)
+      .inner
+      .x_only_public_key()
+      .0;
+
+    let spend_info = bitcoin::taproot::TaprootBuilder::new()
+      .add_leaf(0, codeseparator_script.clone())
+      .unwrap()
+      .finalize(&secp, internal_key)
+      .unwrap();
+
+    let address = Address::p2tr(
+      &secp,
+      internal_key,
+      spend_info.merkle_root(),
+      bitcoin::Network::Bitcoin,
+    );
+
+    let control_block = spend_info
+      .control_block(&(
+        codeseparator_script.clone(),
+        bitcoin::taproot::LeafVersion::TapScript,
+      ))
+      .unwrap();
+
+    let to_spend = create_to_spend(&address, "msg");
+    let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+      .extract_tx()
+      .unwrap();
+
+    let mut witness = Witness::new();
+    witness.push(codeseparator_script.as_bytes());
+    witness.push(control_block.serialize());
+    to_sign.input[0].witness = witness;
+
+    assert!(matches!(
+      verify_full(&address, "msg", to_sign),
+      Verification::Invalid(Error::CodeSeparator)
+    ));
+  }
+
+  #[test]
+  fn codeseparator_byte_in_pushed_data_is_not_an_opcode() {
+    // 0xab inside pushed data is data, not OP_CODESEPARATOR, and must not
+    // trip the required rule. This bare hashlock is still inexpressible in
+    // miniscript, so the outcome stays inconclusive.
+    let witness_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_SHA256)
+      .push_slice([0xab; 32])
+      .push_opcode(opcodes::all::OP_EQUAL)
+      .into_script();
+
+    let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
+
+    let to_spend = create_to_spend(&address, "msg");
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+
+    let mut witness = Witness::new();
+    witness.push::<&[u8]>(&[]);
     witness.push(witness_script.as_bytes());
     psbt.inputs[0].final_script_witness = Some(witness);
 
