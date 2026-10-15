@@ -1,7 +1,6 @@
 use super::*;
 
 #[derive(Debug, Snafu)]
-#[non_exhaustive]
 #[snafu(context(suffix(false)), visibility(pub))]
 pub enum Error {
   #[snafu(display("Failed to parse address `{address}`"))]
