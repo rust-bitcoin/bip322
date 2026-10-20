@@ -8,6 +8,8 @@ ci: clippy
   cargo fmt -- --check
   cargo test --all
   cargo run --example simple_sign_verify_encoded
+  cargo run --example multisig_psbt
+  cargo run --example proof_of_funds
 
 fmt:
   cargo fmt --all
