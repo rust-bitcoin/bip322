@@ -2,8 +2,12 @@
 //! BIP-322 "full (proof of funds)" variant.
 
 use {
-  bip322::{sign_pof_encoded, verify_pof_encoded, LockParams, ProofInput, Verification},
-  bitcoin::{Address, Amount, OutPoint, PrivateKey, TxOut},
+  base64::{engine::general_purpose, Engine},
+  bip322::{
+    sign_pof_encoded, verify_pof_encoded, LockParams, ProofInput, Verification,
+    POF_SIGNATURE_PREFIX,
+  },
+  bitcoin::{psbt::Psbt, Address, Amount, OutPoint, PrivateKey, TxOut},
   std::str::FromStr,
 };
 
@@ -55,13 +59,21 @@ fn main() {
 
   match verify_pof_encoded(ADDRESS, MESSAGE, &signature) {
     Verification::Valid { .. } => {
-      let total = inputs
+      // A verifier only has the proof, so it reads the claimed amounts from
+      // the decoded PSBT. Input 0 is the message challenge; the rest are the
+      // proven UTXOs, each carrying a witness_utxo since they are segwit.
+      let proof = signature.strip_prefix(POF_SIGNATURE_PREFIX).unwrap();
+      let psbt = Psbt::deserialize(&general_purpose::STANDARD.decode(proof).unwrap()).unwrap();
+
+      let claimed = &psbt.inputs[1..];
+      let total = claimed
         .iter()
-        .map(|input| input.prevout.value)
+        .map(|input| input.witness_utxo.as_ref().unwrap().value)
         .sum::<Amount>();
+
       println!(
         "valid: signer controls {} UTXOs worth {total}, pending UTXO set lookup",
-        inputs.len()
+        claimed.len()
       );
     }
     Verification::Inconclusive => panic!("verifier could not interpret a script"),
