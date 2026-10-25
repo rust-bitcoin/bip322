@@ -211,9 +211,10 @@ fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
 
 /// Verifies the BIP-322 simple format.
 ///
-/// Accepts P2SH-wrapped scripts (P2SH-P2WPKH, P2SH multisig) in addition to
-/// the native segwit types the BIP's simple table lists — a deliberate
-/// superset, since verifier-side leniency is harmless.
+/// Accepts P2SH-P2WPKH in addition to the native segwit types the BIP's
+/// simple table lists — a deliberate superset, since verifier-side leniency
+/// is harmless. Legacy P2SH and nested P2SH-P2WSH require scriptSig data and
+/// therefore require the full format.
 ///
 /// The witness is verified by building the corresponding full `to_sign`
 /// transaction around it. That construction is infallible — a freshly built
@@ -253,15 +254,20 @@ pub fn verify_full(
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
-  // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
-  if !matches!(to_sign.version, Version(0) | Version(2)) {
-    return Verification::Inconclusive;
-  }
-
   let challenge_prevout = TxOut {
     value: Amount::ZERO,
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   };
+
+  // Required rules take precedence over upgradeable rules and interpretation.
+  if spends_codeseparator(&to_sign, std::slice::from_ref(&challenge_prevout)) {
+    return Verification::Invalid(Error::CodeSeparator);
+  }
+
+  // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
+  if !matches!(to_sign.version, Version(0) | Version(2)) {
+    return Verification::Inconclusive;
+  }
 
   match verify_input(&to_sign, &[challenge_prevout], 0) {
     Ok(InputVerification::Valid) => Verification::Valid {
@@ -324,9 +330,6 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
 
   let unsigned_tx = &psbt.unsigned_tx;
 
-  if !matches!(unsigned_tx.version, Version(0) | Version(2)) {
-    return Verification::Inconclusive;
-  }
   if unsigned_tx.input.len() < 2 {
     return Verification::Invalid(Error::ToSignInvalid);
   }
@@ -393,6 +396,17 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
 
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
 
+  // Check required rules across every input before any one input can return
+  // inconclusive. Otherwise the verdict would depend on input order.
+  if spends_codeseparator(&to_sign, &all_prevouts) {
+    return Verification::Invalid(Error::CodeSeparator);
+  }
+
+  // Upgradeable rule: nVersion must be 0 or 2, else inconclusive.
+  if !matches!(to_sign.version, Version(0) | Version(2)) {
+    return Verification::Inconclusive;
+  }
+
   for input_index in 0..to_sign.input.len() {
     match verify_input(&to_sign, &all_prevouts, input_index) {
       Ok(InputVerification::Valid) => {}
@@ -413,55 +427,55 @@ fn verify_input(
   prevouts: &[TxOut],
   input_index: usize,
 ) -> Result<InputVerification> {
-  // Required rule: CODESEPARATOR (and FindAndDelete, which cannot occur in
-  // the standard templates) is forbidden. Neither the script templates nor
-  // the interpreter can evaluate such scripts, so scan every script this
-  // input executes and reject up front instead of reporting inconclusive.
-  if spends_codeseparator(to_sign, prevouts, input_index) {
-    return Err(Error::CodeSeparator);
-  }
-
   match verify_standard_script(to_sign, prevouts, input_index)? {
     InputVerification::Inconclusive => verify_with_interpreter(to_sign, prevouts, input_index),
     valid => Ok(valid),
   }
 }
 
-/// Whether any script executed by this input contains OP_CODESEPARATOR:
-/// the scriptSig itself, a P2SH redeem script, a native or nested P2WSH
-/// witness script, or a P2TR script-path tapscript.
-fn spends_codeseparator(to_sign: &Transaction, prevouts: &[TxOut], input_index: usize) -> bool {
+/// Whether any input executes a script containing OP_CODESEPARATOR.
+fn spends_codeseparator(to_sign: &Transaction, prevouts: &[TxOut]) -> bool {
+  (0..to_sign.input.len())
+    .any(|input_index| input_spends_codeseparator(to_sign, prevouts, input_index))
+}
+
+/// Whether this input executes a script containing OP_CODESEPARATOR: the
+/// scriptSig, scriptPubKey, P2SH redeem script, native or nested P2WSH witness
+/// script, or P2TR script-path tapscript.
+fn input_spends_codeseparator(
+  to_sign: &Transaction,
+  prevouts: &[TxOut],
+  input_index: usize,
+) -> bool {
   let txin = &to_sign.input[input_index];
   let script_pubkey = &prevouts[input_index].script_pubkey;
 
-  if contains_codeseparator(&txin.script_sig) {
+  if contains_codeseparator(&txin.script_sig) || contains_codeseparator(script_pubkey) {
     return true;
   }
 
   if script_pubkey.is_p2sh() {
-    // The redeem script is the last scriptSig push. When it is a nested
-    // P2WSH program, the witness script is the last witness item.
+    // The redeem script is the last scriptSig push.
     if let Some(Ok(Instruction::PushBytes(redeem_script))) =
       txin.script_sig.instructions_minimal().last()
     {
       if contains_codeseparator(Script::from_bytes(redeem_script.as_bytes())) {
         return true;
       }
-
-      let program = redeem_script.as_bytes();
-      if program.len() == 34 && program[..2] == [0x00, 0x20] {
-        if let Some(witness_script) = txin.witness.last() {
-          if contains_codeseparator(Script::from_bytes(witness_script)) {
-            return true;
-          }
-        }
-      }
     }
   }
 
-  if script_pubkey.is_p2wsh() {
-    if let Some(witness_script) = txin.witness.last() {
-      if contains_codeseparator(Script::from_bytes(witness_script)) {
+  if script_pubkey.is_p2wsh() || script_pubkey.is_p2sh() {
+    if let Some(witness_script) = txin.witness.last().map(Script::from_bytes) {
+      let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
+      let nested_program = ScriptBuf::new_p2sh(&program.script_hash());
+
+      // Identify the script from the challenge itself rather than relying on
+      // scriptSig. Simple proofs have an empty scriptSig, and arbitrary witness
+      // items must not be parsed as scripts.
+      if (script_pubkey == &program || script_pubkey == &nested_program)
+        && contains_codeseparator(witness_script)
+      {
         return true;
       }
     }
@@ -491,8 +505,8 @@ fn spends_codeseparator(to_sign: &Transaction, prevouts: &[TxOut], input_index: 
   false
 }
 
-/// Whether a script contains OP_CODESEPARATOR as an executed opcode
-/// (occurrences inside pushed data do not count).
+/// Whether a script contains OP_CODESEPARATOR as an opcode (occurrences
+/// inside pushed data do not count).
 fn contains_codeseparator(script: &Script) -> bool {
   script.instructions().any(
     |instruction| matches!(instruction, Ok(Instruction::Op(opcode)) if opcode == opcodes::all::OP_CODESEPARATOR),
