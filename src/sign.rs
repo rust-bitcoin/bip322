@@ -130,7 +130,7 @@ pub fn sign_simple(
   private_keys: &[PrivateKey],
   witness_script: Option<&ScriptBuf>,
 ) -> Result<Witness> {
-  if matches!(address.to_address_data(), AddressData::P2sh { .. }) && witness_script.is_some() {
+  if matches!(address.to_address_data(), AddressData::P2sh { .. }) {
     return Err(Error::UnsupportedAddress {
       address: address.to_string(),
     });
@@ -233,13 +233,27 @@ pub fn sign_pof(
     return Err(Error::NoProofInputs);
   }
 
+  std::str::from_utf8(message.as_ref()).map_err(|_| Error::ToSignInvalid)?;
+
   let to_spend = create_to_spend(address, &message);
+  let challenge_outpoint = OutPoint {
+    txid: to_spend.compute_txid(),
+    vout: 0,
+  };
+
+  for (index, input) in inputs.iter().enumerate() {
+    if input.outpoint.is_null()
+      || input.outpoint == challenge_outpoint
+      || inputs[..index]
+        .iter()
+        .any(|earlier| earlier.outpoint == input.outpoint)
+    {
+      return Err(Error::ToSignInvalid);
+    }
+  }
 
   let mut tx_in = vec![TxIn {
-    previous_output: OutPoint {
-      txid: to_spend.compute_txid(),
-      vout: 0,
-    },
+    previous_output: challenge_outpoint,
     script_sig: ScriptBuf::new(),
     sequence: locks.sequence,
     witness: Witness::new(),
@@ -438,6 +452,10 @@ pub fn create_message_signature_p2wpkh(
   input_index: usize,
   is_p2sh: bool,
 ) -> Result<Witness> {
+  if input_index >= to_sign.unsigned_tx.input.len() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
@@ -450,7 +468,13 @@ pub fn create_message_signature_p2wpkh(
       .context(error::UncompressedPublicKey)?,
   );
 
-  if !is_p2sh && prevout.script_pubkey != p2wpkh_script {
+  let expected_script_pubkey = if is_p2sh {
+    ScriptBuf::new_p2sh(&p2wpkh_script.script_hash())
+  } else {
+    p2wpkh_script.clone()
+  };
+
+  if prevout.script_pubkey != expected_script_pubkey {
     return Err(Error::PublicKeyMismatch);
   }
 
@@ -465,7 +489,7 @@ pub fn create_message_signature_p2wpkh(
       prevout.value,
       sighash_type,
     )
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
 
   let signature = secp.sign_ecdsa(
     &secp256k1::Message::from_digest_slice(sighash.as_ref())
@@ -475,7 +499,7 @@ pub fn create_message_signature_p2wpkh(
 
   let witness = sighash_cache
     .witness_mut(input_index)
-    .expect("getting mutable witness reference should work");
+    .ok_or(Error::ToSignInvalid)?;
 
   witness.push(
     bitcoin::ecdsa::Signature {
@@ -498,6 +522,13 @@ pub fn create_message_signature_taproot(
   input_index: usize,
   aux_rand: Option<[u8; 32]>,
 ) -> Result<Witness> {
+  if input_index >= to_sign.inputs.len()
+    || input_index >= to_sign.unsigned_tx.input.len()
+    || prevouts.len() != to_sign.unsigned_tx.input.len()
+  {
+    return Err(Error::ToSignInvalid);
+  }
+
   let mut to_sign = to_sign.clone();
 
   let secp = Secp256k1::new();
@@ -512,11 +543,18 @@ pub fn create_message_signature_taproot(
 
   let sighash = sighash_cache
     .taproot_key_spend_signature_hash(input_index, &sighash::Prevouts::All(prevouts), sighash_type)
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
 
   let key_pair = key_pair
     .tap_tweak(&secp, to_sign.inputs[input_index].tap_merkle_root)
     .to_keypair();
+
+  let (output_key, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
+  if prevouts[input_index].script_pubkey
+    != ScriptBuf::new_p2tr_tweaked(output_key.dangerous_assume_tweaked())
+  {
+    return Err(Error::PublicKeyMismatch);
+  }
 
   let signature = if let Some(aux_rand) = aux_rand {
     secp.sign_schnorr_with_aux_rand(
@@ -535,7 +573,7 @@ pub fn create_message_signature_taproot(
 
   let witness = sighash_cache
     .witness_mut(input_index)
-    .expect("getting mutable witness reference should work");
+    .ok_or(Error::ToSignInvalid)?;
 
   witness.push(
     bitcoin::taproot::Signature {
@@ -556,13 +594,17 @@ pub fn create_message_signature_p2wsh(
   prevout: &TxOut,
   input_index: usize,
 ) -> Result<Witness> {
+  if input_index >= to_sign.unsigned_tx.input.len() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
 
   let sighash = sighash_cache
     .p2wsh_signature_hash(input_index, witness_script, prevout.value, sighash_type)
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
 
   let message = secp256k1::Message::from_digest_slice(sighash.as_ref())
     .expect("should be cryptographically secure hash");
@@ -588,12 +630,20 @@ pub fn create_message_signature_p2sh_multisig(
   redeem_script: &ScriptBuf,
   input_index: usize,
 ) -> Result<Witness> {
+  if redeem_script.len() > 520 {
+    return Err(Error::InvalidWitness);
+  }
+
+  if input_index >= to_sign.inputs.len() || input_index >= to_sign.unsigned_tx.input.len() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
 
   let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
     .legacy_signature_hash(input_index, redeem_script, sighash_type.to_u32())
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
 
   let message = secp256k1::Message::from_digest_slice(sighash.as_ref())
     .expect("should be cryptographically secure hash");
@@ -623,6 +673,10 @@ pub fn create_message_signature_p2pkh(
   prevout: &TxOut,
   input_index: usize,
 ) -> Result<Witness> {
+  if input_index >= to_sign.inputs.len() || input_index >= to_sign.unsigned_tx.input.len() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let pub_key = private_key.public_key(&secp);
@@ -633,7 +687,7 @@ pub fn create_message_signature_p2pkh(
 
   let sighash = SighashCache::new(to_sign.unsigned_tx.clone())
     .legacy_signature_hash(input_index, &prevout.script_pubkey, sighash_type.to_u32())
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
   let msg = secp256k1::Message::from_digest_slice(sighash.as_ref())
     .expect("should be cryptographically secure hash");
 

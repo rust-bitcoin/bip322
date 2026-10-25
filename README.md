@@ -19,6 +19,9 @@ security is welcome and encouraged.
 The goal is to provide a full signing and verifying library similar to
 [this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
 
+PSBT interoperability is currently limited to PSBTv0. PSBTv2 signing requests
+are not supported by the PSBT creator, signer, or finalizer roles.
+
 ## Test Vectors
 
 - from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)

@@ -350,34 +350,48 @@ pub(crate) fn set_proof_input_utxo(
   Ok(())
 }
 
-/// Resolves an input's previous output from its PSBT UTXO fields.
+/// Resolves an input's previous output from its PSBT UTXO fields, validating
+/// every supplied field instead of silently preferring one over the other.
 pub(crate) fn psbt_input_prevout(psbt: &Psbt, index: usize) -> Result<TxOut> {
-  let input = &psbt.inputs[index];
+  let input = psbt.inputs.get(index).ok_or(Error::ToSignInvalid)?;
+  let outpoint = psbt
+    .unsigned_tx
+    .input
+    .get(index)
+    .ok_or(Error::ToSignInvalid)?
+    .previous_output;
 
-  if let Some(txout) = &input.witness_utxo {
-    return Ok(txout.clone());
-  }
-
-  let outpoint = psbt.unsigned_tx.input[index].previous_output;
-
-  let tx = input
-    .non_witness_utxo
-    .as_ref()
-    .or_else(|| {
-      (1..index).find_map(|i| {
-        (psbt.unsigned_tx.input[i].previous_output.txid == outpoint.txid)
-          .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
-          .flatten()
-      })
+  let tx = input.non_witness_utxo.as_ref().or_else(|| {
+    (1..index).find_map(|i| {
+      (psbt.unsigned_tx.input[i].previous_output.txid == outpoint.txid)
+        .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
+        .flatten()
     })
-    .ok_or(Error::ToSignInvalid)?;
+  });
 
-  if tx.compute_txid() != outpoint.txid {
-    return Err(Error::ToSignInvalid);
+  let non_witness_utxo = if let Some(tx) = tx {
+    if tx.compute_txid() != outpoint.txid {
+      return Err(Error::ToSignInvalid);
+    }
+    Some(
+      tx.output
+        .get(outpoint.vout as usize)
+        .cloned()
+        .ok_or(Error::ToSignInvalid)?,
+    )
+  } else {
+    None
+  };
+
+  if let (Some(witness), Some(non_witness)) = (&input.witness_utxo, &non_witness_utxo) {
+    if witness != non_witness {
+      return Err(Error::ToSignInvalid);
+    }
   }
 
-  tx.output
-    .get(outpoint.vout as usize)
-    .cloned()
+  input
+    .witness_utxo
+    .clone()
+    .or(non_witness_utxo)
     .ok_or(Error::ToSignInvalid)
 }
