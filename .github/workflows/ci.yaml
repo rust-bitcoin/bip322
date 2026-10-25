@@ -8,10 +8,14 @@ on:
     branches:
     - master
 
+permissions: {}
+
 jobs:
   Test:
     name: Test - ${{ matrix.toolchain }} toolchain, ${{ matrix.dep }} deps
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +24,8 @@ jobs:
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: "Install cargo-rbmt"
         uses: rust-bitcoin/rust-bitcoin-maintainer-tools/actions/setup-rbmt@1e8fea9234a597a3397326a539d2e3044938900d
       - name: "Run tests"
@@ -28,6 +34,8 @@ jobs:
   Check:
     name: Check - ${{ matrix.task }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +43,8 @@ jobs:
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: "Install cargo-rbmt"
         uses: rust-bitcoin/rust-bitcoin-maintainer-tools/actions/setup-rbmt@1e8fea9234a597a3397326a539d2e3044938900d
       - name: "Run ${{ matrix.task }}"
@@ -43,9 +53,13 @@ jobs:
   Format:
     name: Format - nightly toolchain
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: "Install cargo-rbmt"
         uses: rust-bitcoin/rust-bitcoin-maintainer-tools/actions/setup-rbmt@1e8fea9234a597a3397326a539d2e3044938900d
       - name: "Check formatting"
@@ -54,9 +68,13 @@ jobs:
   Arch32bit:
     name: Test 32-bit version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: "Checkout repo"
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: "Select toolchain"
         uses: dtolnay/rust-toolchain@stable
       - name: "Add architecture i386"
