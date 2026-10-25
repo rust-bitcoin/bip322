@@ -6,7 +6,7 @@ description = "Implements BIP322 generic message signing and verification"
 license = "CC0-1.0"
 homepage = "https://bip322.rs"
 repository = "https://github.com/rust-bitcoin/bip322"
-rust-version = "1.74"
+rust-version = "1.74.0"
 
 [features]
 default = []
@@ -22,3 +22,11 @@ snafu = { version =  "0.9.2", default-features = false, features = ["std"] }
 hex = "0.4.3"
 pretty_assertions = "1.4.1"
 rand = "0.9.0"
+
+[package.metadata]
+rbmt.version = "0.5.3"
+rbmt.toolchains.nightly = "nightly-2026-10-10"
+rbmt.toolchains.stable = "1.99.1"
+rbmt.lock.lockfiles = ["minimal", "recent"]
+rbmt.lint.allowed_duplicates = ["hex-conservative"]
+rbmt.test.examples = ["simple_sign_verify_encoded"]
