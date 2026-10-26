@@ -308,12 +308,15 @@ pub fn verify_full(
     script_pubkey: to_spend.output[0].script_pubkey.clone(),
   };
 
+  let spend = Spend::parse(&to_sign, std::slice::from_ref(&challenge_prevout), 0);
+
   // Required rules take precedence over upgradeable rules and interpretation.
-  if spends_codeseparator(&to_sign, std::slice::from_ref(&challenge_prevout)) {
+  if spend.spends_codeseparator() {
     return Verification::Invalid(Error::CodeSeparator);
   }
 
-  match verify_input(&to_sign, &[challenge_prevout], 0) {
+  let mut sighash_cache = SighashCache::new(&to_sign);
+  match verify_input(&to_sign, &spend, &mut sighash_cache) {
     Ok(InputVerification::Valid) => {
       // Upgradeable rules are considered only after every required rule.
       if !matches!(to_sign.version, Version(0) | Version(2)) {
@@ -416,34 +419,46 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
       return Verification::Invalid(Error::ToSignInvalid);
     }
 
-    // BIP174 requires the full previous transaction for every legacy input.
-    // It may be inherited from an earlier input spending the same transaction.
-    let final_script_sig = psbt.inputs[index]
-      .final_script_sig
-      .as_deref()
-      .unwrap_or(&unsigned_tx.input[index].script_sig);
-    if !is_segwit_spend(&prevout.script_pubkey, final_script_sig)
-      && !resolver.has_non_witness(index)
-    {
-      return Verification::Invalid(Error::ToSignInvalid);
-    }
-
     all_prevouts.push(prevout);
   }
 
+  let has_non_witness: Vec<bool> = (0..unsigned_tx.input.len())
+    .map(|index| resolver.has_non_witness(index))
+    .collect();
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
   if to_sign.weight() > bitcoin::Weight::MAX_BLOCK {
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
+  let spends: Vec<Spend> = (0..to_sign.input.len())
+    .map(|input_index| Spend::parse(&to_sign, &all_prevouts, input_index))
+    .collect();
+
+  // BIP174 requires the full previous transaction for every legacy input. It
+  // may be inherited from an earlier input spending the same transaction.
+  for spend in &spends {
+    if spend.witness_program.is_none() && !has_non_witness[spend.input_index] {
+      return Verification::Invalid(Error::ToSignInvalid);
+    }
+  }
+
   // Required rules take precedence over every upgradeable rule.
-  if spends_codeseparator(&to_sign, &all_prevouts) {
+  if spends.iter().any(Spend::spends_codeseparator) {
     return Verification::Invalid(Error::CodeSeparator);
   }
 
+  // Legacy and third-party interpreter sighashes can require quadratic work.
+  // Bound verification effort and report larger proofs as unverifiable rather
+  // than returning a required-rule failure.
+  const MAX_PROOF_INPUTS: usize = 1024;
+  if spends.len() > MAX_PROOF_INPUTS {
+    return Verification::Inconclusive;
+  }
+
+  let mut sighash_cache = SighashCache::new(&to_sign);
   let mut inconclusive = false;
-  for input_index in 0..to_sign.input.len() {
-    match verify_input(&to_sign, &all_prevouts, input_index) {
+  for spend in &spends {
+    match verify_input(&to_sign, spend, &mut sighash_cache) {
       Ok(InputVerification::Valid) => {}
       Ok(InputVerification::Inconclusive) => inconclusive = true,
       Ok(InputVerification::Unsupported) => unreachable!("unsupported inputs use the interpreter"),
@@ -461,184 +476,315 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
   }
 }
 
-fn is_segwit_spend(script_pubkey: &Script, script_sig: &Script) -> bool {
-  if script_pubkey.is_witness_program() {
-    return true;
-  }
-
-  script_pubkey.is_p2sh()
-    && script_sig
-      .instructions_minimal()
-      .last()
-      .is_some_and(|instruction| {
-        matches!(instruction, Ok(Instruction::PushBytes(program))
-          if Script::from_bytes(program.as_bytes()).is_witness_program())
-      })
+struct Spend<'a> {
+  txin: &'a TxIn,
+  prevout: &'a TxOut,
+  prevouts: &'a [TxOut],
+  input_index: usize,
+  p2sh: Option<P2shSpend<'a>>,
+  witness_program: Option<WitnessProgramSpend<'a>>,
+  witness_script: Option<&'a Script>,
+  taproot: Option<TaprootSpend<'a>>,
 }
 
-/// Verifies input.
-fn verify_input(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
-) -> Result<InputVerification> {
-  let script_pubkey = &prevouts[input_index].script_pubkey;
-  if input_has_naked_zero_timelock(to_sign, prevouts, input_index) {
-    return Err(Error::ScriptNotSatisfied);
-  }
-  if script_pubkey.witness_version().is_some_and(|version| {
-    version != bitcoin::WitnessVersion::V0 && version != bitcoin::WitnessVersion::V1
-  }) {
-    if !to_sign.input[input_index].script_sig.is_empty() {
-      return Err(Error::ToSignInvalid);
-    }
-    return Ok(InputVerification::Inconclusive);
-  }
-
-  match verify_standard_script(to_sign, prevouts, input_index)? {
-    InputVerification::Unsupported => verify_with_interpreter(to_sign, prevouts, input_index),
-    valid => Ok(valid),
-  }
+struct P2shSpend<'a> {
+  pushes: Vec<&'a [u8]>,
+  redeem_script: Option<&'a Script>,
+  minimal_push_only: bool,
+  commitment_valid: bool,
 }
 
-/// Miniscript's type-erased interpreter can treat a naked `older(0)` or
-/// `after(0)` fragment as satisfied even though the executed script leaves a
-/// false zero on top of the stack. Reject those exact known-invalid scripts.
-fn input_has_naked_zero_timelock(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
-) -> bool {
-  fn is_naked_zero_timelock(script: &Script) -> bool {
-    let mut instructions = script.instructions();
-    matches!(
-      (instructions.next(), instructions.next(), instructions.next()),
-      (
-        Some(Ok(Instruction::PushBytes(empty))),
-        Some(Ok(Instruction::Op(opcode))),
-        None
-      ) if empty.is_empty()
-        && (opcode == opcodes::all::OP_CSV || opcode == opcodes::all::OP_CLTV)
-    )
-  }
+struct WitnessProgramSpend<'a> {
+  version: bitcoin::WitnessVersion,
+  program: &'a [u8],
+  nested: bool,
+}
 
-  let txin = &to_sign.input[input_index];
-  let script_pubkey = &prevouts[input_index].script_pubkey;
-  if is_naked_zero_timelock(script_pubkey) {
-    return true;
-  }
+struct TaprootSpend<'a> {
+  output_key: Option<XOnlyPublicKey>,
+  annex: Option<&'a [u8]>,
+  path: TaprootPath<'a>,
+}
 
-  if script_pubkey.is_p2sh()
-    && txin
-      .script_sig
-      .instructions_minimal()
-      .last()
-      .is_some_and(|instruction| {
-        matches!(instruction, Ok(Instruction::PushBytes(redeem))
-          if is_naked_zero_timelock(Script::from_bytes(redeem.as_bytes())))
-      })
-  {
-    return true;
-  }
+enum TaprootPath<'a> {
+  Empty,
+  Key { signature: &'a [u8] },
+  Script(TaprootScriptSpend<'a>),
+}
 
-  if (script_pubkey.is_p2wsh() || script_pubkey.is_p2sh())
-    && txin.witness.last().is_some_and(|witness_script| {
-      let witness_script = Script::from_bytes(witness_script);
-      let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
-      (script_pubkey == &program || script_pubkey == &ScriptBuf::new_p2sh(&program.script_hash()))
-        && is_naked_zero_timelock(witness_script)
-    })
-  {
-    return true;
-  }
+struct TaprootScriptSpend<'a> {
+  initial_stack: Vec<&'a [u8]>,
+  tapscript: &'a Script,
+  control_block: Option<bitcoin::taproot::ControlBlock>,
+  commitment_valid: bool,
+}
 
-  if script_pubkey.is_p2tr() {
-    let items: Vec<&[u8]> = txin.witness.iter().collect();
-    if items.len() >= 2 {
-      let mut control_index = items.len() - 1;
-      if items[control_index].first() == Some(&0x50) {
-        control_index -= 1;
+impl<'a> Spend<'a> {
+  fn parse(to_sign: &'a Transaction, prevouts: &'a [TxOut], input_index: usize) -> Self {
+    use bitcoin::taproot::{ControlBlock, TAPROOT_ANNEX_PREFIX};
+
+    let txin = &to_sign.input[input_index];
+    let prevout = &prevouts[input_index];
+    let script_pubkey = &prevout.script_pubkey;
+
+    let p2sh = script_pubkey.is_p2sh().then(|| {
+      let mut pushes = Vec::new();
+      let mut minimal_push_only = true;
+      let mut last_push = None;
+      let mut ends_with_push = false;
+      for instruction in txin.script_sig.instructions_minimal() {
+        match instruction {
+          Ok(Instruction::PushBytes(bytes)) => {
+            let bytes = bytes.as_bytes();
+            pushes.push(bytes);
+            last_push = Some(bytes);
+            ends_with_push = true;
+          }
+          _ => {
+            minimal_push_only = false;
+            ends_with_push = false;
+          }
+        }
       }
-      let control = items[control_index];
-      return control_index >= 1
-        && control.first().is_some_and(|byte| byte & 0xfe == 0xc0)
-        && is_naked_zero_timelock(Script::from_bytes(items[control_index - 1]));
-    }
-  }
-
-  false
-}
-
-/// Whether any input executes a script containing OP_CODESEPARATOR.
-fn spends_codeseparator(to_sign: &Transaction, prevouts: &[TxOut]) -> bool {
-  (0..to_sign.input.len())
-    .any(|input_index| input_spends_codeseparator(to_sign, prevouts, input_index))
-}
-
-/// Whether this input executes a script containing OP_CODESEPARATOR: the
-/// scriptSig, scriptPubKey, P2SH redeem script, native or nested P2WSH witness
-/// script, or P2TR script-path tapscript.
-fn input_spends_codeseparator(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
-) -> bool {
-  let txin = &to_sign.input[input_index];
-  let script_pubkey = &prevouts[input_index].script_pubkey;
-
-  if contains_codeseparator(&txin.script_sig) || contains_codeseparator(script_pubkey) {
-    return true;
-  }
-
-  if script_pubkey.is_p2sh() {
-    // The redeem script is the last scriptSig push.
-    if let Some(Ok(Instruction::PushBytes(redeem_script))) =
-      txin.script_sig.instructions_minimal().last()
-    {
-      if contains_codeseparator(Script::from_bytes(redeem_script.as_bytes())) {
-        return true;
+      let redeem_script = ends_with_push
+        .then_some(last_push)
+        .flatten()
+        .map(Script::from_bytes);
+      let commitment_valid = redeem_script
+        .is_some_and(|redeem| script_pubkey == &ScriptBuf::new_p2sh(&redeem.script_hash()));
+      P2shSpend {
+        pushes,
+        redeem_script,
+        minimal_push_only,
+        commitment_valid,
       }
+    });
+
+    let witness_program = if let Some(version) = script_pubkey.witness_version() {
+      Some(WitnessProgramSpend {
+        version,
+        program: &script_pubkey.as_bytes()[2..],
+        nested: false,
+      })
+    } else {
+      p2sh
+        .as_ref()
+        .and_then(|p2sh| p2sh.redeem_script)
+        .and_then(|redeem| {
+          redeem.witness_version().map(|version| WitnessProgramSpend {
+            version,
+            program: &redeem.as_bytes()[2..],
+            nested: true,
+          })
+        })
+    };
+
+    let witness_script = (script_pubkey.is_p2wsh() || script_pubkey.is_p2sh())
+      .then(|| txin.witness.last().map(Script::from_bytes))
+      .flatten()
+      .filter(|script| {
+        let program = ScriptBuf::new_p2wsh(&script.wscript_hash());
+        script_pubkey == &program || script_pubkey == &ScriptBuf::new_p2sh(&program.script_hash())
+      });
+
+    let taproot = script_pubkey.is_p2tr().then(|| {
+      let output_key = XOnlyPublicKey::from_slice(&script_pubkey.as_bytes()[2..]).ok();
+      let items: Vec<&[u8]> = txin.witness.iter().collect();
+      let has_annex = items.len() >= 2
+        && items
+          .last()
+          .and_then(|item| item.first())
+          .is_some_and(|prefix| *prefix == TAPROOT_ANNEX_PREFIX);
+      let annex = has_annex.then_some(items[items.len() - 1]);
+      let spend_len = items.len() - usize::from(has_annex);
+      let path = match spend_len {
+        0 => TaprootPath::Empty,
+        1 => TaprootPath::Key {
+          signature: items[0],
+        },
+        _ => {
+          let tapscript = Script::from_bytes(items[spend_len - 2]);
+          let control_bytes = items[spend_len - 1];
+          let control_block = ControlBlock::decode(control_bytes).ok();
+          let commitment_valid = match (&control_block, output_key) {
+            (Some(control), Some(output_key)) => control.verify_taproot_commitment(
+              &Secp256k1::verification_only(),
+              output_key,
+              tapscript,
+            ),
+            _ => false,
+          };
+          TaprootPath::Script(TaprootScriptSpend {
+            initial_stack: items[..spend_len - 2].to_vec(),
+            tapscript,
+            control_block,
+            commitment_valid,
+          })
+        }
+      };
+      TaprootSpend {
+        output_key,
+        annex,
+        path,
+      }
+    });
+
+    Self {
+      txin,
+      prevout,
+      prevouts,
+      input_index,
+      p2sh,
+      witness_program,
+      witness_script,
+      taproot,
     }
   }
 
-  if script_pubkey.is_p2wsh() || script_pubkey.is_p2sh() {
-    if let Some(witness_script) = txin.witness.last().map(Script::from_bytes) {
-      let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
-      let nested_program = ScriptBuf::new_p2sh(&program.script_hash());
-
-      // Identify the script from the challenge itself rather than relying on
-      // scriptSig. Simple proofs have an empty scriptSig, and arbitrary witness
-      // items must not be parsed as scripts.
-      if (script_pubkey == &program || script_pubkey == &nested_program)
-        && contains_codeseparator(witness_script)
+  fn validate_structure(&self) -> Result<()> {
+    let requires_minimal = |script: &Script| {
+      if script
+        .instructions_minimal()
+        .any(|instruction| instruction.is_err())
       {
-        return true;
+        return Err(Error::InvalidWitness);
+      }
+      Ok(())
+    };
+    let validate_script = |script: &Script| {
+      requires_minimal(script)?;
+      let non_push_opcodes = script
+        .instructions()
+        .filter(|instruction| {
+          matches!(instruction, Ok(Instruction::Op(opcode))
+            if opcode.to_u8() > opcodes::all::OP_PUSHNUM_16.to_u8())
+        })
+        .take(202)
+        .count();
+      if non_push_opcodes > 201 {
+        return Err(Error::InvalidWitness);
+      }
+      Ok(())
+    };
+    validate_script(&self.txin.script_sig)?;
+    validate_script(&self.prevout.script_pubkey)?;
+    if self.witness_program.is_none() {
+      if let Some(redeem) = self.p2sh.as_ref().and_then(|p2sh| p2sh.redeem_script) {
+        validate_script(redeem)?;
       }
     }
-  }
-
-  if script_pubkey.is_p2tr() && txin.witness.len() >= 2 {
-    let items: Vec<&[u8]> = txin.witness.iter().collect();
-
-    // An annex is the last item and begins with 0x50; the control block
-    // precedes it and the tapscript precedes the control block.
-    let mut control_index = items.len() - 1;
-    if items[control_index].first() == Some(&0x50) {
-      control_index -= 1;
+    if let Some(script) = self.witness_script {
+      validate_script(script)?;
     }
 
-    let control_block = items[control_index];
-    if control_block.len() >= 33
-      && (control_block.len() - 33) % 32 == 0
-      && control_block[0] & 0xfe == 0xc0
-      && control_index >= 1
-      && contains_codeseparator(Script::from_bytes(items[control_index - 1]))
+    if let Some(witness) = &self.witness_program {
+      if witness.nested {
+        let p2sh = self.p2sh.as_ref().ok_or(Error::ToSignInvalid)?;
+        let redeem = p2sh.redeem_script.ok_or(Error::ToSignInvalid)?;
+        if !p2sh.minimal_push_only
+          || p2sh.pushes.len() != 1
+          || !p2sh.commitment_valid
+          || self.txin.script_sig != push_only_script(redeem)
+        {
+          return Err(Error::ToSignInvalid);
+        }
+      } else if !self.txin.script_sig.is_empty() {
+        return Err(Error::ToSignInvalid);
+      }
+
+      if witness.version == bitcoin::WitnessVersion::V0 && !matches!(witness.program.len(), 20 | 32)
+      {
+        return Err(Error::ToSignInvalid);
+      }
+    } else {
+      if self.prevout.script_pubkey.is_p2sh()
+        && self
+          .p2sh
+          .as_ref()
+          .is_some_and(|p2sh| p2sh.redeem_script.is_none())
+        && !self.txin.witness.is_empty()
+      {
+        return Err(Error::ToSignInvalid);
+      }
+      if !self.txin.witness.is_empty() {
+        return Err(Error::InvalidWitness);
+      }
+      if self.prevout.script_pubkey.is_p2sh() {
+        let p2sh = self.p2sh.as_ref().ok_or(Error::InvalidWitness)?;
+        let redeem = p2sh.redeem_script.ok_or(Error::InvalidWitness)?;
+        if !p2sh.minimal_push_only || redeem.len() > 520 {
+          return Err(Error::InvalidWitness);
+        }
+        if !p2sh.commitment_valid {
+          return Err(Error::ToSignInvalid);
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Whether this input executes a script containing OP_CODESEPARATOR.
+  fn spends_codeseparator(&self) -> bool {
+    if contains_codeseparator(&self.txin.script_sig)
+      || contains_codeseparator(&self.prevout.script_pubkey)
+      || self
+        .p2sh
+        .as_ref()
+        .and_then(|p2sh| p2sh.redeem_script)
+        .is_some_and(contains_codeseparator)
+      || self.witness_script.is_some_and(contains_codeseparator)
     {
       return true;
     }
+
+    matches!(
+      self.taproot.as_ref().map(|taproot| &taproot.path),
+      Some(TaprootPath::Script(script))
+        if script.control_block.as_ref().is_some_and(|control| {
+          control.leaf_version == bitcoin::taproot::LeafVersion::TapScript
+        }) && contains_codeseparator(script.tapscript)
+    )
   }
 
-  false
+  /// Miniscript's type-erased interpreter can treat a naked `older(0)` or
+  /// `after(0)` fragment as satisfied even though execution leaves false on
+  /// top of the stack. Reject those exact known-invalid scripts.
+  fn has_naked_zero_timelock(&self) -> bool {
+    fn is_naked_zero_timelock(script: &Script) -> bool {
+      let mut instructions = script.instructions();
+      matches!(
+        (instructions.next(), instructions.next(), instructions.next()),
+        (
+          Some(Ok(Instruction::PushBytes(empty))),
+          Some(Ok(Instruction::Op(opcode))),
+          None
+        ) if empty.is_empty()
+          && (opcode == opcodes::all::OP_CSV || opcode == opcodes::all::OP_CLTV)
+      )
+    }
+
+    is_naked_zero_timelock(&self.prevout.script_pubkey)
+      || self
+        .p2sh
+        .as_ref()
+        .and_then(|p2sh| p2sh.redeem_script)
+        .is_some_and(is_naked_zero_timelock)
+      || self.witness_script.is_some_and(is_naked_zero_timelock)
+      || matches!(
+        self.taproot.as_ref().map(|taproot| &taproot.path),
+        Some(TaprootPath::Script(script))
+          if script.control_block.as_ref().is_some_and(|control| {
+            control.leaf_version == bitcoin::taproot::LeafVersion::TapScript
+          }) && is_naked_zero_timelock(script.tapscript)
+      )
+  }
+
+  fn taproot_initial_stack(&self) -> &[&[u8]] {
+    match self.taproot.as_ref().map(|taproot| &taproot.path) {
+      Some(TaprootPath::Script(script)) => &script.initial_stack,
+      _ => &[],
+    }
+  }
 }
 
 /// Whether a script contains OP_CODESEPARATOR as an opcode (occurrences
@@ -649,28 +795,49 @@ fn contains_codeseparator(script: &Script) -> bool {
   )
 }
 
+/// Verifies input.
+fn verify_input(
+  to_sign: &Transaction,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
+) -> Result<InputVerification> {
+  if spend.has_naked_zero_timelock() {
+    return Err(Error::ScriptNotSatisfied);
+  }
+  spend.validate_structure()?;
+
+  if spend.witness_program.as_ref().is_some_and(|witness| {
+    (witness.nested && witness.version != bitcoin::WitnessVersion::V0)
+      || (!witness.nested
+        && ((witness.version == bitcoin::WitnessVersion::V1 && witness.program.len() != 32)
+          || (witness.version != bitcoin::WitnessVersion::V0
+            && witness.version != bitcoin::WitnessVersion::V1)))
+  }) {
+    return Ok(InputVerification::Inconclusive);
+  }
+
+  match verify_standard_script(spend, sighash_cache)? {
+    InputVerification::Unsupported => verify_with_interpreter(to_sign, spend),
+    valid => Ok(valid),
+  }
+}
+
 /// Fallback verification via the miniscript interpreter for scripts the
 /// templates cannot classify.
 ///
 /// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
 /// script this validator does not understand is neither accepted nor rejected.
-fn verify_with_interpreter(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
-) -> Result<InputVerification> {
+fn verify_with_interpreter(to_sign: &Transaction, spend: &Spend) -> Result<InputVerification> {
   use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
 
-  let prevout = &prevouts[input_index];
-  let txin = &to_sign.input[input_index];
   let secp = Secp256k1::verification_only();
-  let prevouts_all = sighash::Prevouts::All(prevouts);
+  let prevouts_all = sighash::Prevouts::All(spend.prevouts);
 
   let interpreter = match Interpreter::from_txdata(
-    &prevout.script_pubkey,
-    &txin.script_sig,
-    &txin.witness,
-    txin.sequence,
+    &spend.prevout.script_pubkey,
+    &spend.txin.script_sig,
+    &spend.txin.witness,
+    spend.txin.sequence,
     to_sign.lock_time,
   ) {
     Ok(interpreter) => interpreter,
@@ -680,14 +847,14 @@ fn verify_with_interpreter(
     }
     Err(miniscript::interpreter::Error::PubkeyParseError)
     | Err(miniscript::interpreter::Error::XOnlyPublicKeyParseError)
-      if prevout.script_pubkey.is_p2tr() && taproot_witness_has_unknown_key(txin) =>
+      if taproot_witness_has_unknown_key(spend) =>
     {
       return Ok(InputVerification::Inconclusive)
     }
     Err(_) => return Err(Error::ScriptNotSatisfied),
   };
 
-  for result in interpreter.iter(&secp, to_sign, input_index, &prevouts_all) {
+  for result in interpreter.iter(&secp, to_sign, spend.input_index, &prevouts_all) {
     match result {
       Ok(SatisfiedConstraint::PublicKey { key_sig })
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
@@ -708,7 +875,7 @@ fn verify_with_interpreter(
             });
           }
           if signature.sighash_type == TapSighashType::Default
-            && has_explicit_default_taproot_signature(txin, &signature)
+            && has_explicit_default_taproot_signature(spend.taproot_initial_stack(), &signature)
           {
             return Err(Error::SigHashTypeUnsupported {
               sighash_type: signature.sighash_type.to_string(),
@@ -733,103 +900,64 @@ fn verify_with_interpreter(
   Ok(InputVerification::Valid)
 }
 
-fn taproot_witness_has_unknown_key(txin: &TxIn) -> bool {
-  use bitcoin::hashes::{hash160, Hash};
+fn taproot_witness_has_unknown_key(spend: &Spend) -> bool {
+  use bitcoin::hashes::hash160;
 
-  let Some(tapscript) = txin
-    .witness
-    .iter()
-    .nth(txin.witness.len().saturating_sub(2))
-    .map(Script::from_bytes)
+  let Some(TaprootPath::Script(script)) = spend.taproot.as_ref().map(|taproot| &taproot.path)
   else {
     return false;
   };
 
-  txin
-    .witness
-    .iter()
-    .take(txin.witness.len().saturating_sub(2))
-    .any(|item| {
-      !item.is_empty()
-        && item.len() != 32
-        && tapscript
-          .as_bytes()
-          .windows(20)
-          .any(|window| window == &hash160::Hash::hash(item).to_byte_array()[..])
-    })
+  script.initial_stack.iter().any(|item| {
+    !item.is_empty()
+      && item.len() != 32
+      && script
+        .tapscript
+        .as_bytes()
+        .windows(20)
+        .any(|window| window == &hash160::Hash::hash(item).to_byte_array()[..])
+  })
 }
 
 fn has_explicit_default_taproot_signature(
-  txin: &TxIn,
+  initial_stack: &[&[u8]],
   signature: &bitcoin::taproot::Signature,
 ) -> bool {
-  txin
-    .witness
+  initial_stack
     .iter()
-    .take(txin.witness.len().saturating_sub(2))
     .any(|item| item.len() == 65 && item[64] == 0 && item[..64] == signature.signature.as_ref()[..])
 }
 
-/// Verifies the standard script types by template. Returns `Inconclusive`
-/// for anything else, which [`verify_input`] hands to the interpreter.
+/// Verifies the standard script types by template. Returns `Unsupported` for
+/// anything else, which [`verify_input`] hands to the interpreter.
 fn verify_standard_script(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  let prevout = &prevouts[input_index];
-  let spk = &prevout.script_pubkey;
+  let spk = &spend.prevout.script_pubkey;
 
   if spk.is_p2tr() {
-    verify_full_p2tr(to_sign, prevouts, input_index)
-  } else if spk.is_p2wsh() {
-    verify_full_p2wsh(to_sign, prevout, input_index)
-  } else if spk.is_p2wpkh() {
-    verify_full_p2wpkh(to_sign, prevout, input_index, false)
-  } else if spk.is_p2sh() {
-    let script_sig = &to_sign.input[input_index].script_sig;
-
-    // The redeem script is the last scriptSig push. Dispatch on its shape
-    // rather than the witness length, so a nested P2WSH spend with few
-    // witness items is not mistaken for a nested P2WPKH spend.
-    let redeem_program = script_sig
-      .instructions_minimal()
-      .last()
-      .and_then(|instruction| match instruction {
-        Ok(Instruction::PushBytes(bytes)) => Some(bytes.as_bytes()),
-        _ => None,
-      });
-
-    match redeem_program {
-      Some(program) if program.len() == 22 && program[..2] == [0x00, 0x14] => {
-        verify_full_p2wpkh(to_sign, prevout, input_index, true)
-      }
-      Some(program) if program.len() == 34 && program[..2] == [0x00, 0x20] => {
-        verify_full_p2wsh(to_sign, prevout, input_index)
-      }
-      Some(program) if Script::from_bytes(program).is_witness_program() => {
-        if *script_sig != push_only_script(&ScriptBuf::from_bytes(program.to_vec())) {
-          return Err(Error::ToSignInvalid);
-        }
-        Ok(InputVerification::Inconclusive)
-      }
-      None if !to_sign.input[input_index].witness.is_empty() => Err(Error::ToSignInvalid),
-      _ => verify_full_p2sh_multisig(to_sign, prevout, input_index),
+    verify_full_p2tr(spend, sighash_cache)
+  } else if let Some(witness) = &spend.witness_program {
+    match (witness.version, witness.program.len()) {
+      (bitcoin::WitnessVersion::V0, 20) => verify_full_p2wpkh(spend, sighash_cache),
+      (bitcoin::WitnessVersion::V0, 32) => verify_full_p2wsh(spend, sighash_cache),
+      _ => Ok(InputVerification::Unsupported),
     }
+  } else if spk.is_p2sh() {
+    verify_full_p2sh_multisig(spend, sighash_cache)
   } else if spk.is_p2pkh() {
-    verify_full_p2pkh(to_sign, prevout, input_index)
+    verify_full_p2pkh(spend, sighash_cache)
   } else {
     Ok(InputVerification::Unsupported)
   }
 }
 
 fn verify_full_p2wpkh(
-  to_sign: &Transaction,
-  prevout: &TxOut,
-  input_index: usize,
-  is_p2sh: bool,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  let witness = to_sign.input[input_index].witness.clone();
+  let witness = &spend.txin.witness;
 
   if witness.is_empty() {
     return Err(Error::WitnessEmpty);
@@ -839,8 +967,9 @@ fn verify_full_p2wpkh(
     return Err(Error::InvalidWitness);
   }
 
-  let encoded_signature = witness.to_vec()[0].clone();
-  let witness_pub_key = &witness.to_vec()[1];
+  let items = witness.to_vec();
+  let encoded_signature = items[0].clone();
+  let witness_pub_key = &items[1];
 
   let pub_key = PublicKey::from_slice(witness_pub_key).map_err(|_| Error::InvalidPublicKey)?;
 
@@ -850,23 +979,14 @@ fn verify_full_p2wpkh(
 
   let p2wpkh_script = ScriptBuf::new_p2wpkh(&wpubkey_hash);
 
-  let expected_script_pubkey = if is_p2sh {
-    ScriptBuf::new_p2sh(&p2wpkh_script.script_hash())
-  } else {
-    p2wpkh_script.clone()
-  };
-
-  if prevout.script_pubkey != expected_script_pubkey {
+  if spend
+    .witness_program
+    .as_ref()
+    .expect("dispatched by witness")
+    .program
+    != wpubkey_hash.to_byte_array()
+  {
     return Err(Error::PublicKeyMismatch);
-  }
-
-  let script_sig = &to_sign.input[input_index].script_sig;
-  if is_p2sh {
-    if *script_sig != push_only_script(&p2wpkh_script) {
-      return Err(Error::ToSignInvalid);
-    }
-  } else if !script_sig.is_empty() {
-    return Err(Error::ToSignInvalid);
   }
 
   if encoded_signature.is_empty() {
@@ -889,16 +1009,19 @@ fn verify_full_p2wpkh(
 
   require_low_s(&signature)?;
 
-  if !(sighash_type == EcdsaSighashType::All) {
+  if sighash_type != EcdsaSighashType::All {
     return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
 
-  let mut sighash_cache = SighashCache::new(to_sign);
-
   let sighash = sighash_cache
-    .p2wpkh_signature_hash(input_index, &p2wpkh_script, prevout.value, sighash_type)
+    .p2wpkh_signature_hash(
+      spend.input_index,
+      &p2wpkh_script,
+      spend.prevout.value,
+      sighash_type,
+    )
     .expect("signature hash should compute");
 
   let message =
@@ -945,107 +1068,76 @@ fn parse_taproot_signature(encoded: &[u8]) -> Result<(Signature, TapSighashType)
 }
 
 fn verify_full_p2tr(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  use bitcoin::taproot::{ControlBlock, LeafVersion, TAPROOT_ANNEX_PREFIX};
+  use bitcoin::taproot::LeafVersion;
 
-  let prevout = &prevouts[input_index];
-  let pub_key = XOnlyPublicKey::from_slice(&prevout.script_pubkey.as_bytes()[2..])
-    .map_err(|_| Error::InvalidPublicKey)?;
-  let txin = &to_sign.input[input_index];
+  let taproot = spend.taproot.as_ref().expect("dispatched by P2TR");
+  let pub_key = taproot.output_key.ok_or(Error::InvalidPublicKey)?;
 
-  if !txin.script_sig.is_empty() {
-    return Err(Error::ToSignInvalid);
-  }
-  if txin.witness.is_empty() {
-    return Err(Error::WitnessEmpty);
-  }
+  match &taproot.path {
+    TaprootPath::Empty => Err(Error::WitnessEmpty),
+    TaprootPath::Key { signature } => {
+      let (signature, sighash_type) = parse_taproot_signature(signature)?;
+      let annex = taproot
+        .annex
+        .map(sighash::Annex::new)
+        .transpose()
+        .map_err(|_| Error::InvalidWitness)?;
+      let sighash = sighash_cache
+        .taproot_signature_hash(
+          spend.input_index,
+          &sighash::Prevouts::All(spend.prevouts),
+          annex,
+          None,
+          sighash_type,
+        )
+        .map_err(|_| Error::ToSignInvalid)?;
+      let message = Message::from_digest(sighash.to_byte_array());
+      Secp256k1::verification_only()
+        .verify_schnorr(&signature, &message, &pub_key)
+        .context(error::SignatureInvalid)?;
 
-  let items: Vec<&[u8]> = txin.witness.iter().collect();
-  let has_annex = items.len() >= 2
-    && items
-      .last()
-      .and_then(|item| item.first())
-      .is_some_and(|prefix| *prefix == TAPROOT_ANNEX_PREFIX);
-  let spend_len = items.len() - usize::from(has_annex);
-
-  if spend_len == 1 {
-    let (signature, sighash_type) = parse_taproot_signature(items[0])?;
-    let annex = has_annex
-      .then(|| sighash::Annex::new(items[items.len() - 1]))
-      .transpose()
-      .map_err(|_| Error::InvalidWitness)?;
-
-    let sighash = SighashCache::new(to_sign)
-      .taproot_signature_hash(
-        input_index,
-        &sighash::Prevouts::All(prevouts),
-        annex,
-        None,
-        sighash_type,
-      )
-      .map_err(|_| Error::ToSignInvalid)?;
-    let message = Message::from_digest(sighash.to_byte_array());
-    Secp256k1::verification_only()
-      .verify_schnorr(&signature, &message, &pub_key)
-      .context(error::SignatureInvalid)?;
-
-    return Ok(if has_annex {
-      InputVerification::Inconclusive
-    } else {
-      InputVerification::Valid
-    });
-  }
-
-  let control_bytes = items[spend_len - 1];
-  let tapscript = Script::from_bytes(items[spend_len - 2]);
-  if control_bytes.len() < 33
-    || control_bytes.len() > 33 + 32 * 128
-    || (control_bytes.len() - 33) % 32 != 0
-  {
-    return Err(Error::InvalidWitness);
-  }
-
-  let control = ControlBlock::decode(control_bytes).map_err(|_| Error::InvalidWitness)?;
-  if !control.verify_taproot_commitment(&Secp256k1::verification_only(), pub_key, tapscript) {
-    return Err(Error::ScriptNotSatisfied);
-  }
-
-  if control.leaf_version != LeafVersion::TapScript {
-    return Ok(InputVerification::Inconclusive);
-  }
-  if tapscript
-    .instructions_minimal()
-    .any(|instruction| instruction.is_err())
-  {
-    return Err(Error::InvalidWitness);
-  }
-  if contains_op_success(tapscript) {
-    return Ok(InputVerification::Inconclusive);
-  }
-
-  match parse_simple_tapscript(tapscript, &items, spend_len)? {
-    Some(SimpleTapscript::UnknownKey) => Ok(InputVerification::Inconclusive),
-    Some(SimpleTapscript::SingleKey(public_key)) => {
-      verify_single_key_tapscript(
-        to_sign,
-        prevouts,
-        input_index,
-        &items,
-        tapscript,
-        public_key,
-        has_annex,
-      )?;
-      Ok(if has_annex {
+      Ok(if taproot.annex.is_some() {
         InputVerification::Inconclusive
       } else {
         InputVerification::Valid
       })
     }
-    None if has_annex => Ok(InputVerification::Inconclusive),
-    None => Ok(InputVerification::Unsupported),
+    TaprootPath::Script(script) => {
+      let control = script.control_block.as_ref().ok_or(Error::InvalidWitness)?;
+      if !script.commitment_valid {
+        return Err(Error::ScriptNotSatisfied);
+      }
+      if control.leaf_version != LeafVersion::TapScript {
+        return Ok(InputVerification::Inconclusive);
+      }
+      if contains_op_success(script.tapscript) {
+        return Ok(InputVerification::Inconclusive);
+      }
+      if script
+        .tapscript
+        .instructions_minimal()
+        .any(|instruction| instruction.is_err())
+      {
+        return Err(Error::InvalidWitness);
+      }
+
+      match parse_simple_tapscript(script.tapscript, &script.initial_stack)? {
+        Some(SimpleTapscript::UnknownKey) => Ok(InputVerification::Inconclusive),
+        Some(SimpleTapscript::SingleKey(public_key)) => {
+          verify_single_key_tapscript(spend, taproot, script, public_key, sighash_cache)?;
+          Ok(if taproot.annex.is_some() {
+            InputVerification::Inconclusive
+          } else {
+            InputVerification::Valid
+          })
+        }
+        None if taproot.annex.is_some() => Ok(InputVerification::Inconclusive),
+        None => Ok(InputVerification::Unsupported),
+      }
+    }
   }
 }
 
@@ -1058,8 +1150,7 @@ enum SimpleTapscript {
 /// push rules. Unknown key types retain BIP342's witness-stack semantics.
 fn parse_simple_tapscript(
   tapscript: &Script,
-  items: &[&[u8]],
-  spend_len: usize,
+  initial_stack: &[&[u8]],
 ) -> Result<Option<SimpleTapscript>> {
   if tapscript.is_empty() {
     return Err(Error::ScriptNotSatisfied);
@@ -1079,13 +1170,13 @@ fn parse_simple_tapscript(
     return Ok(None);
   };
 
-  if spend_len != 3 {
+  if initial_stack.len() != 1 {
     return Err(Error::InvalidWitness);
   }
-  if items[0].is_empty() {
+  if initial_stack[0].is_empty() {
     return Err(Error::ScriptNotSatisfied);
   }
-  if key.len() > 520 || items[0].len() > 520 {
+  if key.len() > 520 || initial_stack[0].len() > 520 {
     return Err(Error::InvalidWitness);
   }
   if key.is_empty() {
@@ -1101,26 +1192,25 @@ fn parse_simple_tapscript(
 }
 
 fn verify_single_key_tapscript(
-  to_sign: &Transaction,
-  prevouts: &[TxOut],
-  input_index: usize,
-  items: &[&[u8]],
-  tapscript: &Script,
+  spend: &Spend,
+  taproot: &TaprootSpend,
+  script: &TaprootScriptSpend,
   public_key: XOnlyPublicKey,
-  has_annex: bool,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<()> {
   use bitcoin::taproot::{LeafVersion, TapLeafHash};
 
-  let (signature, sighash_type) = parse_taproot_signature(items[0])?;
-  let annex = has_annex
-    .then(|| sighash::Annex::new(items[items.len() - 1]))
+  let (signature, sighash_type) = parse_taproot_signature(script.initial_stack[0])?;
+  let annex = taproot
+    .annex
+    .map(sighash::Annex::new)
     .transpose()
     .map_err(|_| Error::InvalidWitness)?;
-  let leaf_hash = TapLeafHash::from_script(tapscript, LeafVersion::TapScript);
-  let sighash = SighashCache::new(to_sign)
+  let leaf_hash = TapLeafHash::from_script(script.tapscript, LeafVersion::TapScript);
+  let sighash = sighash_cache
     .taproot_signature_hash(
-      input_index,
-      &sighash::Prevouts::All(prevouts),
+      spend.input_index,
+      &sighash::Prevouts::All(spend.prevouts),
       annex,
       Some((leaf_hash, 0xffff_ffff)),
       sighash_type,
@@ -1138,42 +1228,44 @@ fn verify_single_key_tapscript(
 }
 
 fn contains_op_success(script: &Script) -> bool {
-  script.instructions().any(|instruction| {
-    matches!(instruction, Ok(Instruction::Op(opcode)) if matches!(opcode.to_u8(),
-      80 | 98 | 126..=129 | 131..=134 | 137..=138 | 141..=142 | 149..=153 | 187..=254))
-  })
+  for instruction in script.instructions_minimal() {
+    match instruction {
+      Ok(Instruction::Op(opcode))
+        if matches!(opcode.to_u8(),
+          80 | 98 | 126..=129 | 131..=134 | 137..=138 | 141..=142 | 149..=153 | 187..=254) =>
+      {
+        return true;
+      }
+      Ok(_) => {}
+      Err(_) => return false,
+    }
+  }
+  false
 }
 
 /// Verify a BIP-322 proof for a P2WSH
 fn verify_full_p2wsh(
-  to_sign: &Transaction,
-  prevout: &TxOut,
-  input_index: usize,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  let witness_items = to_sign.input[input_index].witness.to_vec();
+  let witness_items = spend.txin.witness.to_vec();
 
   if witness_items.is_empty() {
     return Err(Error::InvalidWitness);
   }
 
-  let witness_script = ScriptBuf::from_bytes(witness_items[witness_items.len() - 1].clone());
-
-  let program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
-  let script_sig = &to_sign.input[input_index].script_sig;
-
-  if prevout.script_pubkey == program {
-    if !script_sig.is_empty() {
-      return Err(Error::ToSignInvalid);
-    }
-  } else if prevout.script_pubkey == ScriptBuf::new_p2sh(&program.script_hash()) {
-    if *script_sig != push_only_script(&program) {
-      return Err(Error::ToSignInvalid);
-    }
-  } else {
+  let witness_script = spend.witness_script.ok_or(Error::ToSignInvalid)?;
+  if witness_script.wscript_hash().to_byte_array().as_slice()
+    != spend
+      .witness_program
+      .as_ref()
+      .expect("dispatched by witness")
+      .program
+  {
     return Err(Error::ToSignInvalid);
   }
 
-  let Ok((required_signatures, pubkeys)) = parse_multisig(&witness_script) else {
+  let Ok((required_signatures, pubkeys)) = parse_multisig(witness_script) else {
     return Ok(InputVerification::Unsupported);
   };
 
@@ -1186,11 +1278,11 @@ fn verify_full_p2wsh(
     return Err(Error::InvalidWitness);
   }
 
-  let sighash = SighashCache::new(to_sign)
+  let sighash = sighash_cache
     .p2wsh_signature_hash(
-      input_index,
-      &witness_script,
-      prevout.value,
+      spend.input_index,
+      witness_script,
+      spend.prevout.value,
       EcdsaSighashType::All,
     )
     .expect("signature hash should compute");
@@ -1245,36 +1337,16 @@ fn verify_full_p2wsh(
 
 /// Verify a BIP-322 proof for a P2SH multisig address
 fn verify_full_p2sh_multisig(
-  to_sign: &Transaction,
-  prevout: &TxOut,
-  input_index: usize,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  if !to_sign.input[input_index].witness.is_empty() {
-    return Err(Error::InvalidWitness);
-  }
-
-  let mut pushes: Vec<Vec<u8>> = Vec::new();
-
-  for instruction in to_sign.input[input_index].script_sig.instructions_minimal() {
-    match instruction {
-      Ok(Instruction::PushBytes(b)) => pushes.push(b.as_bytes().to_vec()),
-      _ => return Err(Error::InvalidWitness),
-    }
-  }
-
-  let Some((redeem_bytes, sig_pushes)) = pushes.split_last() else {
+  let p2sh = spend.p2sh.as_ref().expect("dispatched by P2SH");
+  let Some((redeem_bytes, sig_pushes)) = p2sh.pushes.split_last() else {
     return Err(Error::InvalidWitness);
   };
-  if redeem_bytes.len() > 520 {
-    return Err(Error::InvalidWitness);
-  }
-  let redeem_script = ScriptBuf::from_bytes(redeem_bytes.clone());
+  let redeem_script = Script::from_bytes(redeem_bytes);
 
-  if prevout.script_pubkey != ScriptBuf::new_p2sh(&redeem_script.script_hash()) {
-    return Err(Error::ToSignInvalid);
-  }
-
-  let Ok((required_signatures, pubkeys)) = parse_multisig(&redeem_script) else {
+  let Ok((required_signatures, pubkeys)) = parse_multisig(redeem_script) else {
     return Ok(InputVerification::Unsupported);
   };
   let Some((null_dummy, signatures)) = sig_pushes.split_first() else {
@@ -1288,8 +1360,12 @@ fn verify_full_p2sh_multisig(
     return Err(Error::InvalidWitness);
   }
 
-  let sighash = SighashCache::new(to_sign)
-    .legacy_signature_hash(input_index, &redeem_script, EcdsaSighashType::All.to_u32())
+  let sighash = sighash_cache
+    .legacy_signature_hash(
+      spend.input_index,
+      redeem_script,
+      EcdsaSighashType::All.to_u32(),
+    )
     .expect("signature hash should compute");
   let message =
     Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
@@ -1331,16 +1407,11 @@ fn verify_full_p2sh_multisig(
 
 /// Verify a BIP-322 proof for a P2PKH
 fn verify_full_p2pkh(
-  to_sign: &Transaction,
-  prevout: &TxOut,
-  input_index: usize,
+  spend: &Spend,
+  sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
-  if !to_sign.input[input_index].witness.is_empty() {
-    return Err(Error::InvalidWitness);
-  }
-
   // scriptSig: <sig> <pubkey>
-  let mut instructions = to_sign.input[input_index].script_sig.instructions_minimal();
+  let mut instructions = spend.txin.script_sig.instructions_minimal();
   let signature_bytes = match instructions.next() {
     Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
     _ => return Err(Error::InvalidWitness),
@@ -1355,7 +1426,7 @@ fn verify_full_p2pkh(
 
   let pub_key = PublicKey::from_slice(pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
 
-  if prevout.script_pubkey != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
+  if spend.prevout.script_pubkey != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
     return Err(Error::PublicKeyMismatch);
   }
 
@@ -1374,10 +1445,10 @@ fn verify_full_p2pkh(
 
   require_low_s(&signature)?;
 
-  let sighash = SighashCache::new(to_sign)
+  let sighash = sighash_cache
     .legacy_signature_hash(
-      input_index,
-      &prevout.script_pubkey,
+      spend.input_index,
+      &spend.prevout.script_pubkey,
       EcdsaSighashType::All.to_u32(),
     )
     .expect("signature hash should compute");

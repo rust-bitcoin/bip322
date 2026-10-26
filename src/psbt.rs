@@ -146,7 +146,11 @@ pub fn create_bip322_psbt(
   psbt.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
 
   for (proof_index, input) in inputs.iter().enumerate() {
-    set_proof_input_utxo(&mut psbt.inputs[proof_index + 1], input, proof_index)?;
+    let psbt_input = &mut psbt.inputs[proof_index + 1];
+    set_proof_input_utxo(psbt_input, input, proof_index)?;
+    if let Some(script) = &input.witness_script {
+      set_input_script(psbt_input, script, &input.prevout.script_pubkey)?;
+    }
   }
 
   let spk = &to_spend.output[0].script_pubkey;
@@ -169,28 +173,40 @@ pub fn create_bip322_psbt(
     return Err(Error::InvalidWitness);
   };
 
+  set_input_script(&mut psbt.inputs[0], witness_script, spk)?;
+  if *spk == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
+    // Legacy P2SH inputs require the full previous transaction per BIP174.
+    psbt.inputs[0].non_witness_utxo = Some(to_spend);
+  }
+  Ok(psbt)
+}
+
+/// Supplies the script metadata a signer needs for a multisig input.
+fn set_input_script(
+  input: &mut bitcoin::psbt::Input,
+  witness_script: &ScriptBuf,
+  script_pubkey: &Script,
+) -> Result<()> {
   let p2wsh_program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
 
-  if *spk == p2wsh_program {
-    psbt.inputs[0].witness_script = Some(witness_script.clone());
-  } else if *spk == ScriptBuf::new_p2sh(&p2wsh_program.script_hash()) {
-    psbt.inputs[0].witness_script = Some(witness_script.clone());
-    psbt.inputs[0].redeem_script = Some(p2wsh_program);
-  } else if *spk == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
+  if *script_pubkey == p2wsh_program {
+    input.witness_script = Some(witness_script.clone());
+  } else if *script_pubkey == ScriptBuf::new_p2sh(&p2wsh_program.script_hash()) {
+    input.witness_script = Some(witness_script.clone());
+    input.redeem_script = Some(p2wsh_program);
+  } else if *script_pubkey == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
     if witness_script.len() > 520 {
       return Err(Error::InvalidWitness);
     }
-    psbt.inputs[0].redeem_script = Some(witness_script.clone());
-    // Legacy P2SH inputs require the full previous transaction per BIP174.
-    psbt.inputs[0].witness_utxo = None;
-    psbt.inputs[0].non_witness_utxo = Some(to_spend);
+    input.redeem_script = Some(witness_script.clone());
+    input.witness_utxo = None;
   } else {
     return Err(Error::UnsupportedAddress {
-      address: address.to_string(),
+      address: script_pubkey.to_string(),
     });
   }
 
-  Ok(psbt)
+  Ok(())
 }
 
 /// Resolves an input and enforces BIP174's legacy non-witness UTXO rule.
@@ -525,6 +541,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   }
 
   if psbt.unsigned_tx.input.len() > 1 {
+    validate_weight(&psbt.clone().extract_tx_unchecked_fee_rate())?;
     // A proof of funds is encoded as the finalized PSBT itself.
     let mut buffer = Vec::new();
     psbt
@@ -538,6 +555,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   }
 
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
+  validate_weight(&to_sign)?;
 
   let mut buffer = Vec::new();
   to_sign
@@ -663,6 +681,9 @@ fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Resul
   // CHECKMULTISIG requires signatures in script pubkey order.
   let mut signatures = Vec::with_capacity(required);
   for pub_key in &pubkeys {
+    if signatures.len() == required {
+      break;
+    }
     if let Some(signature) = input.partial_sigs.get(pub_key) {
       signatures.push(signature.to_vec());
     }

@@ -1028,7 +1028,7 @@ mod tests {
 
       for address in addresses {
         assert!(
-          sign::sign_simple(&address, "foo", &[k2], None).is_err(),
+          sign::sign_full(&address, "foo", &[k2], None, LockParams::default()).is_err(),
           "wrong key was accepted for {address}"
         );
       }
@@ -1905,20 +1905,22 @@ mod tests {
   }
 
   #[test]
-  fn pof_rejects_mismatched_signed_message_field() {
-    let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
-    psbt.unknown.insert(
-      bitcoin::psbt::raw::Key {
-        type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-        key: vec![],
-      },
-      b"different message".to_vec(),
-    );
+  fn pof_rejects_mismatched_or_non_utf8_signed_message_field() {
+    for value in [b"different message".to_vec(), vec![0xff]] {
+      let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+      psbt.unknown.insert(
+        bitcoin::psbt::raw::Key {
+          type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
+          key: vec![],
+        },
+        value,
+      );
 
-    assert!(matches!(
-      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-      Verification::Invalid(Error::ToSignInvalid)
-    ));
+      assert!(matches!(
+        verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+        Verification::Invalid(Error::ToSignInvalid)
+      ));
+    }
   }
 
   #[test]
@@ -2004,6 +2006,7 @@ mod tests {
     psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey = script;
     psbt.inputs[1].final_script_sig = None;
     psbt.inputs[1].final_script_witness = None;
+    supply_legacy_non_witness_utxo(&mut psbt, 1);
 
     let result = verify_pof(&address, POF_P2TR_MESSAGE, psbt);
     assert!(
@@ -2338,6 +2341,66 @@ mod tests {
       verify::verify_full(&address, "foo", to_sign),
       Verification::Invalid(Error::InvalidWitness)
     ));
+  }
+
+  fn non_minimal_one_of_one_multisig(public_key: &PublicKey) -> ScriptBuf {
+    let mut script = vec![
+      opcodes::all::OP_PUSHNUM_1.to_u8(),
+      opcodes::all::OP_PUSHDATA1.to_u8(),
+      33,
+    ];
+    script.extend_from_slice(&public_key.to_bytes());
+    script.extend_from_slice(&[
+      opcodes::all::OP_PUSHNUM_1.to_u8(),
+      opcodes::all::OP_CHECKMULTISIG.to_u8(),
+    ]);
+    ScriptBuf::from_bytes(script)
+  }
+
+  #[test]
+  fn p2wsh_non_minimal_multisig_pubkey_push_is_invalid() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let public_key = private_key.public_key(&Secp256k1::new());
+    let multisig = non_minimal_one_of_one_multisig(&public_key);
+    let (address, mut tx, signature) = p2wsh_interpreter_spend(
+      &multisig,
+      &private_key,
+      EcdsaSighashType::All,
+      LockParams::default(),
+    );
+    tx.input[0].witness =
+      Witness::from_slice(&[Vec::new(), signature.to_vec(), multisig.as_bytes().to_vec()]);
+
+    let result = verify_full(&address, "foo", tx);
+    assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
+  }
+
+  #[test]
+  fn bare_p2sh_non_minimal_multisig_pubkey_push_is_invalid() {
+    let secp = Secp256k1::new();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let multisig = non_minimal_one_of_one_multisig(&private_key.public_key(&secp));
+    let address = Address::p2sh(&multisig, bitcoin::Network::Bitcoin).unwrap();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let sighash = SighashCache::new(&mut tx)
+      .legacy_signature_hash(0, &multisig, EcdsaSighashType::All.to_u32())
+      .unwrap();
+    let signature = bitcoin::ecdsa::Signature {
+      signature: secp.sign_ecdsa(
+        &Message::from_digest(sighash.to_byte_array()),
+        &private_key.inner,
+      ),
+      sighash_type: EcdsaSighashType::All,
+    };
+    tx.input[0].script_sig = ScriptBuf::builder()
+      .push_opcode(opcodes::OP_0)
+      .push_slice(push_bytes(&signature.to_vec()))
+      .push_slice(push_bytes(multisig.as_bytes()))
+      .into_script();
+
+    let result = verify_full(&address, "foo", tx);
+    assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
   }
 
   #[test]
@@ -2749,6 +2812,32 @@ mod tests {
         provided: 1
       })
     ));
+  }
+
+  #[test]
+  fn finalize_psbt_accepts_duplicate_key_in_one_of_two_multisig() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let public_key = private_key.public_key(&Secp256k1::new());
+    let witness_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .push_key(&public_key)
+      .push_key(&public_key)
+      .push_opcode(opcodes::all::OP_PUSHNUM_2)
+      .push_opcode(opcodes::all::OP_CHECKMULTISIG)
+      .into_script();
+    let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
+    let mut psbt = create_bip322_psbt(
+      &address,
+      "foo",
+      Some(&witness_script),
+      &[],
+      LockParams::default(),
+    )
+    .unwrap();
+    sign_bip322_psbt_input(&mut psbt, &private_key, 0).unwrap();
+
+    let encoded = finalize_bip322_psbt(psbt).unwrap();
+    assert_valid(verify_full_encoded(&address.to_string(), "foo", &encoded));
   }
 
   #[test]
@@ -3178,6 +3267,99 @@ mod tests {
   }
 
   #[test]
+  fn multiparty_pof_multisig_roundtrip() {
+    fn proof_input(address: &str, script: &str, keys: &[&str], id: u8) -> ProofInput {
+      let address = Address::from_str(address).unwrap().assume_checked();
+      let script = ScriptBuf::from_hex(script).unwrap();
+      let prevout = TxOut {
+        value: Amount::from_sat(345678),
+        script_pubkey: address.script_pubkey(),
+      };
+      let prev_tx = Transaction {
+        version: Version(2),
+        lock_time: LockTime::ZERO,
+        input: vec![TxIn::default()],
+        output: vec![prevout.clone()],
+      };
+      let legacy = !is_segwit_input(&prevout.script_pubkey, Some(&script));
+      ProofInput {
+        outpoint: OutPoint {
+          txid: if legacy {
+            prev_tx.compute_txid()
+          } else {
+            bitcoin::Txid::from_byte_array([id; 32])
+          },
+          vout: 0,
+        },
+        prevout,
+        prev_tx: legacy.then_some(prev_tx),
+        private_keys: keys
+          .iter()
+          .map(|key| PrivateKey::from_wif(key).unwrap())
+          .collect(),
+        witness_script: Some(script),
+      }
+    }
+
+    let proof_inputs = [
+      proof_input(
+        P2WSH_2OF2_ADDRESS,
+        P2WSH_2OF2_WITNESS_SCRIPT,
+        &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
+        1,
+      ),
+      proof_input(
+        P2SH_P2WSH_2OF2_ADDRESS,
+        P2SH_P2WSH_2OF2_WITNESS_SCRIPT,
+        &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
+        2,
+      ),
+      proof_input(
+        P2SH_MULTISIG_2OF2_ADDRESS,
+        P2SH_MULTISIG_2OF2_REDEEM_SCRIPT,
+        &[
+          P2SH_MULTISIG_2OF2_PRIVATE_KEY_1,
+          P2SH_MULTISIG_2OF2_PRIVATE_KEY_2,
+        ],
+        3,
+      ),
+    ];
+    let address = Address::from_str(POF_P2TR_ADDRESS)
+      .unwrap()
+      .assume_checked();
+    let mut psbt = Psbt::deserialize(
+      &create_bip322_psbt(
+        &address,
+        POF_P2TR_MESSAGE,
+        None,
+        &proof_inputs,
+        LockParams::default(),
+      )
+      .unwrap()
+      .serialize(),
+    )
+    .unwrap();
+    sign_bip322_psbt_input(
+      &mut psbt,
+      &PrivateKey::from_wif(POF_P2TR_CHALLENGE_KEY).unwrap(),
+      0,
+    )
+    .unwrap();
+    for (index, input) in proof_inputs.iter().enumerate() {
+      for key in &input.private_keys {
+        sign_bip322_psbt_input(&mut psbt, key, index + 1).unwrap();
+      }
+    }
+
+    let encoded = finalize_bip322_psbt(psbt).unwrap();
+    assert_valid(verify_pof_encoded(
+      POF_P2TR_ADDRESS,
+      POF_P2TR_MESSAGE,
+      &encoded,
+    ));
+  }
+
+  #[test]
   fn sign_and_finalize_psbt_reject_invalid_additional_outpoints() {
     let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
     let build = || {
@@ -3597,6 +3779,54 @@ mod tests {
   }
 
   #[test]
+  fn legacy_and_v0_opcode_limit_is_enforced() {
+    let script_with_ops = |non_push_ops| {
+      let mut builder = ScriptBuf::builder().push_opcode(opcodes::all::OP_PUSHNUM_1);
+      for _ in 0..non_push_ops {
+        builder = builder.push_opcode(opcodes::all::OP_0NOTEQUAL);
+      }
+      builder.into_script()
+    };
+
+    for (non_push_ops, valid) in [(200, true), (202, false)] {
+      let script = script_with_ops(non_push_ops);
+      let p2wsh = Address::p2wsh(&script, bitcoin::Network::Bitcoin);
+      let to_spend = create_to_spend(&p2wsh, "foo");
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
+      let result = verify_full(&p2wsh, "foo", tx);
+      assert_eq!(
+        result.is_valid(),
+        valid,
+        "P2WSH with {non_push_ops} ops: {result:?}"
+      );
+      if !valid {
+        assert!(matches!(
+          result,
+          Verification::Invalid(Error::InvalidWitness)
+        ));
+      }
+
+      let p2sh = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
+      let to_spend = create_to_spend(&p2sh, "foo");
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      tx.input[0].script_sig = push_only_script(&script);
+      let result = verify_full(&p2sh, "foo", tx);
+      assert_eq!(
+        result.is_valid(),
+        valid,
+        "P2SH with {non_push_ops} ops: {result:?}"
+      );
+      if !valid {
+        assert!(matches!(
+          result,
+          Verification::Invalid(Error::InvalidWitness)
+        ));
+      }
+    }
+  }
+
+  #[test]
   fn naked_zero_timelock_scripts_are_invalid() {
     for opcode in [opcodes::all::OP_CSV, opcodes::all::OP_CLTV] {
       let witness_script = ScriptBuf::builder()
@@ -3615,6 +3845,15 @@ mod tests {
           Verification::Invalid(Error::ScriptNotSatisfied)
         ));
       }
+
+      let address = Address::p2sh(&witness_script, bitcoin::Network::Bitcoin).unwrap();
+      let to_spend = create_to_spend(&address, "foo");
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      tx.input[0].script_sig = push_only_script(&witness_script);
+      assert!(matches!(
+        verify_full(&address, "foo", tx),
+        Verification::Invalid(Error::ScriptNotSatisfied)
+      ));
     }
   }
 
@@ -3995,9 +4234,39 @@ mod tests {
   }
 
   #[test]
-  fn p2tr_unknown_leaf_version_is_inconclusive() {
+  fn op_success_decode_order_is_preserved() {
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
-    let tapscript = single_key_tapscript(&private_key);
+    let verdict = |bytes: Vec<u8>| {
+      let tapscript = ScriptBuf::from_bytes(bytes);
+      let (address, mut tx, _signature, control_block) =
+        p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+      tx.input[0].witness = Witness::from_slice(&[tapscript.as_bytes().to_vec(), control_block]);
+      verify_full(&address, "foo", tx)
+    };
+
+    // A decoded OP_SUCCESSx takes precedence over a later truncated push.
+    assert!(matches!(
+      verdict(vec![0x50, 0x02, 0xaa]),
+      Verification::Inconclusive
+    ));
+    // A truncated push before OP_SUCCESSx is a required decode failure.
+    assert!(matches!(
+      verdict(vec![0x03, 0xaa, 0x50]),
+      Verification::Invalid(Error::InvalidWitness)
+    ));
+    // A non-minimal push before OP_SUCCESSx is also required-invalid.
+    assert!(matches!(
+      verdict(vec![0x4c, 0x01, 0x07, 0x50]),
+      Verification::Invalid(Error::InvalidWitness)
+    ));
+  }
+
+  #[test]
+  fn p2tr_unknown_leaf_version_naked_zero_is_inconclusive() {
+    let tapscript = ScriptBuf::builder()
+      .push_opcode(opcodes::OP_0)
+      .push_opcode(opcodes::all::OP_CSV)
+      .into_script();
     let leaf_version = bitcoin::taproot::LeafVersion::from_consensus(0xc2).unwrap();
     let secp = Secp256k1::new();
     let internal_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY)
@@ -4158,6 +4427,51 @@ mod tests {
   }
 
   #[test]
+  fn nested_witness_commitments_and_program_lengths_are_enforced() {
+    let future = Address::from_witness_program(
+      bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[7; 32]).unwrap(),
+      bitcoin::Network::Bitcoin,
+    )
+    .script_pubkey();
+    let address = Address::p2sh(&future, bitcoin::Network::Bitcoin).unwrap();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    tx.input[0].script_sig = push_only_script(&future);
+    assert!(matches!(
+      verify_full(&address, "foo", tx.clone()),
+      Verification::Inconclusive
+    ));
+
+    let wrong_address = Address::p2sh(&ScriptBuf::new(), bitcoin::Network::Bitcoin).unwrap();
+    let wrong_to_spend = create_to_spend(&wrong_address, "foo");
+    let mut wrong_tx = create_to_sign(&wrong_to_spend, None, LockParams::default()).unsigned_tx;
+    wrong_tx.input[0].script_sig = push_only_script(&future);
+    assert!(matches!(
+      verify_full(&wrong_address, "foo", wrong_tx),
+      Verification::Invalid(Error::ToSignInvalid)
+    ));
+
+    let malformed = ScriptBuf::from_bytes(vec![opcodes::OP_0.to_u8(), 2, 7, 7]);
+    let (pof_address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+    psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey = malformed.clone();
+    psbt.inputs[1].final_script_sig = None;
+    psbt.inputs[1].final_script_witness = None;
+    assert!(matches!(
+      verify_pof(&pof_address, POF_P2TR_MESSAGE, psbt),
+      Verification::Invalid(Error::ToSignInvalid)
+    ));
+
+    let address = Address::p2sh(&malformed, bitcoin::Network::Bitcoin).unwrap();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut nested = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    nested.input[0].script_sig = push_only_script(&malformed);
+    assert!(matches!(
+      verify_full(&address, "foo", nested),
+      Verification::Invalid(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
   fn legacy_and_nested_spends_enforce_consensus_structure() {
     let legacy_address = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
       .unwrap()
@@ -4310,6 +4624,22 @@ mod tests {
     assert!(matches!(
       verify_pof(&address, POF_P2TR_MESSAGE, pof),
       Verification::Invalid(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
+  fn excessive_pof_input_count_is_inconclusive() {
+    let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+    for vout in 1..1024 {
+      let mut txin = psbt.unsigned_tx.input[1].clone();
+      txin.previous_output.vout = vout;
+      psbt.unsigned_tx.input.push(txin);
+      psbt.inputs.push(psbt.inputs[1].clone());
+    }
+
+    assert!(matches!(
+      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+      Verification::Inconclusive
     ));
   }
 

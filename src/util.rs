@@ -130,7 +130,7 @@ pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>, locks: L
 
 pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
   let instructions = script
-    .instructions()
+    .instructions_minimal()
     .collect::<std::result::Result<Vec<_>, _>>()
     .map_err(|_| Error::InvalidWitness)?;
 
@@ -237,7 +237,7 @@ pub(crate) fn ordered_multisig_signatures(
   Ok(signatures)
 }
 
-pub(crate) fn push_only_script(script: &ScriptBuf) -> ScriptBuf {
+pub(crate) fn push_only_script(script: &Script) -> ScriptBuf {
   ScriptBuf::builder()
     .push_slice(push_bytes(script.as_bytes()))
     .into_script()
@@ -347,6 +347,14 @@ pub(crate) fn set_proof_input_utxo(
 
   psbt_input.non_witness_utxo = Some(prev_tx.clone());
 
+  Ok(())
+}
+
+/// Enforces the consensus transaction weight limit.
+pub(crate) fn validate_weight(transaction: &Transaction) -> Result<()> {
+  if transaction.weight() > bitcoin::Weight::MAX_BLOCK {
+    return Err(Error::ToSignInvalid);
+  }
   Ok(())
 }
 

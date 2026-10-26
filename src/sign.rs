@@ -171,7 +171,9 @@ pub fn sign_full(
   let prevout = to_spend.output[0].clone();
   sign_input(&mut to_sign, &[prevout], private_keys, witness_script, 0)?;
 
-  to_sign.extract_tx().context(error::TransactionExtract)
+  let to_sign = to_sign.extract_tx().context(error::TransactionExtract)?;
+  validate_weight(&to_sign)?;
+  Ok(to_sign)
 }
 
 /// Signs the BIP-322 full proof of funds from string inputs.
@@ -310,6 +312,7 @@ pub fn sign_pof(
     )?;
   }
 
+  validate_weight(&to_sign.clone().extract_tx_unchecked_fee_rate())?;
   Ok(to_sign)
 }
 
