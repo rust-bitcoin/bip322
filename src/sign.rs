@@ -7,9 +7,9 @@ pub struct ProofInput {
   pub outpoint: OutPoint,
   /// The previous output being spent
   pub prevout: TxOut,
-  /// Full previous transaction for this input's outpoint. Required for legacy
-  /// (non-segwit) inputs. May be omitted if an earlier input spends another
-  /// output of the same transaction and carries it.
+  /// Full previous transaction for this input's outpoint. Required for every
+  /// legacy (non-segwit) input when constructing a proof. Verification may
+  /// additionally inherit this data from an earlier input in the same PSBT.
   pub prev_tx: Option<Transaction>,
   /// Key(s) that satisfy the input: one for single-sig, `m` for an `m`-of-`n` multisig
   pub private_keys: Vec<PrivateKey>,
@@ -241,17 +241,6 @@ pub fn sign_pof(
     vout: 0,
   };
 
-  for (index, input) in inputs.iter().enumerate() {
-    if input.outpoint.is_null()
-      || input.outpoint == challenge_outpoint
-      || inputs[..index]
-        .iter()
-        .any(|earlier| earlier.outpoint == input.outpoint)
-    {
-      return Err(Error::ToSignInvalid);
-    }
-  }
-
   let mut tx_in = vec![TxIn {
     previous_output: challenge_outpoint,
     script_sig: ScriptBuf::new(),
@@ -280,6 +269,7 @@ pub fn sign_pof(
     }],
   };
 
+  validate_outpoints(&unsigned)?;
   let mut to_sign = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
 
   to_sign.unknown.insert(

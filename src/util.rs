@@ -350,48 +350,103 @@ pub(crate) fn set_proof_input_utxo(
   Ok(())
 }
 
-/// Resolves an input's previous output from its PSBT UTXO fields, validating
-/// every supplied field instead of silently preferring one over the other.
-pub(crate) fn psbt_input_prevout(psbt: &Psbt, index: usize) -> Result<TxOut> {
-  let input = psbt.inputs.get(index).ok_or(Error::ToSignInvalid)?;
-  let outpoint = psbt
-    .unsigned_tx
+/// Validates transaction outpoints against consensus structural rules.
+pub(crate) fn validate_outpoints(transaction: &Transaction) -> Result<()> {
+  let mut outpoints = std::collections::HashSet::with_capacity(transaction.input.len());
+  if transaction
     .input
-    .get(index)
-    .ok_or(Error::ToSignInvalid)?
-    .previous_output;
+    .iter()
+    .any(|input| input.previous_output.is_null() || !outpoints.insert(input.previous_output))
+  {
+    return Err(Error::ToSignInvalid);
+  }
+  Ok(())
+}
 
-  let tx = input.non_witness_utxo.as_ref().or_else(|| {
-    (1..index).find_map(|i| {
-      (psbt.unsigned_tx.input[i].previous_output.txid == outpoint.txid)
-        .then(|| psbt.inputs[i].non_witness_utxo.as_ref())
-        .flatten()
-    })
-  });
+/// Validates PSBT map cardinality and transaction outpoints.
+pub(crate) fn validate_psbt_structure(psbt: &Psbt) -> Result<()> {
+  if psbt.inputs.len() != psbt.unsigned_tx.input.len()
+    || psbt.outputs.len() != psbt.unsigned_tx.output.len()
+  {
+    return Err(Error::ToSignInvalid);
+  }
+  validate_outpoints(&psbt.unsigned_tx)
+}
 
-  let non_witness_utxo = if let Some(tx) = tx {
-    if tx.compute_txid() != outpoint.txid {
-      return Err(Error::ToSignInvalid);
+/// Resolves PSBT previous outputs and indexes non-witness transactions once,
+/// avoiding a quadratic scan for the same-transaction fallback.
+pub(crate) struct PrevoutResolver<'a> {
+  psbt: &'a Psbt,
+  non_witness: std::collections::HashMap<bitcoin::Txid, (usize, &'a Transaction)>,
+}
+
+impl<'a> PrevoutResolver<'a> {
+  pub(crate) fn new(psbt: &'a Psbt) -> Result<Self> {
+    let mut non_witness = std::collections::HashMap::new();
+    for (index, input) in psbt.inputs.iter().enumerate() {
+      let Some(tx) = &input.non_witness_utxo else {
+        continue;
+      };
+      let outpoint = psbt
+        .unsigned_tx
+        .input
+        .get(index)
+        .ok_or(Error::ToSignInvalid)?
+        .previous_output;
+      let txid = tx.compute_txid();
+      if txid != outpoint.txid {
+        return Err(Error::ToSignInvalid);
+      }
+      non_witness.entry(txid).or_insert((index, tx));
     }
-    Some(
-      tx.output
-        .get(outpoint.vout as usize)
-        .cloned()
-        .ok_or(Error::ToSignInvalid)?,
-    )
-  } else {
-    None
-  };
-
-  if let (Some(witness), Some(non_witness)) = (&input.witness_utxo, &non_witness_utxo) {
-    if witness != non_witness {
-      return Err(Error::ToSignInvalid);
-    }
+    Ok(Self { psbt, non_witness })
   }
 
-  input
-    .witness_utxo
-    .clone()
-    .or(non_witness_utxo)
-    .ok_or(Error::ToSignInvalid)
+  fn outpoint(&self, index: usize) -> Result<OutPoint> {
+    self
+      .psbt
+      .unsigned_tx
+      .input
+      .get(index)
+      .map(|input| input.previous_output)
+      .ok_or(Error::ToSignInvalid)
+  }
+
+  fn non_witness_tx(&self, index: usize) -> Option<&'a Transaction> {
+    let outpoint = self.psbt.unsigned_tx.input[index].previous_output;
+    self
+      .non_witness
+      .get(&outpoint.txid)
+      .and_then(|(earlier, tx)| (*earlier <= index).then_some(*tx))
+  }
+
+  pub(crate) fn has_non_witness(&self, index: usize) -> bool {
+    self.non_witness_tx(index).is_some()
+  }
+
+  pub(crate) fn resolve(&self, index: usize) -> Result<TxOut> {
+    let input = self.psbt.inputs.get(index).ok_or(Error::ToSignInvalid)?;
+    let outpoint = self.outpoint(index)?;
+    let non_witness = self
+      .non_witness_tx(index)
+      .map(|tx| {
+        tx.output
+          .get(outpoint.vout as usize)
+          .cloned()
+          .ok_or(Error::ToSignInvalid)
+      })
+      .transpose()?;
+
+    if let (Some(witness), Some(non_witness)) = (&input.witness_utxo, &non_witness) {
+      if witness != non_witness {
+        return Err(Error::ToSignInvalid);
+      }
+    }
+
+    input
+      .witness_utxo
+      .clone()
+      .or(non_witness)
+      .ok_or(Error::ToSignInvalid)
+  }
 }

@@ -398,19 +398,6 @@ mod tests {
   }
 
   #[test]
-  fn roundtrip_p2sh_p2wpkh_simple_is_rejected() {
-    assert!(matches!(
-      sign::sign_simple_encoded(
-        NESTED_SEGWIT_ADDRESS,
-        "Hello World",
-        &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
-        None,
-      ),
-      Err(Error::UnsupportedAddress { .. })
-    ));
-  }
-
-  #[test]
   fn roundtrip_p2sh_p2wpkh_full() {
     assert_valid(verify::verify_full_encoded(
       NESTED_SEGWIT_ADDRESS,
@@ -1071,23 +1058,26 @@ mod tests {
 
   #[test]
   fn verify_p2sh_p2wpkh_rejects_uncompressed_witness_key() {
+    let address = Address::from_str(NESTED_SEGWIT_ADDRESS)
+      .unwrap()
+      .assume_checked();
+    let mut to_sign = sign::sign_full(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
+      None,
+      LockParams::default(),
+    )
+    .unwrap();
     let pub_key = PrivateKey::from_wif(UNCOMPRESSED_WIF_PRIVATE_KEY)
       .unwrap()
       .public_key(&Secp256k1::new());
 
-    let mut witness = Witness::new();
-    witness.push(vec![0; 71]);
-    witness.push(pub_key.to_bytes());
+    to_sign.input[0].witness = Witness::from_slice(&[vec![0; 71], pub_key.to_bytes()]);
 
     assert!(matches!(
-      verify::verify_simple(
-        &Address::from_str(NESTED_SEGWIT_ADDRESS)
-          .unwrap()
-          .assume_checked(),
-        "foo",
-        witness
-      ),
-      Verification::Invalid(Error::UnsupportedAddress { .. })
+      verify::verify_full(&address, "foo", to_sign),
+      Verification::Invalid(Error::UncompressedPublicKey { .. })
     ));
   }
 
@@ -2920,6 +2910,41 @@ mod tests {
   }
 
   #[test]
+  fn public_signing_helpers_reject_out_of_range_inputs() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let private_keys = [private_key];
+    let script = ScriptBuf::from_hex(P2WSH_2OF2_WITNESS_SCRIPT).unwrap();
+
+    assert!(matches!(
+      create_message_signature_p2wpkh(&psbt, &private_key, &to_spend.output[0], 1, false),
+      Err(Error::ToSignInvalid)
+    ));
+    assert!(matches!(
+      create_message_signature_taproot(&psbt, &private_key, &to_spend.output, 1, None),
+      Err(Error::ToSignInvalid)
+    ));
+    assert!(matches!(
+      create_message_signature_taproot(&psbt, &private_key, &[], 0, None),
+      Err(Error::ToSignInvalid)
+    ));
+    assert!(matches!(
+      create_message_signature_p2wsh(&psbt, &private_keys, &script, &to_spend.output[0], 1),
+      Err(Error::ToSignInvalid)
+    ));
+    assert!(matches!(
+      create_message_signature_p2sh_multisig(&mut psbt, &private_keys, &script, 1),
+      Err(Error::ToSignInvalid)
+    ));
+    assert!(matches!(
+      create_message_signature_p2pkh(&mut psbt, &private_key, &to_spend.output[0], 1),
+      Err(Error::ToSignInvalid)
+    ));
+  }
+
+  #[test]
   fn finalize_psbt_rejects_unsigned_single_sig() {
     let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
 
@@ -2989,6 +3014,40 @@ mod tests {
         required: 1,
         provided: 2
       })
+    ));
+  }
+
+  #[test]
+  fn finalize_psbt_rejects_unrelated_multisig_sig_with_conflicting_sighash() {
+    let address = Address::from_str(P2WSH_2OF2_ADDRESS)
+      .unwrap()
+      .assume_checked();
+    let mut psbt = create_bip322_psbt(
+      &address,
+      P2WSH_2OF2_MESSAGE,
+      Some(&ScriptBuf::from_hex(P2WSH_2OF2_WITNESS_SCRIPT).unwrap()),
+      &[],
+      LockParams::default(),
+    )
+    .unwrap();
+    psbt.inputs[0].sighash_type = Some(EcdsaSighashType::All.into());
+    for key in [P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2] {
+      sign_bip322_psbt_input(&mut psbt, &PrivateKey::from_wif(key).unwrap(), 0).unwrap();
+    }
+
+    let secp = Secp256k1::new();
+    let stranger = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    psbt.inputs[0].partial_sigs.insert(
+      stranger.public_key(&secp),
+      bitcoin::ecdsa::Signature {
+        signature: secp.sign_ecdsa(&Message::from_digest([0; 32]), &stranger.inner),
+        sighash_type: EcdsaSighashType::None,
+      },
+    );
+
+    assert!(matches!(
+      finalize_bip322_psbt(psbt),
+      Err(Error::SigHashTypeUnsupported { .. })
     ));
   }
 
@@ -3116,6 +3175,51 @@ mod tests {
       verify_pof_encoded(POF_P2TR_ADDRESS, POF_P2TR_MESSAGE, &encoded),
       Verification::Valid { .. }
     ));
+  }
+
+  #[test]
+  fn sign_and_finalize_psbt_reject_invalid_additional_outpoints() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+    let build = || {
+      let second = ProofInput {
+        outpoint: OutPoint {
+          txid: "2222222222222222222222222222222222222222222222222222222222222222"
+            .parse()
+            .unwrap(),
+          vout: 0,
+        },
+        ..pof_p2tr_proof_input()
+      };
+      create_bip322_psbt(
+        &address,
+        "foo",
+        None,
+        &[pof_p2tr_proof_input(), second],
+        LockParams::default(),
+      )
+      .unwrap()
+    };
+
+    let mut null = build();
+    null.unsigned_tx.input[1].previous_output = OutPoint::default();
+    let mut duplicate = build();
+    duplicate.unsigned_tx.input[2].previous_output = duplicate.unsigned_tx.input[1].previous_output;
+
+    for psbt in [null, duplicate] {
+      let mut psbt = Psbt::deserialize(&psbt.serialize()).unwrap();
+      assert!(matches!(
+        sign_bip322_psbt_input(
+          &mut psbt,
+          &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+          0,
+        ),
+        Err(Error::ToSignInvalid)
+      ));
+      assert!(matches!(
+        finalize_bip322_psbt(psbt),
+        Err(Error::ToSignInvalid)
+      ));
+    }
   }
 
   #[test]
@@ -3970,6 +4074,29 @@ mod tests {
   }
 
   #[test]
+  fn p2tr_non_minimal_unknown_key_push_is_invalid() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let mut script = vec![opcodes::all::OP_PUSHDATA1.to_u8(), 33];
+    script.extend_from_slice(&[7; 33]);
+    script.push(opcodes::all::OP_CHECKSIG.to_u8());
+    let tapscript = ScriptBuf::from_bytes(script);
+    let (address, mut tx, _signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+    tx.input[0].witness =
+      Witness::from_slice(&[vec![1; 32], tapscript.as_bytes().to_vec(), control_block]);
+
+    assert!(matches!(
+      verify_full(&address, "foo", tx.clone()),
+      Verification::Invalid(_)
+    ));
+    tx.input[0].witness.push([0x50]);
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
+      Verification::Invalid(_)
+    ));
+  }
+
+  #[test]
   fn p2tr_malformed_known_key_and_empty_script_are_invalid() {
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
     let tapscript = ScriptBuf::builder()
@@ -4265,6 +4392,24 @@ mod tests {
   }
 
   #[test]
+  fn finalize_psbt_accepts_default_tap_key_sig_without_declared_sighash() {
+    let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+    let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+    psbt.inputs[0].sighash_type = Some(TapSighashType::Default.into());
+    sign_bip322_psbt_input(
+      &mut psbt,
+      &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+      0,
+    )
+    .unwrap();
+    psbt.inputs[0].sighash_type = None;
+    assert_eq!(psbt.inputs[0].tap_key_sig.unwrap().to_vec().len(), 64);
+
+    let encoded = finalize_bip322_psbt(psbt).unwrap();
+    assert_valid(verify_full_encoded(TAPROOT_ADDRESS, "foo", &encoded));
+  }
+
+  #[test]
   fn taproot_psbt_default_sighash_and_finalizer_cleanup() {
     let address = Address::from_str(POF_P2TR_ADDRESS)
       .unwrap()
@@ -4316,10 +4461,32 @@ mod tests {
   }
 
   #[test]
-  fn encoded_witness_rejects_impossible_counts_without_allocation() {
-    assert!(matches!(
-      verify_simple_encoded(SEGWIT_ADDRESS, "", "/gAJPQA="),
-      Verification::Invalid(_)
-    ));
+  fn valid_witness_encoding_checks_boundaries() {
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+    let witness = sign::sign_simple(
+      &address,
+      "foo",
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+    )
+    .unwrap();
+    let mut encoded = Vec::new();
+    witness.consensus_encode(&mut encoded).unwrap();
+    assert!(verify::valid_witness_encoding(&encoded));
+
+    encoded.push(0);
+    assert!(verify::valid_witness_encoding(&encoded));
+
+    for bytes in [
+      vec![0xfd, 0, 0],    // non-minimal item count
+      vec![1, 0xfd, 0, 0], // non-minimal item length
+      vec![2, 0],          // impossible item count
+      vec![1, 2, 0],       // impossible item length
+    ] {
+      assert!(
+        !verify::valid_witness_encoding(&bytes),
+        "accepted {bytes:?}"
+      );
+    }
   }
 }

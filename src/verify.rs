@@ -138,7 +138,7 @@ fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
 /// Checks CompactSize counts and lengths before rust-bitcoin allocates from
 /// attacker-controlled values. Every witness item needs at least its length
 /// prefix, so a count larger than the remaining byte count is impossible.
-fn valid_witness_encoding(bytes: &[u8]) -> bool {
+pub(crate) fn valid_witness_encoding(bytes: &[u8]) -> bool {
   fn compact_size(bytes: &[u8], position: &mut usize) -> Option<u64> {
     let first = *bytes.get(*position)?;
     *position += 1;
@@ -383,12 +383,11 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
 
   let unsigned_tx = &psbt.unsigned_tx;
 
-  if unsigned_tx.input.len() < 2
-    || unsigned_tx.input[0].previous_output != to_spend_outpoint
-    || psbt.inputs.len() != unsigned_tx.input.len()
-    || psbt.outputs.len() != unsigned_tx.output.len()
-  {
+  if unsigned_tx.input.len() < 2 || unsigned_tx.input[0].previous_output != to_spend_outpoint {
     return Verification::Invalid(Error::ToSignInvalid);
+  }
+  if let Err(error) = validate_psbt_structure(&psbt) {
+    return Verification::Invalid(error);
   }
 
   let op_return = ScriptBuf::builder()
@@ -402,19 +401,13 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
-  // Consensus: every outpoint must be non-null and unique.
-  let mut outpoints = std::collections::HashSet::with_capacity(unsigned_tx.input.len());
-  if unsigned_tx
-    .input
-    .iter()
-    .any(|input| input.previous_output.is_null() || !outpoints.insert(input.previous_output))
-  {
-    return Verification::Invalid(Error::ToSignInvalid);
-  }
-
+  let resolver = match PrevoutResolver::new(&psbt) {
+    Ok(resolver) => resolver,
+    Err(error) => return Verification::Invalid(error),
+  };
   let mut all_prevouts = Vec::with_capacity(unsigned_tx.input.len());
   for index in 0..unsigned_tx.input.len() {
-    let prevout = match psbt_input_prevout(&psbt, index) {
+    let prevout = match resolver.resolve(index) {
       Ok(prevout) => prevout,
       Err(error) => return Verification::Invalid(error),
     };
@@ -430,7 +423,7 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
       .as_deref()
       .unwrap_or(&unsigned_tx.input[index].script_sig);
     if !is_segwit_spend(&prevout.script_pubkey, final_script_sig)
-      && !has_non_witness_utxo(&psbt, index)
+      && !resolver.has_non_witness(index)
     {
       return Verification::Invalid(Error::ToSignInvalid);
     }
@@ -466,18 +459,6 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     time: to_sign.lock_time,
     age: to_sign.input[0].sequence,
   }
-}
-
-fn has_non_witness_utxo(psbt: &Psbt, index: usize) -> bool {
-  if psbt.inputs[index].non_witness_utxo.is_some() {
-    return true;
-  }
-
-  let txid = psbt.unsigned_tx.input[index].previous_output.txid;
-  (1..index).any(|earlier| {
-    psbt.unsigned_tx.input[earlier].previous_output.txid == txid
-      && psbt.inputs[earlier].non_witness_utxo.is_some()
-  })
 }
 
 fn is_segwit_spend(script_pubkey: &Script, script_sig: &Script) -> bool {
@@ -685,75 +666,71 @@ fn verify_with_interpreter(
   let secp = Secp256k1::verification_only();
   let prevouts_all = sighash::Prevouts::All(prevouts);
 
-  let evaluate = |sequence: Sequence| -> Result<InputVerification> {
-    let interpreter = match Interpreter::from_txdata(
-      &prevout.script_pubkey,
-      &txin.script_sig,
-      &txin.witness,
-      sequence,
-      to_sign.lock_time,
-    ) {
-      Ok(interpreter) => interpreter,
-      Err(miniscript::interpreter::Error::Miniscript(_))
-      | Err(miniscript::interpreter::Error::TapAnnexUnsupported) => {
-        return Ok(InputVerification::Inconclusive)
-      }
-      Err(miniscript::interpreter::Error::PubkeyParseError)
-      | Err(miniscript::interpreter::Error::XOnlyPublicKeyParseError)
-        if prevout.script_pubkey.is_p2tr() && taproot_witness_has_unknown_key(txin) =>
-      {
-        return Ok(InputVerification::Inconclusive)
-      }
-      Err(_) => return Err(Error::ScriptNotSatisfied),
-    };
-
-    for result in interpreter.iter(&secp, to_sign, input_index, &prevouts_all) {
-      match result {
-        Ok(SatisfiedConstraint::PublicKey { key_sig })
-        | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
-          KeySigPair::Ecdsa(_, signature) => {
-            if signature.sighash_type != EcdsaSighashType::All {
-              return Err(Error::SigHashTypeUnsupported {
-                sighash_type: signature.sighash_type.to_string(),
-              });
-            }
-            require_low_s(&signature.signature)?;
-          }
-          KeySigPair::Schnorr(_, signature) => {
-            if signature.sighash_type != TapSighashType::All
-              && signature.sighash_type != TapSighashType::Default
-            {
-              return Err(Error::SigHashTypeUnsupported {
-                sighash_type: signature.sighash_type.to_string(),
-              });
-            }
-            if signature.sighash_type == TapSighashType::Default
-              && has_explicit_default_taproot_signature(txin, &signature)
-            {
-              return Err(Error::SigHashTypeUnsupported {
-                sighash_type: signature.sighash_type.to_string(),
-              });
-            }
-          }
-        },
-        Ok(_) => {}
-        Err(miniscript::interpreter::Error::EcdsaSig(_))
-        | Err(miniscript::interpreter::Error::SchnorrSig(_))
-        | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
-        | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
-        | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
-          return Err(Error::SignatureInvalid {
-            source: bitcoin::secp256k1::Error::IncorrectSignature,
-          })
-        }
-        Err(_) => return Err(Error::ScriptNotSatisfied),
-      }
+  let interpreter = match Interpreter::from_txdata(
+    &prevout.script_pubkey,
+    &txin.script_sig,
+    &txin.witness,
+    txin.sequence,
+    to_sign.lock_time,
+  ) {
+    Ok(interpreter) => interpreter,
+    Err(miniscript::interpreter::Error::Miniscript(_))
+    | Err(miniscript::interpreter::Error::TapAnnexUnsupported) => {
+      return Ok(InputVerification::Inconclusive)
     }
-
-    Ok(InputVerification::Valid)
+    Err(miniscript::interpreter::Error::PubkeyParseError)
+    | Err(miniscript::interpreter::Error::XOnlyPublicKeyParseError)
+      if prevout.script_pubkey.is_p2tr() && taproot_witness_has_unknown_key(txin) =>
+    {
+      return Ok(InputVerification::Inconclusive)
+    }
+    Err(_) => return Err(Error::ScriptNotSatisfied),
   };
 
-  evaluate(txin.sequence)
+  for result in interpreter.iter(&secp, to_sign, input_index, &prevouts_all) {
+    match result {
+      Ok(SatisfiedConstraint::PublicKey { key_sig })
+      | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
+        KeySigPair::Ecdsa(_, signature) => {
+          if signature.sighash_type != EcdsaSighashType::All {
+            return Err(Error::SigHashTypeUnsupported {
+              sighash_type: signature.sighash_type.to_string(),
+            });
+          }
+          require_low_s(&signature.signature)?;
+        }
+        KeySigPair::Schnorr(_, signature) => {
+          if signature.sighash_type != TapSighashType::All
+            && signature.sighash_type != TapSighashType::Default
+          {
+            return Err(Error::SigHashTypeUnsupported {
+              sighash_type: signature.sighash_type.to_string(),
+            });
+          }
+          if signature.sighash_type == TapSighashType::Default
+            && has_explicit_default_taproot_signature(txin, &signature)
+          {
+            return Err(Error::SigHashTypeUnsupported {
+              sighash_type: signature.sighash_type.to_string(),
+            });
+          }
+        }
+      },
+      Ok(_) => {}
+      Err(miniscript::interpreter::Error::EcdsaSig(_))
+      | Err(miniscript::interpreter::Error::SchnorrSig(_))
+      | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
+        return Err(Error::SignatureInvalid {
+          source: bitcoin::secp256k1::Error::IncorrectSignature,
+        })
+      }
+      Err(_) => return Err(Error::ScriptNotSatisfied),
+    }
+  }
+
+  Ok(InputVerification::Valid)
 }
 
 fn taproot_witness_has_unknown_key(txin: &TxIn) -> bool {
@@ -1036,42 +1013,60 @@ fn verify_full_p2tr(
     return Err(Error::ScriptNotSatisfied);
   }
 
-  if control.leaf_version != LeafVersion::TapScript || contains_op_success(tapscript) {
+  if control.leaf_version != LeafVersion::TapScript {
     return Ok(InputVerification::Inconclusive);
-  }
-
-  if let Some(verdict) = classify_simple_tapscript(tapscript, &items, spend_len)? {
-    return Ok(verdict);
-  }
-
-  if has_annex {
-    verify_annexed_tapscript(to_sign, prevouts, input_index, &items, spend_len, tapscript)?;
-    return Ok(InputVerification::Inconclusive);
-  }
-
-  // Known TapScript is evaluated by the interpreter fallback.
-  Ok(InputVerification::Unsupported)
-}
-
-/// Classifies TapScript key encodings whose BIP342 semantics are explicit,
-/// without guessing from unrelated witness-element lengths.
-fn classify_simple_tapscript(
-  tapscript: &Script,
-  items: &[&[u8]],
-  spend_len: usize,
-) -> Result<Option<InputVerification>> {
-  if tapscript.is_empty() {
-    return Err(Error::ScriptNotSatisfied);
   }
   if tapscript
-    .instructions()
+    .instructions_minimal()
     .any(|instruction| instruction.is_err())
   {
     return Err(Error::InvalidWitness);
   }
+  if contains_op_success(tapscript) {
+    return Ok(InputVerification::Inconclusive);
+  }
 
-  let mut instructions = tapscript.instructions();
-  if let (
+  match parse_simple_tapscript(tapscript, &items, spend_len)? {
+    Some(SimpleTapscript::UnknownKey) => Ok(InputVerification::Inconclusive),
+    Some(SimpleTapscript::SingleKey(public_key)) => {
+      verify_single_key_tapscript(
+        to_sign,
+        prevouts,
+        input_index,
+        &items,
+        tapscript,
+        public_key,
+        has_annex,
+      )?;
+      Ok(if has_annex {
+        InputVerification::Inconclusive
+      } else {
+        InputVerification::Valid
+      })
+    }
+    None if has_annex => Ok(InputVerification::Inconclusive),
+    None => Ok(InputVerification::Unsupported),
+  }
+}
+
+enum SimpleTapscript {
+  SingleKey(XOnlyPublicKey),
+  UnknownKey,
+}
+
+/// Parses the single-key TapScript template using BIP322's required minimal
+/// push rules. Unknown key types retain BIP342's witness-stack semantics.
+fn parse_simple_tapscript(
+  tapscript: &Script,
+  items: &[&[u8]],
+  spend_len: usize,
+) -> Result<Option<SimpleTapscript>> {
+  if tapscript.is_empty() {
+    return Err(Error::ScriptNotSatisfied);
+  }
+
+  let mut instructions = tapscript.instructions_minimal();
+  let (
     Some(Ok(Instruction::PushBytes(key))),
     Some(Ok(Instruction::Op(opcodes::all::OP_CHECKSIG))),
     None,
@@ -1079,66 +1074,54 @@ fn classify_simple_tapscript(
     instructions.next(),
     instructions.next(),
     instructions.next(),
-  ) {
-    if spend_len != 3 {
-      return Err(Error::InvalidWitness);
-    }
-    if items[0].is_empty() {
-      return Err(Error::ScriptNotSatisfied);
-    }
-    if key.len() > 520 || items[0].len() > 520 {
-      return Err(Error::InvalidWitness);
-    }
-    if key.is_empty() {
-      return Err(Error::ScriptNotSatisfied);
-    }
-    if key.len() != 32 {
-      return Ok(Some(InputVerification::Inconclusive));
-    }
-    XOnlyPublicKey::from_slice(key.as_bytes()).map_err(|_| Error::InvalidPublicKey)?;
+  )
+  else {
+    return Ok(None);
+  };
+
+  if spend_len != 3 {
+    return Err(Error::InvalidWitness);
+  }
+  if items[0].is_empty() {
+    return Err(Error::ScriptNotSatisfied);
+  }
+  if key.len() > 520 || items[0].len() > 520 {
+    return Err(Error::InvalidWitness);
+  }
+  if key.is_empty() {
+    return Err(Error::ScriptNotSatisfied);
+  }
+  if key.len() != 32 {
+    return Ok(Some(SimpleTapscript::UnknownKey));
   }
 
-  Ok(None)
+  Ok(Some(SimpleTapscript::SingleKey(
+    XOnlyPublicKey::from_slice(key.as_bytes()).map_err(|_| Error::InvalidPublicKey)?,
+  )))
 }
 
-/// The miniscript interpreter cannot evaluate an annex. Check the common
-/// single-key TapScript template directly so upgradeable annex handling cannot
-/// hide a required signature failure.
-fn verify_annexed_tapscript(
+fn verify_single_key_tapscript(
   to_sign: &Transaction,
   prevouts: &[TxOut],
   input_index: usize,
   items: &[&[u8]],
-  spend_len: usize,
   tapscript: &Script,
+  public_key: XOnlyPublicKey,
+  has_annex: bool,
 ) -> Result<()> {
   use bitcoin::taproot::{LeafVersion, TapLeafHash};
 
-  let mut instructions = tapscript.instructions();
-  let public_key = match (
-    instructions.next(),
-    instructions.next(),
-    instructions.next(),
-  ) {
-    (
-      Some(Ok(Instruction::PushBytes(key))),
-      Some(Ok(Instruction::Op(opcodes::all::OP_CHECKSIG))),
-      None,
-    ) => XOnlyPublicKey::from_slice(key.as_bytes()).map_err(|_| Error::InvalidPublicKey)?,
-    _ => return Ok(()),
-  };
-  if spend_len != 3 {
-    return Err(Error::InvalidWitness);
-  }
-
   let (signature, sighash_type) = parse_taproot_signature(items[0])?;
-  let annex = sighash::Annex::new(items[items.len() - 1]).map_err(|_| Error::InvalidWitness)?;
+  let annex = has_annex
+    .then(|| sighash::Annex::new(items[items.len() - 1]))
+    .transpose()
+    .map_err(|_| Error::InvalidWitness)?;
   let leaf_hash = TapLeafHash::from_script(tapscript, LeafVersion::TapScript);
   let sighash = SighashCache::new(to_sign)
     .taproot_signature_hash(
       input_index,
       &sighash::Prevouts::All(prevouts),
-      Some(annex),
+      annex,
       Some((leaf_hash, 0xffff_ffff)),
       sighash_type,
     )
