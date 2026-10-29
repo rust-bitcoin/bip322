@@ -71,6 +71,8 @@ pub enum Error {
   NoPrivateKeys,
   #[snafu(display("At least one proof input is required"))]
   NoProofInputs,
+  #[snafu(display("Proof of funds has {count} total inputs, maximum is {max}"))]
+  TooManyProofInputs { count: usize, max: usize },
   #[snafu(display("Signer's public key not present in multisig script"))]
   UnknownSigner,
   #[snafu(display("Duplicate private key provided"))]

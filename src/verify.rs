@@ -1,4 +1,5 @@
 use super::*;
+use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
 
 /// Outcome of BIP-322 verification, per the spec's three validator states.
 /// The verify functions always return a verdict: [`Verification::Invalid`]
@@ -135,45 +136,239 @@ fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
   Ok((address, witness))
 }
 
-/// Checks CompactSize counts and lengths before rust-bitcoin allocates from
-/// attacker-controlled values. Every witness item needs at least its length
-/// prefix, so a count larger than the remaining byte count is impossible.
-pub(crate) fn valid_witness_encoding(bytes: &[u8]) -> bool {
-  fn compact_size(bytes: &[u8], position: &mut usize) -> Option<u64> {
-    let first = *bytes.get(*position)?;
-    *position += 1;
+/// A bounds-checked reader for consensus encodings. It never allocates from a
+/// length or count before checking that the bytes are present.
+struct EncodingCursor<'a> {
+  bytes: &'a [u8],
+  position: usize,
+}
+
+impl<'a> EncodingCursor<'a> {
+  fn new(bytes: &'a [u8]) -> Self {
+    Self { bytes, position: 0 }
+  }
+
+  fn remaining(&self) -> usize {
+    self.bytes.len().saturating_sub(self.position)
+  }
+
+  fn take(&mut self, length: u64) -> Option<&'a [u8]> {
+    let length = usize::try_from(length).ok()?;
+    let end = self.position.checked_add(length)?;
+    let bytes = self.bytes.get(self.position..end)?;
+    self.position = end;
+    Some(bytes)
+  }
+
+  fn skip(&mut self, length: u64) -> bool {
+    self.take(length).is_some()
+  }
+
+  fn compact_size(&mut self) -> Option<u64> {
+    let first = *self.take(1)?.first()?;
     let (width, minimum) = match first {
       0xfd => (2, 0xfd),
       0xfe => (4, 0x1_0000),
       0xff => (8, 0x1_0000_0000),
       value => return Some(u64::from(value)),
     };
-    let end = position.checked_add(width)?;
-    let raw = bytes.get(*position..end)?;
+    let raw = self.take(width)?;
     let mut value = 0u64;
     for byte in raw.iter().rev() {
       value = (value << 8) | u64::from(*byte);
     }
-    *position = end;
     (value >= minimum).then_some(value)
   }
 
-  let mut position = 0;
-  let Some(count) = compact_size(bytes, &mut position) else {
-    return false;
+  fn witness(&mut self) -> bool {
+    let Some(count) = self.compact_size() else {
+      return false;
+    };
+    // Every witness item needs at least its length prefix.
+    if count > self.remaining() as u64 {
+      return false;
+    }
+    for _ in 0..count {
+      let Some(length) = self.compact_size() else {
+        return false;
+      };
+      if !self.skip(length) {
+        return false;
+      }
+    }
+    true
+  }
+
+  fn inputs(&mut self, count: u64) -> bool {
+    // A TxIn needs at least 36 bytes of outpoint, one length byte, and four
+    // bytes of sequence.
+    if count > self.remaining() as u64 / 41 {
+      return false;
+    }
+    for _ in 0..count {
+      let Some(length) = self.compact_size_after(36) else {
+        return false;
+      };
+      if !self.skip(length) || !self.skip(4) {
+        return false;
+      }
+    }
+    true
+  }
+
+  fn compact_size_after(&mut self, prefix: u64) -> Option<u64> {
+    if !self.skip(prefix) {
+      return None;
+    }
+    self.compact_size()
+  }
+
+  fn outputs(&mut self, count: u64) -> bool {
+    // A TxOut needs at least eight value bytes and one length byte.
+    if count > self.remaining() as u64 / 9 {
+      return false;
+    }
+    for _ in 0..count {
+      let Some(length) = self.compact_size_after(8) else {
+        return false;
+      };
+      if !self.skip(length) {
+        return false;
+      }
+    }
+    true
+  }
+
+  fn pair(&mut self) -> Option<Option<RawPair<'a>>> {
+    let key_length = self.compact_size()?;
+    if key_length == 0 {
+      return Some(None);
+    }
+    let key = self.take(key_length)?;
+    let value_length = self.compact_size()?;
+    let value = self.take(value_length)?;
+    Some(Some(RawPair {
+      key_type: key[0],
+      key_data: &key[1..],
+      value,
+    }))
+  }
+}
+
+struct RawPair<'a> {
+  key_type: u8,
+  key_data: &'a [u8],
+  value: &'a [u8],
+}
+
+/// Checks CompactSize counts and lengths before rust-bitcoin allocates from
+/// attacker-controlled values. Every witness item needs at least its length
+/// prefix, so a count larger than the remaining byte count is impossible.
+pub(crate) fn valid_witness_encoding(bytes: &[u8]) -> bool {
+  EncodingCursor::new(bytes).witness()
+}
+
+fn parse_transaction_shape(bytes: &[u8]) -> Option<(usize, usize)> {
+  let mut cursor = EncodingCursor::new(bytes);
+  cursor.skip(4).then_some(())?;
+
+  let input_count = cursor.compact_size()?;
+  let (input_count, output_count) = if input_count == 0 {
+    if cursor.take(1)?.first() != Some(&1) {
+      return None;
+    }
+    let input_count = cursor.compact_size()?;
+    if !cursor.inputs(input_count) {
+      return None;
+    }
+    let output_count = cursor.compact_size()?;
+    if !cursor.outputs(output_count) {
+      return None;
+    }
+    for _ in 0..input_count {
+      if !cursor.witness() {
+        return None;
+      }
+    }
+    (input_count, output_count)
+  } else {
+    if !cursor.inputs(input_count) {
+      return None;
+    }
+    let output_count = cursor.compact_size()?;
+    if !cursor.outputs(output_count) {
+      return None;
+    }
+    (input_count, output_count)
   };
-  if count > (bytes.len() - position) as u64 {
+
+  cursor.skip(4).then_some(())?;
+  Some((
+    usize::try_from(input_count).ok()?,
+    usize::try_from(output_count).ok()?,
+  ))
+}
+
+pub(crate) fn valid_transaction_encoding(bytes: &[u8]) -> bool {
+  parse_transaction_shape(bytes).is_some()
+}
+
+pub(crate) fn valid_psbt_encoding(bytes: &[u8]) -> bool {
+  let mut cursor = EncodingCursor::new(bytes);
+  if cursor.take(5) != Some(b"psbt\xff".as_slice()) {
     return false;
   }
 
-  for _ in 0..count {
-    let Some(length) = compact_size(bytes, &mut position) else {
+  let mut unsigned_tx_shape = None;
+  loop {
+    let Some(pair) = cursor.pair() else {
       return false;
     };
-    if length > (bytes.len() - position) as u64 {
-      return false;
+    let Some(pair) = pair else {
+      break;
+    };
+    if pair.key_type == 0x00 && pair.key_data.is_empty() {
+      if unsigned_tx_shape.is_some() || !valid_transaction_encoding(pair.value) {
+        return false;
+      }
+      unsigned_tx_shape = parse_transaction_shape(pair.value);
     }
-    position += length as usize;
+  }
+
+  let Some((input_count, output_count)) = unsigned_tx_shape else {
+    return false;
+  };
+
+  for _ in 0..input_count {
+    loop {
+      let Some(pair) = cursor.pair() else {
+        return false;
+      };
+      let Some(pair) = pair else {
+        break;
+      };
+      if pair.key_data.is_empty() && pair.key_type == 0x00 {
+        if !valid_transaction_encoding(pair.value) {
+          return false;
+        }
+      } else if pair.key_data.is_empty()
+        && pair.key_type == 0x08
+        && !valid_witness_encoding(pair.value)
+      {
+        return false;
+      }
+    }
+  }
+
+  for _ in 0..output_count {
+    loop {
+      let Some(pair) = cursor.pair() else {
+        return false;
+      };
+      if pair.is_none() {
+        break;
+      }
+    }
   }
 
   true
@@ -202,6 +397,10 @@ fn decode_full(address: &str, to_sign: &str) -> Result<(Address, Transaction)> {
       .context(error::TransactionBase64Decode {
         transaction: to_sign,
       })?;
+  if !valid_transaction_encoding(&bytes) {
+    return Err(Error::ToSignInvalid);
+  }
+
   let length = bytes.len() as u64;
 
   let mut cursor = bitcoin::io::Cursor::new(bytes);
@@ -244,6 +443,10 @@ fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
       .context(error::TransactionBase64Decode {
         transaction: to_sign,
       })?;
+
+  if !valid_psbt_encoding(&bytes) {
+    return Err(Error::ToSignInvalid);
+  }
 
   let length = bytes.len() as u64;
 
@@ -449,8 +652,8 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
 
   // Legacy and third-party interpreter sighashes can require quadratic work.
   // Bound verification effort and report larger proofs as unverifiable rather
-  // than returning a required-rule failure.
-  const MAX_PROOF_INPUTS: usize = 1024;
+  // than returning a required-rule failure. Taproot commitment verification is
+  // deliberately lazy, so this check runs before any elliptic-curve work.
   if spends.len() > MAX_PROOF_INPUTS {
     return Verification::Inconclusive;
   }
@@ -488,7 +691,7 @@ struct Spend<'a> {
 }
 
 struct P2shSpend<'a> {
-  pushes: Vec<&'a [u8]>,
+  pushes: Vec<Vec<u8>>,
   redeem_script: Option<&'a Script>,
   minimal_push_only: bool,
   commitment_valid: bool,
@@ -516,7 +719,19 @@ struct TaprootScriptSpend<'a> {
   initial_stack: Vec<&'a [u8]>,
   tapscript: &'a Script,
   control_block: Option<bitcoin::taproot::ControlBlock>,
-  commitment_valid: bool,
+}
+
+impl TaprootScriptSpend<'_> {
+  fn commitment_valid(&self, output_key: Option<XOnlyPublicKey>) -> bool {
+    match (&self.control_block, output_key) {
+      (Some(control), Some(output_key)) => control.verify_taproot_commitment(
+        &Secp256k1::verification_only(),
+        output_key,
+        self.tapscript,
+      ),
+      _ => false,
+    }
+  }
 }
 
 impl<'a> Spend<'a> {
@@ -530,24 +745,33 @@ impl<'a> Spend<'a> {
     let p2sh = script_pubkey.is_p2sh().then(|| {
       let mut pushes = Vec::new();
       let mut minimal_push_only = true;
-      let mut last_push = None;
-      let mut ends_with_push = false;
+      let mut last_data_push = None;
+      let mut ends_with_data_push = false;
       for instruction in txin.script_sig.instructions_minimal() {
         match instruction {
           Ok(Instruction::PushBytes(bytes)) => {
             let bytes = bytes.as_bytes();
-            pushes.push(bytes);
-            last_push = Some(bytes);
-            ends_with_push = true;
+            pushes.push(bytes.to_vec());
+            last_data_push = Some(bytes);
+            ends_with_data_push = true;
           }
-          _ => {
+          Ok(Instruction::Op(opcode)) => {
+            match opcode.to_u8() {
+              // Script-number pushes are valid minimal stack elements.
+              0x4f => pushes.push(vec![0x81]),
+              0x51..=0x60 => pushes.push(vec![opcode.to_u8() - 0x50]),
+              _ => minimal_push_only = false,
+            }
+            ends_with_data_push = false;
+          }
+          Err(_) => {
             minimal_push_only = false;
-            ends_with_push = false;
+            ends_with_data_push = false;
           }
         }
       }
-      let redeem_script = ends_with_push
-        .then_some(last_push)
+      let redeem_script = ends_with_data_push
+        .then_some(last_data_push)
         .flatten()
         .map(Script::from_bytes);
       let commitment_valid = redeem_script
@@ -606,19 +830,10 @@ impl<'a> Spend<'a> {
           let tapscript = Script::from_bytes(items[spend_len - 2]);
           let control_bytes = items[spend_len - 1];
           let control_block = ControlBlock::decode(control_bytes).ok();
-          let commitment_valid = match (&control_block, output_key) {
-            (Some(control), Some(output_key)) => control.verify_taproot_commitment(
-              &Secp256k1::verification_only(),
-              output_key,
-              tapscript,
-            ),
-            _ => false,
-          };
           TaprootPath::Script(TaprootScriptSpend {
             initial_stack: items[..spend_len - 2].to_vec(),
             tapscript,
             control_block,
-            commitment_valid,
           })
         }
       };
@@ -746,9 +961,10 @@ impl<'a> Spend<'a> {
     )
   }
 
-  /// Miniscript's type-erased interpreter can treat a naked `older(0)` or
-  /// `after(0)` fragment as satisfied even though execution leaves false on
-  /// top of the stack. Reject those exact known-invalid scripts.
+  /// Miniscript rejects zero-valued timelocks during decoding, so these exact
+  /// naked scripts would otherwise be classified as inconclusive. Under
+  /// Bitcoin consensus they execute to a false zero and fail, so reject them as
+  /// known-invalid rather than leaving them unverifiable.
   fn has_naked_zero_timelock(&self) -> bool {
     fn is_naked_zero_timelock(script: &Script) -> bool {
       let mut instructions = script.instructions();
@@ -816,6 +1032,14 @@ fn verify_input(
     return Ok(InputVerification::Inconclusive);
   }
 
+  if spend
+    .taproot
+    .as_ref()
+    .is_some_and(|taproot| taproot.annex.is_some())
+  {
+    verify_taproot_annex_required_rules(to_sign, spend)?;
+  }
+
   match verify_standard_script(spend, sighash_cache)? {
     InputVerification::Unsupported => verify_with_interpreter(to_sign, spend),
     valid => Ok(valid),
@@ -828,8 +1052,6 @@ fn verify_input(
 /// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
 /// script this validator does not understand is neither accepted nor rejected.
 fn verify_with_interpreter(to_sign: &Transaction, spend: &Spend) -> Result<InputVerification> {
-  use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
-
   let secp = Secp256k1::verification_only();
   let prevouts_all = sighash::Prevouts::All(spend.prevouts);
 
@@ -857,32 +1079,9 @@ fn verify_with_interpreter(to_sign: &Transaction, spend: &Spend) -> Result<Input
   for result in interpreter.iter(&secp, to_sign, spend.input_index, &prevouts_all) {
     match result {
       Ok(SatisfiedConstraint::PublicKey { key_sig })
-      | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => match key_sig {
-        KeySigPair::Ecdsa(_, signature) => {
-          if signature.sighash_type != EcdsaSighashType::All {
-            return Err(Error::SigHashTypeUnsupported {
-              sighash_type: signature.sighash_type.to_string(),
-            });
-          }
-          require_low_s(&signature.signature)?;
-        }
-        KeySigPair::Schnorr(_, signature) => {
-          if signature.sighash_type != TapSighashType::All
-            && signature.sighash_type != TapSighashType::Default
-          {
-            return Err(Error::SigHashTypeUnsupported {
-              sighash_type: signature.sighash_type.to_string(),
-            });
-          }
-          if signature.sighash_type == TapSighashType::Default
-            && has_explicit_default_taproot_signature(spend.taproot_initial_stack(), &signature)
-          {
-            return Err(Error::SigHashTypeUnsupported {
-              sighash_type: signature.sighash_type.to_string(),
-            });
-          }
-        }
-      },
+      | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
+        check_required_signature(key_sig, spend.taproot_initial_stack())?
+      }
       Ok(_) => {}
       Err(miniscript::interpreter::Error::EcdsaSig(_))
       | Err(miniscript::interpreter::Error::SchnorrSig(_))
@@ -898,6 +1097,90 @@ fn verify_with_interpreter(to_sign: &Transaction, spend: &Spend) -> Result<Input
   }
 
   Ok(InputVerification::Valid)
+}
+
+/// Enforces the BIP-322 required signature rules for a signature the script
+/// interpreter has identified.
+fn check_required_signature(key_sig: KeySigPair, initial_stack: &[&[u8]]) -> Result<()> {
+  match key_sig {
+    KeySigPair::Ecdsa(_, signature) => {
+      if signature.sighash_type != EcdsaSighashType::All {
+        return Err(Error::SigHashTypeUnsupported {
+          sighash_type: signature.sighash_type.to_string(),
+        });
+      }
+      require_low_s(&signature.signature)?;
+    }
+    KeySigPair::Schnorr(_, signature) => {
+      if signature.sighash_type != TapSighashType::All
+        && signature.sighash_type != TapSighashType::Default
+      {
+        return Err(Error::SigHashTypeUnsupported {
+          sighash_type: signature.sighash_type.to_string(),
+        });
+      }
+      if signature.sighash_type == TapSighashType::Default
+        && has_explicit_default_taproot_signature(initial_stack, &signature)
+      {
+        return Err(Error::SigHashTypeUnsupported {
+          sighash_type: signature.sighash_type.to_string(),
+        });
+      }
+    }
+  }
+  Ok(())
+}
+
+/// Runs the BIP-322 required checks on an annexed Taproot script that the
+/// normal interpreter path rejects outright. The annex is stripped only for
+/// script parsing; the final verdict remains `Inconclusive` because annex is an
+/// upgradeable rule.
+fn verify_taproot_annex_required_rules(to_sign: &Transaction, spend: &Spend) -> Result<()> {
+  let Some(taproot) = spend.taproot.as_ref() else {
+    return Ok(());
+  };
+  if taproot.annex.is_none() {
+    return Ok(());
+  }
+
+  let mut items: Vec<&[u8]> = spend.txin.witness.iter().collect();
+  if items.len() < 2 {
+    return Ok(());
+  }
+  items.pop();
+
+  let witness = Witness::from_slice(&items);
+  let Ok(interpreter) = Interpreter::from_txdata(
+    &spend.prevout.script_pubkey,
+    &spend.txin.script_sig,
+    &witness,
+    spend.txin.sequence,
+    to_sign.lock_time,
+  ) else {
+    return Ok(());
+  };
+
+  for result in interpreter.iter_assume_sigs() {
+    match result {
+      Ok(SatisfiedConstraint::PublicKey { key_sig })
+      | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
+        check_required_signature(key_sig, spend.taproot_initial_stack())?
+      }
+      Ok(_) => {}
+      Err(miniscript::interpreter::Error::EcdsaSig(_))
+      | Err(miniscript::interpreter::Error::SchnorrSig(_))
+      | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
+      | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
+        return Err(Error::SignatureInvalid {
+          source: bitcoin::secp256k1::Error::IncorrectSignature,
+        })
+      }
+      Err(_) => return Err(Error::ScriptNotSatisfied),
+    }
+  }
+
+  Ok(())
 }
 
 fn taproot_witness_has_unknown_key(spend: &Spend) -> bool {
@@ -1107,7 +1390,7 @@ fn verify_full_p2tr(
     }
     TaprootPath::Script(script) => {
       let control = script.control_block.as_ref().ok_or(Error::InvalidWitness)?;
-      if !script.commitment_valid {
+      if !script.commitment_valid(taproot.output_key) {
         return Err(Error::ScriptNotSatisfied);
       }
       if control.leaf_version != LeafVersion::TapScript {
@@ -1122,6 +1405,20 @@ fn verify_full_p2tr(
         .any(|instruction| instruction.is_err())
       {
         return Err(Error::InvalidWitness);
+      }
+
+      if script.tapscript.is_empty() {
+        let stack_is_true = script.initial_stack.len() == 1
+          && script.initial_stack[0].len() <= 520
+          && script::read_scriptbool(script.initial_stack[0]);
+        if !stack_is_true {
+          return Err(Error::ScriptNotSatisfied);
+        }
+        return Ok(if taproot.annex.is_some() {
+          InputVerification::Inconclusive
+        } else {
+          InputVerification::Valid
+        });
       }
 
       match parse_simple_tapscript(script.tapscript, &script.initial_stack)? {
@@ -1152,10 +1449,6 @@ fn parse_simple_tapscript(
   tapscript: &Script,
   initial_stack: &[&[u8]],
 ) -> Result<Option<SimpleTapscript>> {
-  if tapscript.is_empty() {
-    return Err(Error::ScriptNotSatisfied);
-  }
-
   let mut instructions = tapscript.instructions_minimal();
   let (
     Some(Ok(Instruction::PushBytes(key))),

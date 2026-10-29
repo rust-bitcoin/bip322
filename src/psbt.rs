@@ -95,6 +95,7 @@ pub fn create_bip322_psbt(
   locks: LockParams,
 ) -> Result<Psbt> {
   std::str::from_utf8(message.as_ref()).map_err(|_| Error::ToSignInvalid)?;
+  check_proof_input_count(inputs.len())?;
 
   let to_spend = create_to_spend(address, &message);
   let challenge_outpoint = OutPoint {
@@ -526,6 +527,13 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   };
 
   validate_psbt_structure(&psbt)?;
+  let input_count = psbt.unsigned_tx.input.len();
+  if input_count > MAX_PROOF_INPUTS {
+    return Err(Error::TooManyProofInputs {
+      count: input_count,
+      max: MAX_PROOF_INPUTS,
+    });
+  }
   let resolver = PrevoutResolver::new(&psbt)?;
   let mut challenges = Vec::with_capacity(psbt.inputs.len());
   for index in 0..psbt.inputs.len() {

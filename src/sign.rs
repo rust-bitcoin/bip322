@@ -235,6 +235,8 @@ pub fn sign_pof(
     return Err(Error::NoProofInputs);
   }
 
+  check_proof_input_count(inputs.len())?;
+
   std::str::from_utf8(message.as_ref()).map_err(|_| Error::ToSignInvalid)?;
 
   let to_spend = create_to_spend(address, &message);

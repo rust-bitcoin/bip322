@@ -128,6 +128,27 @@ pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>, locks: L
   psbt
 }
 
+/// Maximum total inputs (challenge plus proven UTXOs) allowed in a Proof of
+/// Funds. Verification bounds its work to this many inputs, so producers must
+/// reject larger proofs rather than create proofs this crate cannot verify.
+pub(crate) const MAX_PROOF_INPUTS: usize = 1024;
+
+pub(crate) fn check_proof_input_count(proof_inputs: usize) -> Result<usize> {
+  let count = proof_inputs
+    .checked_add(1)
+    .ok_or(Error::TooManyProofInputs {
+      count: usize::MAX,
+      max: MAX_PROOF_INPUTS,
+    })?;
+  if count > MAX_PROOF_INPUTS {
+    return Err(Error::TooManyProofInputs {
+      count,
+      max: MAX_PROOF_INPUTS,
+    });
+  }
+  Ok(count)
+}
+
 pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
   let instructions = script
     .instructions_minimal()

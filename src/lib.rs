@@ -2404,6 +2404,44 @@ mod tests {
   }
 
   #[test]
+  fn p2sh_small_integer_push_can_satisfy_if_branch() {
+    let redeem_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_IF)
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .push_opcode(opcodes::all::OP_ELSE)
+      .push_opcode(opcodes::OP_0)
+      .push_opcode(opcodes::all::OP_ENDIF)
+      .into_script();
+    let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    tx.input[0].script_sig = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .push_slice(push_bytes(redeem_script.as_bytes()))
+      .into_script();
+
+    assert_valid(verify_full(&address, "foo", tx));
+  }
+
+  #[test]
+  fn p2sh_small_integer_pass_through_is_not_rejected() {
+    let redeem_script = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_DROP)
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .into_script();
+    let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
+    let to_spend = create_to_spend(&address, "foo");
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    tx.input[0].script_sig = ScriptBuf::builder()
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .push_slice(push_bytes(redeem_script.as_bytes()))
+      .into_script();
+
+    let result = verify_full(&address, "foo", tx);
+    assert!(!result.is_invalid(), "got {result:?}");
+  }
+
+  #[test]
   fn pof_same_txid_non_witness_utxo_fallback() {
     let key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
     let spk = ScriptBuf::new_p2pkh(&key.public_key(&Secp256k1::new()).pubkey_hash());
@@ -3858,6 +3896,40 @@ mod tests {
   }
 
   #[test]
+  fn composed_zero_timelock_scripts_are_not_valid() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+    for opcode in [opcodes::all::OP_CSV, opcodes::all::OP_CLTV] {
+      let script = ScriptBuf::builder()
+        .push_opcode(opcodes::OP_0)
+        .push_opcode(opcode)
+        .push_opcode(opcodes::all::OP_VERIFY)
+        .push_opcode(opcodes::all::OP_PUSHNUM_1)
+        .into_script();
+
+      let address = Address::p2wsh(&script, bitcoin::Network::Bitcoin);
+      let to_spend = create_to_spend(&address, "foo");
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
+      let result = verify_full(&address, "foo", tx);
+      assert!(!result.is_valid(), "got {result:?}");
+
+      let address = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
+      let to_spend = create_to_spend(&address, "foo");
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      tx.input[0].script_sig = push_only_script(&script);
+      let result = verify_full(&address, "foo", tx);
+      assert!(!result.is_valid(), "got {result:?}");
+
+      let (address, mut tx, _signature, control_block) =
+        p2tr_script_path_spend(&script, &private_key, TapSighashType::Default);
+      tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec(), control_block]);
+      let result = verify_full(&address, "foo", tx);
+      assert!(!result.is_valid(), "got {result:?}");
+    }
+  }
+
+  #[test]
   fn interpreter_p2sh_single_key_valid() {
     let secp = Secp256k1::new();
     let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
@@ -4039,6 +4111,67 @@ mod tests {
         time: LockTime::ZERO,
         age: Sequence(0)
       }
+    ));
+  }
+
+  #[test]
+  fn empty_tapscript_uses_bip342_stack_semantics() {
+    let secp = Secp256k1::new();
+    let internal_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY)
+      .unwrap()
+      .public_key(&secp)
+      .inner
+      .x_only_public_key()
+      .0;
+    let tapscript = ScriptBuf::new();
+    let spend_info = bitcoin::taproot::TaprootBuilder::new()
+      .add_leaf(0, tapscript.clone())
+      .unwrap()
+      .finalize(&secp, internal_key)
+      .unwrap();
+    let address = Address::p2tr(
+      &secp,
+      internal_key,
+      spend_info.merkle_root(),
+      bitcoin::Network::Bitcoin,
+    );
+    let control_block = spend_info
+      .control_block(&(tapscript.clone(), bitcoin::taproot::LeafVersion::TapScript))
+      .unwrap()
+      .serialize();
+    let to_spend = create_to_spend(&address, "foo");
+
+    let mut valid = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    valid.input[0].witness = Witness::from_slice(&[
+      vec![1],
+      tapscript.as_bytes().to_vec(),
+      control_block.clone(),
+    ]);
+    assert_valid(verify_full(&address, "foo", valid));
+
+    for false_element in [vec![0], vec![0x80]] {
+      let mut false_stack = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      false_stack.input[0].witness = Witness::from_slice(&[
+        false_element,
+        tapscript.as_bytes().to_vec(),
+        control_block.clone(),
+      ]);
+      assert!(matches!(
+        verify_full(&address, "foo", false_stack),
+        Verification::Invalid(Error::ScriptNotSatisfied)
+      ));
+    }
+
+    let mut annexed = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    annexed.input[0].witness = Witness::from_slice(&[
+      vec![1],
+      tapscript.as_bytes().to_vec(),
+      control_block,
+      vec![0x50],
+    ]);
+    assert!(matches!(
+      verify_full(&address, "foo", annexed),
+      Verification::Inconclusive
     ));
   }
 
@@ -4229,6 +4362,74 @@ mod tests {
     tx.input[0].witness = Witness::from_slice(&[success_script.as_bytes().to_vec(), control_block]);
     assert!(matches!(
       verify_full(&success_address, "foo", tx),
+      Verification::Inconclusive
+    ));
+  }
+
+  #[test]
+  fn annex_non_template_tapscript_checks_required_sighash() {
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let secp = Secp256k1::new();
+    let tapscript = ScriptBuf::builder()
+      .push_x_only_key(&private_key.public_key(&secp).inner.x_only_public_key().0)
+      .push_opcode(opcodes::all::OP_CHECKSIGVERIFY)
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .into_script();
+    let (address, mut tx, _signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::None);
+    let annex = vec![0x50, 1, 2, 3];
+    let to_spend = create_to_spend(&address, "foo");
+    let leaf_hash = bitcoin::taproot::TapLeafHash::from_script(
+      &tapscript,
+      bitcoin::taproot::LeafVersion::TapScript,
+    );
+    let keypair = Keypair::from_secret_key(&secp, &private_key.inner);
+
+    let sighash = SighashCache::new(tx.clone())
+      .taproot_signature_hash(
+        0,
+        &sighash::Prevouts::All(&to_spend.output),
+        Some(sighash::Annex::new(&annex).unwrap()),
+        Some((leaf_hash, 0xffff_ffff)),
+        TapSighashType::None,
+      )
+      .unwrap();
+    let signature =
+      secp.sign_schnorr_no_aux_rand(&Message::from_digest(sighash.to_byte_array()), &keypair);
+    let mut encoded = signature.as_ref().to_vec();
+    encoded.push(2);
+    tx.input[0].witness = Witness::from_slice(&[
+      encoded,
+      tapscript.as_bytes().to_vec(),
+      control_block.clone(),
+      annex.clone(),
+    ]);
+    let result = verify_full(&address, "foo", tx.clone());
+    assert!(
+      matches!(
+        result,
+        Verification::Invalid(Error::SigHashTypeUnsupported { .. })
+      ),
+      "got {result:?}"
+    );
+
+    let sighash = SighashCache::new(tx.clone())
+      .taproot_signature_hash(
+        0,
+        &sighash::Prevouts::All(&to_spend.output),
+        Some(sighash::Annex::new(&annex).unwrap()),
+        Some((leaf_hash, 0xffff_ffff)),
+        TapSighashType::All,
+      )
+      .unwrap();
+    let signature =
+      secp.sign_schnorr_no_aux_rand(&Message::from_digest(sighash.to_byte_array()), &keypair);
+    let mut encoded = signature.as_ref().to_vec();
+    encoded.push(1);
+    tx.input[0].witness =
+      Witness::from_slice(&[encoded, tapscript.as_bytes().to_vec(), control_block, annex]);
+    assert!(matches!(
+      verify_full(&address, "foo", tx),
       Verification::Inconclusive
     ));
   }
@@ -4644,6 +4845,49 @@ mod tests {
   }
 
   #[test]
+  fn producers_reject_excessive_pof_input_counts() {
+    assert_eq!(
+      check_proof_input_count(MAX_PROOF_INPUTS - 1).unwrap(),
+      MAX_PROOF_INPUTS
+    );
+    assert!(matches!(
+      check_proof_input_count(MAX_PROOF_INPUTS),
+      Err(Error::TooManyProofInputs { .. })
+    ));
+
+    let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+    let inputs = vec![pof_p2tr_proof_input(); MAX_PROOF_INPUTS];
+
+    assert!(matches!(
+      create_bip322_psbt(&address, "foo", None, &inputs, LockParams::default()),
+      Err(Error::TooManyProofInputs { .. })
+    ));
+    assert!(matches!(
+      sign_pof(
+        &address,
+        "foo",
+        &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+        None,
+        &inputs,
+        LockParams::default(),
+      ),
+      Err(Error::TooManyProofInputs { .. })
+    ));
+
+    let (_, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+    while psbt.unsigned_tx.input.len() <= MAX_PROOF_INPUTS {
+      let mut txin = psbt.unsigned_tx.input[1].clone();
+      txin.previous_output.vout = psbt.unsigned_tx.input.len() as u32;
+      psbt.unsigned_tx.input.push(txin);
+      psbt.inputs.push(psbt.inputs[1].clone());
+    }
+    assert!(matches!(
+      finalize_bip322_psbt(psbt),
+      Err(Error::TooManyProofInputs { .. })
+    ));
+  }
+
+  #[test]
   fn pof_required_failure_precedes_earlier_inconclusive_input() {
     let second = ProofInput {
       outpoint: OutPoint {
@@ -4740,6 +4984,30 @@ mod tests {
   }
 
   #[test]
+  fn finalize_psbt_rejects_taproot_sighash_type_mismatches() {
+    for (declared, signed) in [
+      (TapSighashType::All, TapSighashType::Default),
+      (TapSighashType::Default, TapSighashType::All),
+    ] {
+      let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+      let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+      psbt.inputs[0].sighash_type = Some(signed.into());
+      sign_bip322_psbt_input(
+        &mut psbt,
+        &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+        0,
+      )
+      .unwrap();
+      psbt.inputs[0].sighash_type = Some(declared.into());
+
+      assert!(matches!(
+        finalize_bip322_psbt(psbt),
+        Err(Error::SigHashTypeUnsupported { .. })
+      ));
+    }
+  }
+
+  #[test]
   fn taproot_psbt_default_sighash_and_finalizer_cleanup() {
     let address = Address::from_str(POF_P2TR_ADDRESS)
       .unwrap()
@@ -4770,24 +5038,167 @@ mod tests {
     )
     .unwrap();
 
+    let secp = Secp256k1::new();
+    let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+    let public_key = private_key.public_key(&secp);
+    let xonly = public_key.inner.x_only_public_key().0;
+    let ecdsa_signature = bitcoin::ecdsa::Signature {
+      signature: secp.sign_ecdsa(&Message::from_digest([0; 32]), &private_key.inner),
+      sighash_type: EcdsaSighashType::All,
+    };
+    let tap_signature = bitcoin::taproot::Signature {
+      signature: secp.sign_schnorr_no_aux_rand(
+        &Message::from_digest([0; 32]),
+        &Keypair::from_secret_key(&secp, &private_key.inner),
+      ),
+      sighash_type: TapSighashType::All,
+    };
+    let mut control_bytes = vec![0xc0];
+    control_bytes.extend_from_slice(&xonly.serialize());
+    let control_block = bitcoin::taproot::ControlBlock::decode(&control_bytes).unwrap();
+    let key_source: bitcoin::bip32::KeySource = Default::default();
+
+    for input in &mut psbt.inputs {
+      if input.sighash_type.is_none() {
+        input.sighash_type = Some(TapSighashType::All.into());
+      }
+      input.partial_sigs.insert(public_key, ecdsa_signature);
+      input.redeem_script = Some(ScriptBuf::new());
+      input.witness_script = Some(ScriptBuf::new());
+      input
+        .bip32_derivation
+        .insert(public_key.inner, key_source.clone());
+      input.ripemd160_preimages.insert(
+        bitcoin::hashes::ripemd160::Hash::from_byte_array([0; 20]),
+        vec![0],
+      );
+      input
+        .sha256_preimages
+        .insert(sha256::Hash::from_byte_array([0; 32]), vec![0]);
+      input.hash160_preimages.insert(
+        bitcoin::hashes::hash160::Hash::from_byte_array([0; 20]),
+        vec![0],
+      );
+      input.hash256_preimages.insert(
+        bitcoin::hashes::sha256d::Hash::from_byte_array([0; 32]),
+        vec![0],
+      );
+      input.tap_script_sigs.insert(
+        (
+          xonly,
+          bitcoin::taproot::TapLeafHash::from_byte_array([0; 32]),
+        ),
+        tap_signature,
+      );
+      input.tap_scripts.insert(
+        control_block.clone(),
+        (ScriptBuf::new(), bitcoin::taproot::LeafVersion::TapScript),
+      );
+      input
+        .tap_key_origins
+        .insert(xonly, (vec![], key_source.clone()));
+      input.tap_merkle_root = Some(bitcoin::taproot::TapNodeHash::from_byte_array([0; 32]));
+    }
+
     let encoded = finalize_bip322_psbt(psbt).unwrap();
     let bytes = general_purpose::STANDARD
       .decode(&encoded[POF_SIGNATURE_PREFIX.len()..])
       .unwrap();
     let finalized = Psbt::deserialize(&bytes).unwrap();
-    let input = &finalized.inputs[0];
-    assert!(input.final_script_witness.is_some());
-    assert!(input.sighash_type.is_none());
-    assert!(input.tap_key_sig.is_none());
-    assert!(input.tap_internal_key.is_none());
-    assert!(input.tap_merkle_root.is_none());
-    assert!(input.partial_sigs.is_empty());
-    assert!(input.tap_script_sigs.is_empty());
-    assert!(input.tap_scripts.is_empty());
-    assert!(input.tap_key_origins.is_empty());
-    assert!(input.bip32_derivation.is_empty());
+    for input in &finalized.inputs {
+      assert!(input.final_script_witness.is_some());
+      assert!(input.sighash_type.is_none());
+      assert!(input.redeem_script.is_none());
+      assert!(input.witness_script.is_none());
+      assert!(input.tap_key_sig.is_none());
+      assert!(input.tap_internal_key.is_none());
+      assert!(input.tap_merkle_root.is_none());
+      assert!(input.partial_sigs.is_empty());
+      assert!(input.tap_script_sigs.is_empty());
+      assert!(input.tap_scripts.is_empty());
+      assert!(input.tap_key_origins.is_empty());
+      assert!(input.bip32_derivation.is_empty());
+      assert!(input.ripemd160_preimages.is_empty());
+      assert!(input.sha256_preimages.is_empty());
+      assert!(input.hash160_preimages.is_empty());
+      assert!(input.hash256_preimages.is_empty());
+    }
     assert!(!finalized.unknown.is_empty());
     assert_valid(verify_pof(&address, POF_P2TR_MESSAGE, finalized));
+  }
+
+  #[test]
+  fn encoded_witness_rejects_impossible_counts_without_allocation() {
+    assert!(matches!(
+      verify_simple_encoded(SEGWIT_ADDRESS, "", "/gAJPQA="),
+      Verification::Invalid(_)
+    ));
+  }
+
+  #[test]
+  fn full_and_psbt_preflights_bound_witness_counts() {
+    let (_, valid_tx) = full_p2wpkh_to_sign();
+    let mut valid_tx_bytes = Vec::new();
+    valid_tx.consensus_encode(&mut valid_tx_bytes).unwrap();
+    assert!(verify::valid_transaction_encoding(&valid_tx_bytes));
+
+    let mut bad_tx = Vec::new();
+    bad_tx.extend_from_slice(&0i32.to_le_bytes());
+    bad_tx.extend_from_slice(&[0, 1]);
+    bad_tx.push(1);
+    bad_tx.extend_from_slice(&[0; 36]);
+    bad_tx.push(0);
+    bad_tx.extend_from_slice(&[0; 4]);
+    bad_tx.push(0);
+    bad_tx.extend_from_slice(&[0xfe, 0x00, 0x09, 0x3d, 0x00]);
+    assert!(!verify::valid_transaction_encoding(&bad_tx));
+    let encoded = format!(
+      "{}{}",
+      FULL_SIGNATURE_PREFIX,
+      general_purpose::STANDARD.encode(&bad_tx)
+    );
+    assert!(verify_full_encoded(SEGWIT_ADDRESS, "foo", &encoded).is_invalid());
+
+    let (_, psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+    let valid_psbt = psbt.serialize();
+    assert!(verify::valid_psbt_encoding(&valid_psbt));
+
+    let unsigned = Transaction {
+      version: Version(0),
+      lock_time: LockTime::ZERO,
+      input: vec![TxIn::default()],
+      output: vec![TxOut {
+        value: Amount::ZERO,
+        script_pubkey: ScriptBuf::new(),
+      }],
+    };
+    let mut unsigned_bytes = Vec::new();
+    unsigned.consensus_encode(&mut unsigned_bytes).unwrap();
+
+    let mut bad_psbt = b"psbt\xff".to_vec();
+    bad_psbt.push(1);
+    bad_psbt.push(0x00);
+    bitcoin::consensus::encode::VarInt(unsigned_bytes.len() as u64)
+      .consensus_encode(&mut bad_psbt)
+      .unwrap();
+    bad_psbt.extend_from_slice(&unsigned_bytes);
+    bad_psbt.push(0);
+    bad_psbt.push(1);
+    bad_psbt.push(0x08);
+    let bad_witness = [0xfe, 0x00, 0x09, 0x3d, 0x00];
+    bitcoin::consensus::encode::VarInt(bad_witness.len() as u64)
+      .consensus_encode(&mut bad_psbt)
+      .unwrap();
+    bad_psbt.extend_from_slice(&bad_witness);
+    bad_psbt.push(0);
+    bad_psbt.push(0);
+    assert!(!verify::valid_psbt_encoding(&bad_psbt));
+    let encoded = format!(
+      "{}{}",
+      POF_SIGNATURE_PREFIX,
+      general_purpose::STANDARD.encode(&bad_psbt)
+    );
+    assert!(verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded).is_invalid());
   }
 
   #[test]
