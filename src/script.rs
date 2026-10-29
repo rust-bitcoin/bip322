@@ -1,0 +1,201 @@
+use super::*;
+
+pub(crate) fn parse_multisig(script: &bitcoin::Script) -> Result<(usize, Vec<PublicKey>)> {
+  let instructions = script
+    .instructions_minimal()
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .map_err(|_| Error::InvalidWitness)?;
+
+  if instructions.len() < 4 {
+    return Err(Error::InvalidWitness);
+  }
+
+  let pushnum = |op: bitcoin::opcodes::Opcode| -> Result<usize> {
+    let value = op.to_u8();
+    if (opcodes::all::OP_PUSHNUM_1.to_u8()..=opcodes::all::OP_PUSHNUM_16.to_u8()).contains(&value) {
+      Ok((value - opcodes::all::OP_PUSHNUM_1.to_u8() + 1) as usize)
+    } else {
+      Err(Error::InvalidWitness)
+    }
+  };
+
+  if !matches!(instructions.last(), Some(Instruction::Op(op)) if *op == opcodes::all::OP_CHECKMULTISIG)
+  {
+    return Err(Error::InvalidWitness);
+  }
+
+  let required_signatures = match &instructions[0] {
+    Instruction::Op(op) => pushnum(*op)?,
+    _ => return Err(Error::InvalidWitness),
+  };
+
+  let total_keys = match &instructions[instructions.len() - 2] {
+    Instruction::Op(op) => pushnum(*op)?,
+    _ => return Err(Error::InvalidWitness),
+  };
+
+  let key_instructions = &instructions[1..instructions.len() - 2];
+  if key_instructions.len() != total_keys
+    || required_signatures < 1
+    || required_signatures > total_keys
+  {
+    return Err(Error::InvalidWitness);
+  }
+
+  let mut pubkeys = Vec::with_capacity(total_keys);
+  for instruction in key_instructions {
+    match instruction {
+      Instruction::PushBytes(bytes) => {
+        pubkeys.push(PublicKey::from_slice(bytes.as_bytes()).map_err(|_| Error::InvalidPublicKey)?)
+      }
+      _ => return Err(Error::InvalidWitness),
+    }
+  }
+
+  Ok((required_signatures, pubkeys))
+}
+
+/// Sign with each private key, ordering signatures by the position of the
+/// corresponding public key in the multisig script, as required by
+/// OP_CHECKMULTISIG's forward-only matching.
+pub(crate) fn ordered_multisig_signatures(
+  secp: &Secp256k1<secp256k1::All>,
+  script: &ScriptBuf,
+  private_keys: &[PrivateKey],
+  sighash_message: &secp256k1::Message,
+) -> Result<Vec<Vec<u8>>> {
+  let (required, pubkeys) = parse_multisig(script)?;
+
+  if private_keys.len() != required {
+    return Err(Error::SignatureCount {
+      required,
+      provided: private_keys.len(),
+    });
+  }
+
+  let signer_pubkeys: Vec<secp256k1::PublicKey> = private_keys
+    .iter()
+    .map(|private_key| private_key.public_key(secp).inner)
+    .collect();
+
+  for (i, pubkey) in signer_pubkeys.iter().enumerate() {
+    if signer_pubkeys[..i].contains(pubkey) {
+      return Err(Error::DuplicateSigner);
+    }
+  }
+
+  let mut used = vec![false; private_keys.len()];
+  let mut signatures = Vec::with_capacity(required);
+
+  for pubkey in &pubkeys {
+    if let Some(i) =
+      (0..signer_pubkeys.len()).find(|&i| !used[i] && signer_pubkeys[i] == pubkey.inner)
+    {
+      used[i] = true;
+      signatures.push(
+        bitcoin::ecdsa::Signature {
+          signature: secp.sign_ecdsa(sighash_message, &private_keys[i].inner),
+          sighash_type: EcdsaSighashType::All,
+        }
+        .to_vec(),
+      );
+    }
+  }
+
+  if signatures.len() != required {
+    return Err(Error::UnknownSigner);
+  }
+
+  Ok(signatures)
+}
+
+pub(crate) fn push_only_script(script: &Script) -> ScriptBuf {
+  ScriptBuf::builder()
+    .push_slice(push_bytes(script.as_bytes()))
+    .into_script()
+}
+
+pub(crate) fn push_bytes(bytes: &[u8]) -> PushBytesBuf {
+  let mut push_bytes = bitcoin::script::PushBytesBuf::new();
+  push_bytes
+    .extend_from_slice(bytes)
+    .expect("data fits in push");
+  push_bytes
+}
+
+/// Enforces the LOW_S rule, a valid ECDSA signature must have a low-S value.
+pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) -> Result<()> {
+  let mut normalized = *signature;
+  normalized.normalize_s();
+  if normalized != *signature {
+    return Err(Error::SignatureInvalid {
+      source: bitcoin::secp256k1::Error::IncorrectSignature,
+    });
+  }
+  Ok(())
+}
+
+/// Whether the input is spent via segwit, which decides if BIP-174 requires a
+/// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
+/// if it wraps a witness program; with no script known (`witness_script:
+/// None`) it is assumed to be P2SH-P2WPKH, whose redeem script the signer
+/// derives from its own key.
+pub(crate) fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
+  if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
+    true
+  } else if spk.is_p2sh() {
+    match witness_script {
+      Some(ws) => *spk != ScriptBuf::new_p2sh(&ws.script_hash()),
+      None => true,
+    }
+  } else {
+    false
+  }
+}
+
+/// Sets the UTXO field a proof input requires per BIP-174, validating
+/// `prev_tx` against the outpoint for legacy inputs.
+pub(crate) fn set_proof_input_utxo(
+  psbt_input: &mut bitcoin::psbt::Input,
+  input: &ProofInput,
+  index: usize,
+) -> Result<()> {
+  if is_segwit_input(&input.prevout.script_pubkey, input.witness_script.as_ref()) {
+    psbt_input.witness_utxo = Some(input.prevout.clone());
+    return Ok(());
+  }
+
+  let prev_tx = input
+    .prev_tx
+    .as_ref()
+    .ok_or_else(|| Error::InvalidProofInput {
+      index,
+      reason: "legacy input requires prev_tx".into(),
+    })?;
+
+  if prev_tx.compute_txid() != input.outpoint.txid {
+    return Err(Error::InvalidProofInput {
+      index,
+      reason: "prev_tx txid does not match outpoint".into(),
+    });
+  }
+
+  let claimed = prev_tx
+    .output
+    .get(input.outpoint.vout as usize)
+    .ok_or_else(|| Error::InvalidProofInput {
+      index,
+      reason: "outpoint vout exceeds prev_tx outputs".into(),
+    })?;
+
+  if *claimed != input.prevout {
+    return Err(Error::InvalidProofInput {
+      index,
+      reason: "prevout does not match prev_tx output".into(),
+    });
+  }
+
+  psbt_input.non_witness_utxo = Some(prev_tx.clone());
+
+  Ok(())
+}
