@@ -6,10 +6,10 @@ generic message signing and verification.
 
 ## Types of Signatures 
 
-At the moment this crate supports `P2TR`, `P2WPKH`, `P2SH-P2WPKH` and `P2PKH`
-single-sig addresses, as well as `P2WSH`, `P2SH-P2WSH` and `P2SH` CHECKMULTISIG
-multisig addresses. Feedback through issues or PRs on the interface design and
-security is welcome and encouraged. 
+The simple format supports native `P2TR`, `P2WPKH` and `P2WSH` addresses. The
+full and proof-of-funds formats support all of those plus `P2SH-P2WPKH`,
+`P2SH-P2WSH`, `P2SH` CHECKMULTISIG and `P2PKH`. Feedback through issues or
+PRs on the interface design and security is welcome and encouraged.
 
 - [x] simple
 - [x] full 
@@ -18,6 +18,9 @@ security is welcome and encouraged.
 
 The goal is to provide a full signing and verifying library similar to
 [this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
+
+PSBT interoperability is currently limited to PSBTv0. PSBTv2 signing requests
+are not supported by the PSBT creator, signer, or finalizer roles.
 
 ## Test Vectors
 
