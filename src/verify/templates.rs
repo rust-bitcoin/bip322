@@ -1,326 +1,197 @@
-use super::*;
+use {
+  super::*,
+  bitcoin::{secp256k1::ecdsa, PubkeyHash, WPubkeyHash},
+};
 
-/// Verifies the standard script types by template. Returns `Unsupported` for
-/// anything else, which [`verify_input`] hands to the interpreter.
-pub(crate) fn verify_standard_script(
+/// Verifies a P2PKH spend: scriptSig `<signature> <public key>`.
+pub(crate) fn verify_p2pkh(
   spend: &Spend,
+  hash: &PubkeyHash,
   sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  let spk = &spend.prevout.script_pubkey;
+) -> Result<()> {
+  let mut instructions = spend.txin().script_sig.instructions_minimal();
+  let (
+    Some(Ok(Instruction::PushBytes(signature))),
+    Some(Ok(Instruction::PushBytes(public_key))),
+    None,
+  ) = (
+    instructions.next(),
+    instructions.next(),
+    instructions.next(),
+  )
+  else {
+    return Err(Error::InvalidWitness);
+  };
 
-  if spk.is_p2tr() {
-    verify_full_p2tr(spend, sighash_cache)
-  } else if let Some(witness) = &spend.witness_program {
-    match (witness.version, witness.program.len()) {
-      (bitcoin::WitnessVersion::V0, 20) => verify_full_p2wpkh(spend, sighash_cache),
-      (bitcoin::WitnessVersion::V0, 32) => verify_full_p2wsh(spend, sighash_cache),
-      _ => Ok(InputVerification::Unsupported),
-    }
-  } else if spk.is_p2sh() {
-    verify_full_p2sh_multisig(spend, sighash_cache)
-  } else if spk.is_p2pkh() {
-    verify_full_p2pkh(spend, sighash_cache)
-  } else {
-    Ok(InputVerification::Unsupported)
-  }
+  let key = BoundPublicKey::p2pkh(hash, public_key.as_bytes())?;
+  let signature = parse_ecdsa_signature(signature.as_bytes())?;
+
+  let sighash = sighash_cache
+    .legacy_signature_hash(
+      spend.input_index(),
+      &ScriptBuf::new_p2pkh(hash),
+      EcdsaSighashType::All.to_u32(),
+    )
+    .map_err(|_| Error::ToSignInvalid)?;
+
+  verify_ecdsa(&key, sighash.to_byte_array(), &signature)
 }
 
-fn verify_full_p2wpkh(
+/// Verifies a P2WPKH spend, native or nested: witness
+/// `<signature> <public key>`.
+pub(crate) fn verify_p2wpkh(
   spend: &Spend,
+  hash: &WPubkeyHash,
   sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  let witness = &spend.txin.witness;
-
-  if witness.is_empty() {
-    return Err(Error::WitnessEmpty);
-  }
-
-  if witness.len() != 2 {
+) -> Result<()> {
+  let witness = &spend.txin().witness;
+  let (Some(signature), Some(public_key)) = (witness.nth(0), witness.nth(1)) else {
     return Err(Error::InvalidWitness);
-  }
+  };
 
-  let items = witness.to_vec();
-  let encoded_signature = items[0].clone();
-  let witness_pub_key = &items[1];
-
-  let pub_key = PublicKey::from_slice(witness_pub_key).map_err(|_| Error::InvalidPublicKey)?;
-
-  let wpubkey_hash = pub_key
-    .wpubkey_hash()
-    .context(error::UncompressedPublicKey)?;
-
-  let p2wpkh_script = ScriptBuf::new_p2wpkh(&wpubkey_hash);
-
-  if spend
-    .witness_program
-    .as_ref()
-    .expect("dispatched by witness")
-    .program
-    != wpubkey_hash.to_byte_array()
-  {
-    return Err(Error::PublicKeyMismatch);
-  }
-
-  if encoded_signature.is_empty() {
-    return Err(Error::SignatureLength {
-      length: 0,
-      encoded_signature,
-    });
-  }
-
-  let signature_length = encoded_signature.len();
-
-  let signature = bitcoin::secp256k1::ecdsa::Signature::from_der(
-    &encoded_signature.as_slice()[..signature_length - 1],
-  )
-  .context(error::SignatureInvalid)?;
-
-  let sighash_type =
-    EcdsaSighashType::from_standard(encoded_signature[signature_length - 1] as u32)
-      .context(error::SigHashTypeNonStandard)?;
-
-  require_low_s(&signature)?;
-
-  if sighash_type != EcdsaSighashType::All {
-    return Err(Error::SigHashTypeUnsupported {
-      sighash_type: sighash_type.to_string(),
-    });
-  }
+  let key = BoundPublicKey::p2wpkh(hash, public_key)?;
+  let signature = parse_ecdsa_signature(signature)?;
 
   let sighash = sighash_cache
     .p2wpkh_signature_hash(
-      spend.input_index,
-      &p2wpkh_script,
-      spend.prevout.value,
-      sighash_type,
-    )
-    .expect("signature hash should compute");
-
-  let message =
-    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
-
-  Secp256k1::verification_only()
-    .verify_ecdsa(&message, &signature, &pub_key.inner)
-    .context(error::SignatureInvalid)?;
-
-  Ok(InputVerification::Valid)
-}
-
-/// Verify a BIP-322 proof for a P2WSH
-fn verify_full_p2wsh(
-  spend: &Spend,
-  sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  let witness_items = spend.txin.witness.to_vec();
-
-  if witness_items.is_empty() {
-    return Err(Error::InvalidWitness);
-  }
-
-  let witness_script = spend.witness_script.ok_or(Error::ToSignInvalid)?;
-  if witness_script.wscript_hash().to_byte_array().as_slice()
-    != spend
-      .witness_program
-      .as_ref()
-      .expect("dispatched by witness")
-      .program
-  {
-    return Err(Error::ToSignInvalid);
-  }
-
-  let Ok((required_signatures, pubkeys)) = parse_multisig(witness_script) else {
-    return Ok(InputVerification::Unsupported);
-  };
-
-  if witness_items.len() < 3 || !witness_items[0].is_empty() {
-    return Err(Error::InvalidWitness);
-  }
-
-  let signatures = &witness_items[1..witness_items.len() - 1];
-  if signatures.len() != required_signatures {
-    return Err(Error::InvalidWitness);
-  }
-
-  let sighash = sighash_cache
-    .p2wsh_signature_hash(
-      spend.input_index,
-      witness_script,
-      spend.prevout.value,
+      spend.input_index(),
+      &ScriptBuf::new_p2wpkh(hash),
+      spend.prevout().value,
       EcdsaSighashType::All,
     )
-    .expect("signature hash should compute");
+    .map_err(|_| Error::ToSignInvalid)?;
 
-  let message =
-    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
+  verify_ecdsa(&key, sighash.to_byte_array(), &signature)
+}
 
-  let secp = Secp256k1::verification_only();
+/// Verifies a P2WSH CHECKMULTISIG spend, native or nested. `None` hands any
+/// other witness script to the interpreter.
+pub(crate) fn verify_p2wsh_multisig(
+  spend: &Spend,
+  witness_script: CommittedScript,
+  sighash_cache: &mut SighashCache<&Transaction>,
+) -> Result<Option<InputVerification>> {
+  let Some((required, keys)) = witness_script.multisig() else {
+    return Ok(None);
+  };
 
-  // CHECKMULTISIG: signatures must appear in the same order as pubkeys
-  let mut sig_index = 0usize;
-  for pub_key in &pubkeys {
-    if sig_index == signatures.len() {
-      break;
-    }
+  let witness = &spend.txin().witness;
+  verify_checkmultisig(
+    witness.iter().take(witness.len().saturating_sub(1)),
+    required,
+    &keys,
+    || {
+      sighash_cache
+        .p2wsh_signature_hash(
+          spend.input_index(),
+          witness_script.script(),
+          spend.prevout().value,
+          EcdsaSighashType::All,
+        )
+        .map(|sighash| sighash.to_byte_array())
+        .map_err(|_| Error::ToSignInvalid)
+    },
+  )?;
 
-    let encoded = &signatures[sig_index];
-    let length = encoded.len();
-    if length < 1 {
+  Ok(Some(InputVerification::Valid))
+}
+
+/// Verifies a bare P2SH CHECKMULTISIG spend. `None` hands any other redeem
+/// script to the interpreter.
+pub(crate) fn verify_p2sh_multisig(
+  spend: &Spend,
+  redeem: CommittedScript,
+  pushes: &[&[u8]],
+  sighash_cache: &mut SighashCache<&Transaction>,
+) -> Result<Option<InputVerification>> {
+  let Some((required, keys)) = redeem.multisig() else {
+    return Ok(None);
+  };
+
+  verify_checkmultisig(pushes.iter().copied(), required, &keys, || {
+    sighash_cache
+      .legacy_signature_hash(
+        spend.input_index(),
+        redeem.script(),
+        EcdsaSighashType::All.to_u32(),
+      )
+      .map(|sighash| sighash.to_byte_array())
+      .map_err(|_| Error::ToSignInvalid)
+  })?;
+
+  Ok(Some(InputVerification::Valid))
+}
+
+/// Evaluates CHECKMULTISIG over `stack`, the items below the script: the
+/// NULLDUMMY element, then exactly `required` signatures. Like the opcode,
+/// matching is forward-only: each signature must verify under a key after the
+/// previous signature's key.
+fn verify_checkmultisig<'a>(
+  mut stack: impl ExactSizeIterator<Item = &'a [u8]>,
+  required: usize,
+  keys: &[BoundPublicKey],
+  sighash: impl FnOnce() -> Result<[u8; 32]>,
+) -> Result<()> {
+  if stack.len() != required + 1 || !stack.next().is_some_and(<[u8]>::is_empty) {
+    return Err(Error::InvalidWitness);
+  }
+
+  let sighash = Message::from_digest(sighash()?);
+  let mut keys = keys.iter();
+  for encoded in stack {
+    if encoded.is_empty() {
       return Err(Error::InvalidWitness);
     }
 
-    let sighash_type = EcdsaSighashType::from_standard(encoded[length - 1] as u32)
-      .context(error::SigHashTypeNonStandard)?;
+    let signature = parse_ecdsa_signature(encoded)?;
 
-    if sighash_type != EcdsaSighashType::All {
-      return Err(Error::SigHashTypeUnsupported {
-        sighash_type: sighash_type.to_string(),
-      });
-    }
-
-    if let Ok(signature) = bitcoin::secp256k1::ecdsa::Signature::from_der(&encoded[..length - 1]) {
-      require_low_s(&signature)?;
-
-      if secp
-        .verify_ecdsa(&message, &signature, &pub_key.inner)
-        .is_ok()
-      {
-        sig_index += 1;
-      }
+    if !keys.any(|key| key.verifies(&sighash, &signature)) {
+      return Err(incorrect_signature());
     }
   }
 
-  if sig_index == signatures.len() {
-    Ok(InputVerification::Valid)
-  } else {
-    Err(Error::SignatureInvalid {
-      source: bitcoin::secp256k1::Error::IncorrectSignature,
-    })
-  }
+  Ok(())
 }
 
-/// Verify a BIP-322 proof for a P2SH multisig address
-fn verify_full_p2sh_multisig(
-  spend: &Spend,
-  sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  let p2sh = spend.p2sh.as_ref().expect("dispatched by P2SH");
-  let Some((redeem_bytes, sig_pushes)) = p2sh.pushes.split_last() else {
-    return Err(Error::InvalidWitness);
-  };
-  let redeem_script = Script::from_bytes(redeem_bytes);
-
-  let Ok((required_signatures, pubkeys)) = parse_multisig(redeem_script) else {
-    return Ok(InputVerification::Unsupported);
-  };
-  let Some((null_dummy, signatures)) = sig_pushes.split_first() else {
-    return Err(Error::InvalidWitness);
+/// Parses an ECDSA signature under BIP-322's required rules: SIGHASH_ALL,
+/// then strict DER, then low S.
+fn parse_ecdsa_signature(encoded: &[u8]) -> Result<ecdsa::Signature> {
+  let Some((&sighash_byte, der)) = encoded.split_last() else {
+    return Err(Error::SignatureLength {
+      length: 0,
+      encoded_signature: Vec::new(),
+    });
   };
 
-  if !null_dummy.is_empty()
-    || signatures.iter().any(|signature| signature.is_empty())
-    || signatures.len() != required_signatures
-  {
-    return Err(Error::InvalidWitness);
-  }
-
-  let sighash = sighash_cache
-    .legacy_signature_hash(
-      spend.input_index,
-      redeem_script,
-      EcdsaSighashType::All.to_u32(),
-    )
-    .expect("signature hash should compute");
-  let message =
-    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
-
-  let secp = Secp256k1::verification_only();
-
-  let mut key_index = 0usize;
-  for encoded in signatures {
-    let Some((sighash_byte, der)) = encoded.split_last() else {
-      return Err(Error::InvalidWitness);
-    };
-
-    let sighash_type = EcdsaSighashType::from_standard(*sighash_byte as u32)
-      .context(error::SigHashTypeNonStandard)?;
-
-    if sighash_type != EcdsaSighashType::All {
-      return Err(Error::SigHashTypeUnsupported {
-        sighash_type: sighash_type.to_string(),
-      });
-    }
-
-    let signature =
-      bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
-
-    require_low_s(&signature)?;
-
-    let offset = pubkeys[key_index..]
-      .iter()
-      .position(|pk| secp.verify_ecdsa(&message, &signature, &pk.inner).is_ok())
-      .ok_or(Error::SignatureInvalid {
-        source: bitcoin::secp256k1::Error::IncorrectSignature,
-      })?;
-
-    key_index += offset + 1;
-  }
-
-  Ok(InputVerification::Valid)
-}
-
-/// Verify a BIP-322 proof for a P2PKH
-fn verify_full_p2pkh(
-  spend: &Spend,
-  sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  // scriptSig: <sig> <pubkey>
-  let mut instructions = spend.txin.script_sig.instructions_minimal();
-  let signature_bytes = match instructions.next() {
-    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
-    _ => return Err(Error::InvalidWitness),
-  };
-  let pubkey_bytes = match instructions.next() {
-    Some(Ok(Instruction::PushBytes(b))) => b.as_bytes(),
-    _ => return Err(Error::InvalidWitness),
-  };
-  if instructions.next().is_some() {
-    return Err(Error::InvalidWitness);
-  }
-
-  let pub_key = PublicKey::from_slice(pubkey_bytes).map_err(|_| Error::InvalidPublicKey)?;
-
-  if spend.prevout.script_pubkey != ScriptBuf::new_p2pkh(&pub_key.pubkey_hash()) {
-    return Err(Error::PublicKeyMismatch);
-  }
-
-  let (sighash_byte, der) = signature_bytes.split_last().ok_or(Error::InvalidWitness)?;
-
-  let sighash_type =
-    EcdsaSighashType::from_standard(*sighash_byte as u32).context(error::SigHashTypeNonStandard)?;
+  let sighash_type = EcdsaSighashType::from_standard(u32::from(sighash_byte))
+    .context(error::SigHashTypeNonStandard)?;
 
   if sighash_type != EcdsaSighashType::All {
     return Err(Error::SigHashTypeUnsupported {
       sighash_type: sighash_type.to_string(),
     });
   }
-  let signature =
-    bitcoin::secp256k1::ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
+
+  let signature = ecdsa::Signature::from_der(der).context(error::SignatureInvalid)?;
 
   require_low_s(&signature)?;
 
-  let sighash = sighash_cache
-    .legacy_signature_hash(
-      spend.input_index,
-      &spend.prevout.script_pubkey,
-      EcdsaSighashType::All.to_u32(),
-    )
-    .expect("signature hash should compute");
-  let msg =
-    Message::from_digest_slice(sighash.as_ref()).expect("should be cryptographically secure hash");
+  Ok(signature)
+}
 
-  Secp256k1::verification_only()
-    .verify_ecdsa(&msg, &signature, &pub_key.inner)
-    .context(error::SignatureInvalid)?;
+fn verify_ecdsa(
+  key: &BoundPublicKey,
+  sighash: [u8; 32],
+  signature: &ecdsa::Signature,
+) -> Result<()> {
+  if !key.verifies(&Message::from_digest(sighash), signature) {
+    return Err(incorrect_signature());
+  }
+  Ok(())
+}
 
-  Ok(InputVerification::Valid)
+fn incorrect_signature() -> Error {
+  Error::SignatureInvalid {
+    source: bitcoin::secp256k1::Error::IncorrectSignature,
+  }
 }

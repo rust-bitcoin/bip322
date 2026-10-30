@@ -1,14 +1,16 @@
 use super::*;
 
+mod bound;
 mod decode;
 mod interpreter;
 mod legacy;
+pub(crate) mod preflight;
 mod spend;
 mod taproot;
 mod templates;
 
 pub use self::legacy::*;
-use self::{decode::*, interpreter::*, spend::*, taproot::*, templates::*};
+use self::{bound::*, decode::*, interpreter::*, spend::*, taproot::*, templates::*};
 
 /// Outcome of BIP-322 verification, per the spec's three validator states.
 /// The verify functions always return a verdict: [`Verification::Invalid`]
@@ -40,8 +42,6 @@ enum InputVerification {
   Valid,
   /// The input's script cannot be interpreted by this validator
   Inconclusive,
-  /// The templates could not classify the script; try the interpreter.
-  Unsupported,
 }
 
 impl Verification {
@@ -87,27 +87,29 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Verif
 /// See [`verify_pof`] for how each proven input's previous output is resolved.
 ///
 /// A malformed encoding is reported as [`Verification::Invalid`], like any
-/// other failed check — the return value is always the verdict.
+/// other failed check — the return value is always the verdict. A proof with
+/// more than [`MAX_PROOF_INPUTS`] inputs is [`Verification::Inconclusive`]
+/// without being decoded, as [`verify_pof`] reports it.
 pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
-  decode_pof(address, to_sign)
-    .map(|(address, psbt)| verify_pof(&address, message, psbt))
-    .unwrap_or_else(Verification::Invalid)
+  match decode_pof(address, to_sign) {
+    Ok(Some((address, psbt))) => verify_pof(&address, message, psbt),
+    Ok(None) => Verification::Inconclusive,
+    Err(error) => Verification::Invalid(error),
+  }
 }
 
 /// Verifies the BIP-322 simple format.
 ///
-/// Simple proofs are restricted to native SegWit outputs. Nested and legacy
-/// P2SH outputs require the full format because their spends also need a
+/// Simple proofs are restricted to native segwit addresses. P2PKH and P2SH
+/// addresses require the full format because their spends also need a
 /// `scriptSig`.
 pub fn verify_simple(
   address: &Address,
   message: impl AsRef<[u8]>,
   signature: Witness,
 ) -> Verification {
-  if matches!(address.to_address_data(), AddressData::P2sh { .. }) {
-    return Verification::Invalid(Error::UnsupportedAddress {
-      address: address.to_string(),
-    });
+  if let Err(error) = require_simple_format(address) {
+    return Verification::Invalid(error);
   }
 
   let to_sign = create_to_sign(
@@ -139,33 +141,10 @@ pub fn verify_full(
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
-  let challenge_prevout = TxOut {
-    value: Amount::ZERO,
-    script_pubkey: to_spend.output[0].script_pubkey.clone(),
-  };
-
-  let spend = Spend::parse(&to_sign, std::slice::from_ref(&challenge_prevout), 0);
-
-  // Required rules take precedence over upgradeable rules and interpretation.
-  if spend.spends_codeseparator() {
-    return Verification::Invalid(Error::CodeSeparator);
-  }
-
-  let mut sighash_cache = SighashCache::new(&to_sign);
-  match verify_input(&to_sign, &spend, &mut sighash_cache) {
-    Ok(InputVerification::Valid) => {
-      // Upgradeable rules are considered only after every required rule.
-      if !matches!(to_sign.version, Version(0) | Version(2)) {
-        Verification::Inconclusive
-      } else {
-        Verification::Valid {
-          time: to_sign.lock_time,
-          age: to_sign.input[0].sequence,
-        }
-      }
-    }
-    Ok(InputVerification::Inconclusive) => Verification::Inconclusive,
-    Ok(InputVerification::Unsupported) => unreachable!("unsupported inputs use the interpreter"),
+  // The challenge output carries no value, so `to_spend`'s only output is
+  // exactly the previous output `to_sign` spends.
+  match parse_spends(&to_sign, &to_spend.output) {
+    Ok(spends) => verify_spends(&to_sign, &spends),
     Err(error) => Verification::Invalid(error),
   }
 }
@@ -176,16 +155,10 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> bool {
     vout: 0,
   };
 
-  let op_return = bitcoin::script::Builder::new()
-    .push_opcode(opcodes::all::OP_RETURN)
-    .into_script();
-
   to_sign.weight() <= bitcoin::Weight::MAX_BLOCK
     && to_sign.input.len() == 1
     && to_sign.input[0].previous_output == to_spend_outpoint
-    && to_sign.output.len() == 1
-    && to_sign.output[0].value == Amount::ZERO
-    && to_sign.output[0].script_pubkey == op_return
+    && is_bip322_output(&to_sign.output)
 }
 
 /// Verifies a BIP-322 full proof of funds.
@@ -193,23 +166,34 @@ fn check_to_sign(to_spend: &Transaction, to_sign: &Transaction) -> bool {
 /// Each proven input's previous output is taken from the PSBT's own
 /// `witness_utxo`, or from a `non_witness_utxo` on that input or on an
 /// earlier input spending the same transaction. An input with neither is
-/// rejected.
+/// rejected. The challenge input is always verified against the challenge
+/// output itself; its UTXO data only has to agree with it.
+///
+/// A proof with more than [`MAX_PROOF_INPUTS`] inputs is
+/// [`Verification::Inconclusive`], before any other check.
 ///
 /// Note that the UTXO data is supplied by the prover: verification only
 /// checks that it is internally consistent and signed for. Callers must
 /// independently confirm on-chain that each outpoint exists with the claimed
 /// script and value.
 pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> Verification {
-  let msg_key = bitcoin::psbt::raw::Key {
-    type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-    key: vec![],
-  };
+  // Legacy and third-party interpreter sighashes can require quadratic work.
+  // Bound verification effort and report larger proofs as unverifiable rather
+  // than returning a required-rule failure. This runs first, as it does for
+  // an encoded proof before decoding, so both get the same verdict.
+  if psbt.unsigned_tx.input.len() > MAX_PROOF_INPUTS {
+    return Verification::Inconclusive;
+  }
+
   // The message is already a validator input and is bound by to_spend's
   // scriptSig; the PSBT field exists for the signing flow. Official BIP-322
   // proof-of-funds vectors omit it, so it is optional here — but when
   // present it must be UTF-8 and match the message.
-  if let Some(val) = psbt.unknown.get(&msg_key) {
-    if std::str::from_utf8(val).is_err() || val != message.as_ref() {
+  if let Some(val) = psbt.unknown.get(&signed_message_key()) {
+    if std::str::from_utf8(val).is_err() {
+      return Verification::Invalid(Error::MessageNotUtf8);
+    }
+    if val != message.as_ref() {
       return Verification::Invalid(Error::ToSignInvalid);
     }
   }
@@ -229,14 +213,7 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     return Verification::Invalid(error);
   }
 
-  let op_return = ScriptBuf::builder()
-    .push_opcode(opcodes::all::OP_RETURN)
-    .into_script();
-  if unsigned_tx.output.len() != 1
-    || unsigned_tx.output[0].script_pubkey != op_return
-    || unsigned_tx.output[0].value != Amount::ZERO
-    || unsigned_tx.weight() > bitcoin::Weight::MAX_BLOCK
-  {
+  if !is_bip322_output(&unsigned_tx.output) || unsigned_tx.weight() > bitcoin::Weight::MAX_BLOCK {
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
@@ -244,18 +221,21 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     Ok(resolver) => resolver,
     Err(error) => return Verification::Invalid(error),
   };
+
+  // The challenge input spends the challenge output, so that is what it is
+  // verified against. The PSBT's UTXO data for it only has to agree.
+  match resolver.resolve(0) {
+    Ok(prevout) if prevout == to_spend.output[0] => {}
+    Ok(_) => return Verification::Invalid(Error::ToSignInvalid),
+    Err(error) => return Verification::Invalid(error),
+  }
   let mut all_prevouts = Vec::with_capacity(unsigned_tx.input.len());
-  for index in 0..unsigned_tx.input.len() {
-    let prevout = match resolver.resolve(index) {
-      Ok(prevout) => prevout,
+  all_prevouts.push(to_spend.output[0].clone());
+  for index in 1..unsigned_tx.input.len() {
+    match resolver.resolve(index) {
+      Ok(prevout) => all_prevouts.push(prevout),
       Err(error) => return Verification::Invalid(error),
-    };
-
-    if index == 0 && prevout != to_spend.output[0] {
-      return Verification::Invalid(Error::ToSignInvalid);
     }
-
-    all_prevouts.push(prevout);
   }
 
   let has_non_witness: Vec<bool> = (0..unsigned_tx.input.len())
@@ -266,83 +246,100 @@ pub fn verify_pof(address: &Address, message: impl AsRef<[u8]>, psbt: Psbt) -> V
     return Verification::Invalid(Error::ToSignInvalid);
   }
 
-  let spends: Vec<Spend> = (0..to_sign.input.len())
-    .map(|input_index| Spend::parse(&to_sign, &all_prevouts, input_index))
-    .collect();
+  let spends = match parse_spends(&to_sign, &all_prevouts) {
+    Ok(spends) => spends,
+    Err(error) => return Verification::Invalid(error),
+  };
 
   // BIP174 requires the full previous transaction for every legacy input. It
   // may be inherited from an earlier input spending the same transaction.
-  for spend in &spends {
-    if spend.witness_program.is_none() && !has_non_witness[spend.input_index] {
-      return Verification::Invalid(Error::ToSignInvalid);
-    }
+  if spends
+    .iter()
+    .any(|spend| !spend.is_witness() && !has_non_witness[spend.input_index()])
+  {
+    return Verification::Invalid(Error::ToSignInvalid);
   }
 
-  // Required rules take precedence over every upgradeable rule.
+  verify_spends(&to_sign, &spends)
+}
+
+/// Parses every input of `to_sign` against its previous output in
+/// `prevouts`.
+fn parse_spends<'a>(to_sign: &'a Transaction, prevouts: &'a [TxOut]) -> Result<Vec<Spend<'a>>> {
+  (0..to_sign.input.len())
+    .map(|input_index| Spend::parse(to_sign, prevouts, input_index))
+    .collect()
+}
+
+/// Verifies every input of `to_sign`, the shared tail of the full and
+/// proof-of-funds formats.
+fn verify_spends(to_sign: &Transaction, spends: &[Spend]) -> Verification {
+  let Some(first) = to_sign.input.first() else {
+    return Verification::Invalid(Error::ToSignInvalid);
+  };
+
+  // Required rules take precedence over upgradeable rules and interpretation.
   if spends.iter().any(Spend::spends_codeseparator) {
     return Verification::Invalid(Error::CodeSeparator);
   }
 
-  // Legacy and third-party interpreter sighashes can require quadratic work.
-  // Bound verification effort and report larger proofs as unverifiable rather
-  // than returning a required-rule failure. Taproot commitment verification is
-  // deliberately lazy, so this check runs before any elliptic-curve work.
-  if spends.len() > MAX_PROOF_INPUTS {
-    return Verification::Inconclusive;
-  }
-
-  let mut sighash_cache = SighashCache::new(&to_sign);
+  let mut sighash_cache = SighashCache::new(to_sign);
   let mut inconclusive = false;
-  for spend in &spends {
-    match verify_input(&to_sign, spend, &mut sighash_cache) {
+  for spend in spends {
+    match verify_input(spend, &mut sighash_cache) {
       Ok(InputVerification::Valid) => {}
       Ok(InputVerification::Inconclusive) => inconclusive = true,
-      Ok(InputVerification::Unsupported) => unreachable!("unsupported inputs use the interpreter"),
       Err(error) => return Verification::Invalid(error),
     }
   }
 
+  // Upgradeable rules are considered only after every required rule.
   if inconclusive || !matches!(to_sign.version, Version(0) | Version(2)) {
     return Verification::Inconclusive;
   }
 
   Verification::Valid {
     time: to_sign.lock_time,
-    age: to_sign.input[0].sequence,
+    age: first.sequence,
   }
 }
 
 /// Verifies input.
 fn verify_input(
-  to_sign: &Transaction,
   spend: &Spend,
   sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<InputVerification> {
   if spend.has_naked_zero_timelock() {
     return Err(Error::ScriptNotSatisfied);
   }
-  spend.validate_structure()?;
 
-  if spend.witness_program.as_ref().is_some_and(|witness| {
-    (witness.nested && witness.version != bitcoin::WitnessVersion::V0)
-      || (!witness.nested
-        && ((witness.version == bitcoin::WitnessVersion::V1 && witness.program.len() != 32)
-          || (witness.version != bitcoin::WitnessVersion::V0
-            && witness.version != bitcoin::WitnessVersion::V1)))
-  }) {
-    return Ok(InputVerification::Inconclusive);
-  }
+  let verification = match spend.kind() {
+    SpendKind::P2pkh(hash) => {
+      verify_p2pkh(spend, hash, sighash_cache)?;
+      Some(InputVerification::Valid)
+    }
+    SpendKind::P2sh { redeem, pushes } => {
+      verify_p2sh_multisig(spend, *redeem, pushes, sighash_cache)?
+    }
+    SpendKind::P2wpkh(hash) => {
+      verify_p2wpkh(spend, hash, sighash_cache)?;
+      Some(InputVerification::Valid)
+    }
+    SpendKind::P2wsh(witness_script) => {
+      verify_p2wsh_multisig(spend, *witness_script, sighash_cache)?
+    }
+    SpendKind::P2tr {
+      output_key,
+      annex,
+      path,
+    } => verify_p2tr(spend, *output_key, *annex, path, sighash_cache)?,
+    // Segwit versions reserved for upgrades are an upgradeable rule.
+    SpendKind::UnknownWitness => Some(InputVerification::Inconclusive),
+    SpendKind::Bare => None,
+  };
 
-  if spend
-    .taproot
-    .as_ref()
-    .is_some_and(|taproot| taproot.annex.is_some())
-  {
-    verify_taproot_annex_required_rules(to_sign, spend)?;
-  }
-
-  match verify_standard_script(spend, sighash_cache)? {
-    InputVerification::Unsupported => verify_with_interpreter(to_sign, spend),
-    valid => Ok(valid),
+  match verification {
+    Some(verification) => Ok(verification),
+    None => verify_with_interpreter(spend),
   }
 }

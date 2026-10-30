@@ -1,285 +1,181 @@
-use super::*;
+use {
+  super::*,
+  bitcoin::{taproot::TAPROOT_ANNEX_PREFIX, PubkeyHash, WPubkeyHash, WitnessVersion},
+};
 
+/// Stack elements of the script-number opcodes `OP_1NEGATE` and `OP_1` to
+/// `OP_16`, so a scriptSig's stack can borrow them like its data pushes.
+static SCRIPT_NUMBERS: [[u8; 1]; 17] = [
+  [0x81],
+  [1],
+  [2],
+  [3],
+  [4],
+  [5],
+  [6],
+  [7],
+  [8],
+  [9],
+  [10],
+  [11],
+  [12],
+  [13],
+  [14],
+  [15],
+  [16],
+];
+
+/// An input of `to_sign`, parsed against the output it spends.
+///
+/// Only [`Spend::parse`] builds one, and it enforces the structural consensus
+/// rules of the output type. Every script and key hash a `Spend` holds is
+/// either taken from the spent scriptPubKey or checked against it.
 pub(crate) struct Spend<'a> {
-  pub(crate) txin: &'a TxIn,
-  pub(crate) prevout: &'a TxOut,
-  pub(crate) prevouts: &'a [TxOut],
-  pub(crate) input_index: usize,
-  pub(crate) p2sh: Option<P2shSpend<'a>>,
-  pub(crate) witness_program: Option<WitnessProgramSpend<'a>>,
-  pub(crate) witness_script: Option<&'a Script>,
-  pub(crate) taproot: Option<TaprootSpend<'a>>,
+  to_sign: &'a Transaction,
+  input_index: usize,
+  prevouts: &'a [TxOut],
+  kind: SpendKind<'a>,
 }
 
-pub(crate) struct P2shSpend<'a> {
-  pub(crate) pushes: Vec<Vec<u8>>,
-  pub(crate) redeem_script: Option<&'a Script>,
-  pub(crate) minimal_push_only: bool,
-  pub(crate) commitment_valid: bool,
-}
-
-pub(crate) struct WitnessProgramSpend<'a> {
-  pub(crate) version: bitcoin::WitnessVersion,
-  pub(crate) program: &'a [u8],
-  pub(crate) nested: bool,
-}
-
-pub(crate) struct TaprootSpend<'a> {
-  pub(crate) output_key: Option<XOnlyPublicKey>,
-  pub(crate) annex: Option<&'a [u8]>,
-  pub(crate) path: TaprootPath<'a>,
+pub(crate) enum SpendKind<'a> {
+  /// P2PKH, with the key hash from the spent scriptPubKey.
+  P2pkh(PubkeyHash),
+  /// Bare P2SH: the committed redeem script, and the scriptSig's stack below
+  /// it.
+  P2sh {
+    redeem: CommittedScript<'a>,
+    pushes: Vec<&'a [u8]>,
+  },
+  /// P2WPKH, native or nested. The key hash comes from the spent scriptPubKey
+  /// or a committed redeem script.
+  P2wpkh(WPubkeyHash),
+  /// P2WSH, native or nested.
+  P2wsh(CommittedScript<'a>),
+  /// P2TR, with the output key from the spent scriptPubKey.
+  P2tr {
+    output_key: XOnlyPublicKey,
+    annex: Option<&'a [u8]>,
+    path: TaprootPath<'a>,
+  },
+  /// A witness program reserved for upgrades.
+  UnknownWitness,
+  /// Any other scriptPubKey, which only the interpreter can evaluate.
+  Bare,
 }
 
 pub(crate) enum TaprootPath<'a> {
-  Empty,
   Key { signature: &'a [u8] },
-  Script(TaprootScriptSpend<'a>),
-}
-
-pub(crate) struct TaprootScriptSpend<'a> {
-  pub(crate) initial_stack: Vec<&'a [u8]>,
-  pub(crate) tapscript: &'a Script,
-  pub(crate) control_block: Option<bitcoin::taproot::ControlBlock>,
-}
-
-impl TaprootScriptSpend<'_> {
-  pub(crate) fn commitment_valid(&self, output_key: Option<XOnlyPublicKey>) -> bool {
-    match (&self.control_block, output_key) {
-      (Some(control), Some(output_key)) => control.verify_taproot_commitment(
-        &Secp256k1::verification_only(),
-        output_key,
-        self.tapscript,
-      ),
-      _ => false,
-    }
-  }
+  Script(TapLeaf<'a>),
 }
 
 impl<'a> Spend<'a> {
-  pub(crate) fn parse(to_sign: &'a Transaction, prevouts: &'a [TxOut], input_index: usize) -> Self {
-    use bitcoin::taproot::{ControlBlock, TAPROOT_ANNEX_PREFIX};
+  /// Parses input `input_index` of `to_sign` against `prevouts[input_index]`.
+  pub(crate) fn parse(
+    to_sign: &'a Transaction,
+    prevouts: &'a [TxOut],
+    input_index: usize,
+  ) -> Result<Self> {
+    let (Some(txin), Some(prevout)) = (to_sign.input.get(input_index), prevouts.get(input_index))
+    else {
+      return Err(Error::ToSignInvalid);
+    };
+    let script_pubkey = prevout.script_pubkey.as_script();
 
-    let txin = &to_sign.input[input_index];
-    let prevout = &prevouts[input_index];
-    let script_pubkey = &prevout.script_pubkey;
+    check_script(&txin.script_sig)?;
+    check_script(script_pubkey)?;
 
-    let p2sh = script_pubkey.is_p2sh().then(|| {
-      let mut pushes = Vec::new();
-      let mut minimal_push_only = true;
-      let mut last_data_push = None;
-      let mut ends_with_data_push = false;
-      for instruction in txin.script_sig.instructions_minimal() {
-        match instruction {
-          Ok(Instruction::PushBytes(bytes)) => {
-            let bytes = bytes.as_bytes();
-            pushes.push(bytes.to_vec());
-            last_data_push = Some(bytes);
-            ends_with_data_push = true;
-          }
-          Ok(Instruction::Op(opcode)) => {
-            match opcode.to_u8() {
-              // Script-number pushes are valid minimal stack elements.
-              0x4f => pushes.push(vec![0x81]),
-              0x51..=0x60 => pushes.push(vec![opcode.to_u8() - 0x50]),
-              _ => minimal_push_only = false,
-            }
-            ends_with_data_push = false;
-          }
-          Err(_) => {
-            minimal_push_only = false;
-            ends_with_data_push = false;
-          }
-        }
+    let kind = if let Some(version) = script_pubkey.witness_version() {
+      if !txin.script_sig.is_empty() {
+        return Err(Error::ToSignInvalid);
       }
-      let redeem_script = ends_with_data_push
-        .then_some(last_data_push)
-        .flatten()
-        .map(Script::from_bytes);
-      let commitment_valid = redeem_script
-        .is_some_and(|redeem| script_pubkey == &ScriptBuf::new_p2sh(&redeem.script_hash()));
-      P2shSpend {
-        pushes,
-        redeem_script,
-        minimal_push_only,
-        commitment_valid,
-      }
-    });
-
-    let witness_program = if let Some(version) = script_pubkey.witness_version() {
-      Some(WitnessProgramSpend {
+      witness_kind(
+        &txin.witness,
         version,
-        program: &script_pubkey.as_bytes()[2..],
-        nested: false,
-      })
+        &script_pubkey.as_bytes()[2..],
+        false,
+      )?
+    } else if script_pubkey.is_p2sh() {
+      p2sh_kind(txin, script_pubkey)?
+    } else if !txin.witness.is_empty() {
+      return Err(Error::InvalidWitness);
+    } else if script_pubkey.is_p2pkh() {
+      SpendKind::P2pkh(
+        PubkeyHash::from_slice(&script_pubkey.as_bytes()[3..23])
+          .map_err(|_| Error::ToSignInvalid)?,
+      )
     } else {
-      p2sh
-        .as_ref()
-        .and_then(|p2sh| p2sh.redeem_script)
-        .and_then(|redeem| {
-          redeem.witness_version().map(|version| WitnessProgramSpend {
-            version,
-            program: &redeem.as_bytes()[2..],
-            nested: true,
-          })
-        })
+      SpendKind::Bare
     };
 
-    let witness_script = (script_pubkey.is_p2wsh() || script_pubkey.is_p2sh())
-      .then(|| txin.witness.last().map(Script::from_bytes))
-      .flatten()
-      .filter(|script| {
-        let program = ScriptBuf::new_p2wsh(&script.wscript_hash());
-        script_pubkey == &program || script_pubkey == &ScriptBuf::new_p2sh(&program.script_hash())
-      });
-
-    let taproot = script_pubkey.is_p2tr().then(|| {
-      let output_key = XOnlyPublicKey::from_slice(&script_pubkey.as_bytes()[2..]).ok();
-      let items: Vec<&[u8]> = txin.witness.iter().collect();
-      let has_annex = items.len() >= 2
-        && items
-          .last()
-          .and_then(|item| item.first())
-          .is_some_and(|prefix| *prefix == TAPROOT_ANNEX_PREFIX);
-      let annex = has_annex.then_some(items[items.len() - 1]);
-      let spend_len = items.len() - usize::from(has_annex);
-      let path = match spend_len {
-        0 => TaprootPath::Empty,
-        1 => TaprootPath::Key {
-          signature: items[0],
-        },
-        _ => {
-          let tapscript = Script::from_bytes(items[spend_len - 2]);
-          let control_bytes = items[spend_len - 1];
-          let control_block = ControlBlock::decode(control_bytes).ok();
-          TaprootPath::Script(TaprootScriptSpend {
-            initial_stack: items[..spend_len - 2].to_vec(),
-            tapscript,
-            control_block,
-          })
-        }
-      };
-      TaprootSpend {
-        output_key,
-        annex,
-        path,
-      }
-    });
-
-    Self {
-      txin,
-      prevout,
-      prevouts,
+    Ok(Self {
+      to_sign,
       input_index,
-      p2sh,
-      witness_program,
-      witness_script,
-      taproot,
-    }
+      prevouts,
+      kind,
+    })
   }
 
-  pub(crate) fn validate_structure(&self) -> Result<()> {
-    let requires_minimal = |script: &Script| {
-      if script
-        .instructions_minimal()
-        .any(|instruction| instruction.is_err())
-      {
-        return Err(Error::InvalidWitness);
-      }
-      Ok(())
-    };
-    let validate_script = |script: &Script| {
-      requires_minimal(script)?;
-      let non_push_opcodes = script
-        .instructions()
-        .filter(|instruction| {
-          matches!(instruction, Ok(Instruction::Op(opcode))
-            if opcode.to_u8() > opcodes::all::OP_PUSHNUM_16.to_u8())
-        })
-        .take(202)
-        .count();
-      if non_push_opcodes > 201 {
-        return Err(Error::InvalidWitness);
-      }
-      Ok(())
-    };
-    validate_script(&self.txin.script_sig)?;
-    validate_script(&self.prevout.script_pubkey)?;
-    if self.witness_program.is_none() {
-      if let Some(redeem) = self.p2sh.as_ref().and_then(|p2sh| p2sh.redeem_script) {
-        validate_script(redeem)?;
-      }
-    }
-    if let Some(script) = self.witness_script {
-      validate_script(script)?;
-    }
+  pub(crate) fn to_sign(&self) -> &'a Transaction {
+    self.to_sign
+  }
 
-    if let Some(witness) = &self.witness_program {
-      if witness.nested {
-        let p2sh = self.p2sh.as_ref().ok_or(Error::ToSignInvalid)?;
-        let redeem = p2sh.redeem_script.ok_or(Error::ToSignInvalid)?;
-        if !p2sh.minimal_push_only
-          || p2sh.pushes.len() != 1
-          || !p2sh.commitment_valid
-          || self.txin.script_sig != push_only_script(redeem)
-        {
-          return Err(Error::ToSignInvalid);
-        }
-      } else if !self.txin.script_sig.is_empty() {
-        return Err(Error::ToSignInvalid);
-      }
+  pub(crate) fn input_index(&self) -> usize {
+    self.input_index
+  }
 
-      if witness.version == bitcoin::WitnessVersion::V0 && !matches!(witness.program.len(), 20 | 32)
-      {
-        return Err(Error::ToSignInvalid);
-      }
-    } else {
-      if self.prevout.script_pubkey.is_p2sh()
-        && self
-          .p2sh
-          .as_ref()
-          .is_some_and(|p2sh| p2sh.redeem_script.is_none())
-        && !self.txin.witness.is_empty()
-      {
-        return Err(Error::ToSignInvalid);
-      }
-      if !self.txin.witness.is_empty() {
-        return Err(Error::InvalidWitness);
-      }
-      if self.prevout.script_pubkey.is_p2sh() {
-        let p2sh = self.p2sh.as_ref().ok_or(Error::InvalidWitness)?;
-        let redeem = p2sh.redeem_script.ok_or(Error::InvalidWitness)?;
-        if !p2sh.minimal_push_only || redeem.len() > 520 {
-          return Err(Error::InvalidWitness);
-        }
-        if !p2sh.commitment_valid {
-          return Err(Error::ToSignInvalid);
-        }
-      }
-    }
-    Ok(())
+  /// The previous outputs of every input of `to_sign`.
+  pub(crate) fn prevouts(&self) -> &'a [TxOut] {
+    self.prevouts
+  }
+
+  pub(crate) fn txin(&self) -> &'a TxIn {
+    &self.to_sign.input[self.input_index]
+  }
+
+  /// The previous output this input spends.
+  pub(crate) fn prevout(&self) -> &'a TxOut {
+    &self.prevouts[self.input_index]
+  }
+
+  pub(crate) fn kind(&self) -> &SpendKind<'a> {
+    &self.kind
+  }
+
+  /// Whether this is a segwit spend, for which BIP-174 accepts a
+  /// `witness_utxo` without the previous transaction.
+  pub(crate) fn is_witness(&self) -> bool {
+    matches!(
+      self.kind,
+      SpendKind::P2wpkh(_)
+        | SpendKind::P2wsh(_)
+        | SpendKind::P2tr { .. }
+        | SpendKind::UnknownWitness
+    )
+  }
+
+  /// The initial stack of a Taproot script-path spend: the witness without
+  /// the leaf script, control block and annex.
+  pub(crate) fn taproot_stack(&self) -> std::iter::Take<bitcoin::witness::Iter<'a>> {
+    let stack_len = match &self.kind {
+      SpendKind::P2tr {
+        path: TaprootPath::Script(leaf),
+        ..
+      } => leaf.stack_len(),
+      _ => 0,
+    };
+    self.txin().witness.iter().take(stack_len)
   }
 
   /// Whether this input executes a script containing OP_CODESEPARATOR.
   pub(crate) fn spends_codeseparator(&self) -> bool {
-    if contains_codeseparator(&self.txin.script_sig)
-      || contains_codeseparator(&self.prevout.script_pubkey)
-      || self
-        .p2sh
-        .as_ref()
-        .and_then(|p2sh| p2sh.redeem_script)
-        .is_some_and(contains_codeseparator)
-      || self.witness_script.is_some_and(contains_codeseparator)
-    {
-      return true;
-    }
-
-    matches!(
-      self.taproot.as_ref().map(|taproot| &taproot.path),
-      Some(TaprootPath::Script(script))
-        if script.control_block.as_ref().is_some_and(|control| {
-          control.leaf_version == bitcoin::taproot::LeafVersion::TapScript
-        }) && contains_codeseparator(script.tapscript)
-    )
+    [
+      Some(self.txin().script_sig.as_script()),
+      Some(self.prevout().script_pubkey.as_script()),
+      self.inner_script(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(contains_codeseparator)
   }
 
   /// Miniscript rejects zero-valued timelocks during decoding, so these exact
@@ -287,41 +183,208 @@ impl<'a> Spend<'a> {
   /// Bitcoin consensus they execute to a false zero and fail, so reject them as
   /// known-invalid rather than leaving them unverifiable.
   pub(crate) fn has_naked_zero_timelock(&self) -> bool {
-    fn is_naked_zero_timelock(script: &Script) -> bool {
-      let mut instructions = script.instructions();
-      matches!(
-        (instructions.next(), instructions.next(), instructions.next()),
-        (
-          Some(Ok(Instruction::PushBytes(empty))),
-          Some(Ok(Instruction::Op(opcode))),
-          None
-        ) if empty.is_empty()
-          && (opcode == opcodes::all::OP_CSV || opcode == opcodes::all::OP_CLTV)
-      )
-    }
-
-    is_naked_zero_timelock(&self.prevout.script_pubkey)
-      || self
-        .p2sh
-        .as_ref()
-        .and_then(|p2sh| p2sh.redeem_script)
-        .is_some_and(is_naked_zero_timelock)
-      || self.witness_script.is_some_and(is_naked_zero_timelock)
-      || matches!(
-        self.taproot.as_ref().map(|taproot| &taproot.path),
-        Some(TaprootPath::Script(script))
-          if script.control_block.as_ref().is_some_and(|control| {
-            control.leaf_version == bitcoin::taproot::LeafVersion::TapScript
-          }) && is_naked_zero_timelock(script.tapscript)
-      )
+    [
+      Some(self.prevout().script_pubkey.as_script()),
+      self.inner_script(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(is_naked_zero_timelock)
   }
 
-  pub(crate) fn taproot_initial_stack(&self) -> &[&[u8]] {
-    match self.taproot.as_ref().map(|taproot| &taproot.path) {
-      Some(TaprootPath::Script(script)) => &script.initial_stack,
-      _ => &[],
+  /// The script this input executes after its scriptPubKey: the committed
+  /// redeem or witness script, or the tapscript a script-path witness claims.
+  /// The tapscript is not committed to yet, so this may only feed
+  /// required-rule scans, which can reject a proof but never accept one.
+  fn inner_script(&self) -> Option<&'a Script> {
+    match &self.kind {
+      SpendKind::P2sh { redeem, .. } => Some(redeem.script()),
+      SpendKind::P2wsh(witness_script) => Some(witness_script.script()),
+      SpendKind::P2tr {
+        path: TaprootPath::Script(leaf),
+        ..
+      } => leaf.claimed_tapscript(),
+      _ => None,
     }
   }
+}
+
+/// Classifies a witness program, native or nested in P2SH, and enforces the
+/// structural rules of its witness.
+fn witness_kind<'a>(
+  witness: &'a Witness,
+  version: WitnessVersion,
+  program: &'a [u8],
+  nested: bool,
+) -> Result<SpendKind<'a>> {
+  match (nested, version, program.len()) {
+    (_, WitnessVersion::V0, 20) => {
+      if witness.is_empty() {
+        return Err(Error::WitnessEmpty);
+      }
+      if witness.len() != 2 {
+        return Err(Error::InvalidWitness);
+      }
+      check_witness_stack(witness.iter())?;
+
+      Ok(SpendKind::P2wpkh(
+        WPubkeyHash::from_slice(program).map_err(|_| Error::ToSignInvalid)?,
+      ))
+    }
+    (_, WitnessVersion::V0, 32) => {
+      let witness_script = witness
+        .last()
+        .map(Script::from_bytes)
+        .ok_or(Error::InvalidWitness)?;
+      let witness_script =
+        CommittedScript::p2wsh(program, witness_script).ok_or(Error::ToSignInvalid)?;
+      check_witness_stack(witness.iter().take(witness.len() - 1))?;
+      check_script(witness_script.script())?;
+
+      Ok(SpendKind::P2wsh(witness_script))
+    }
+    (_, WitnessVersion::V0, _) => Err(Error::ToSignInvalid),
+    (false, WitnessVersion::V1, 32) => taproot_kind(witness, program),
+    _ => Ok(SpendKind::UnknownWitness),
+  }
+}
+
+/// Splits a Taproot witness into its annex and spending path.
+fn taproot_kind<'a>(witness: &'a Witness, program: &[u8]) -> Result<SpendKind<'a>> {
+  use bitcoin::taproot::ControlBlock;
+
+  let output_key = XOnlyPublicKey::from_slice(program).map_err(|_| Error::InvalidPublicKey)?;
+
+  let annex = witness
+    .last()
+    .filter(|last| witness.len() >= 2 && last.first() == Some(&TAPROOT_ANNEX_PREFIX));
+  let spend_len = witness.len() - usize::from(annex.is_some());
+
+  let path = match spend_len {
+    0 => return Err(Error::WitnessEmpty),
+    1 => TaprootPath::Key {
+      signature: witness.nth(0).ok_or(Error::WitnessEmpty)?,
+    },
+    _ => {
+      let script = witness
+        .nth(spend_len - 2)
+        .map(Script::from_bytes)
+        .ok_or(Error::InvalidWitness)?;
+      let control = witness
+        .nth(spend_len - 1)
+        .and_then(|control| ControlBlock::decode(control).ok())
+        .ok_or(Error::InvalidWitness)?;
+      TaprootPath::Script(TapLeaf::new(control, script, spend_len - 2))
+    }
+  };
+
+  Ok(SpendKind::P2tr {
+    output_key,
+    annex,
+    path,
+  })
+}
+
+/// Classifies a P2SH spend from its scriptSig, the last push of which is the
+/// redeem script.
+fn p2sh_kind<'a>(txin: &'a TxIn, script_pubkey: &Script) -> Result<SpendKind<'a>> {
+  let mut pushes = Vec::new();
+  let mut push_only = true;
+  let mut ends_with_data = false;
+  for instruction in txin.script_sig.instructions_minimal() {
+    match instruction.map_err(|_| Error::InvalidWitness)? {
+      Instruction::PushBytes(bytes) => {
+        pushes.push(bytes.as_bytes());
+        ends_with_data = true;
+      }
+      Instruction::Op(opcode) => {
+        match opcode.to_u8() {
+          0x4f => pushes.push(&SCRIPT_NUMBERS[0][..]),
+          number @ 0x51..=0x60 => pushes.push(&SCRIPT_NUMBERS[usize::from(number - 0x50)][..]),
+          _ => push_only = false,
+        }
+        ends_with_data = false;
+      }
+    }
+
+    if pushes.len() > MAX_STACK_SIZE {
+      return Err(Error::InvalidWitness);
+    }
+  }
+
+  let redeem_script = if ends_with_data {
+    pushes.pop().map(Script::from_bytes)
+  } else {
+    None
+  };
+
+  if let Some((redeem_script, version)) =
+    redeem_script.and_then(|redeem| Some((redeem, redeem.witness_version()?)))
+  {
+    // Nested segwit: the scriptSig must be exactly the push of the program.
+    let redeem_script =
+      CommittedScript::p2sh(script_pubkey, redeem_script).ok_or(Error::ToSignInvalid)?;
+    if txin.script_sig != push_only_script(redeem_script.script()) {
+      return Err(Error::ToSignInvalid);
+    }
+    return witness_kind(
+      &txin.witness,
+      version,
+      &redeem_script.script().as_bytes()[2..],
+      true,
+    );
+  }
+
+  if !txin.witness.is_empty() {
+    return Err(Error::InvalidWitness);
+  }
+  let redeem_script = redeem_script.ok_or(Error::InvalidWitness)?;
+  if !push_only
+    || redeem_script.len() > MAX_SCRIPT_ELEMENT_SIZE
+    || pushes
+      .iter()
+      .any(|push| push.len() > MAX_SCRIPT_ELEMENT_SIZE)
+  {
+    return Err(Error::InvalidWitness);
+  }
+  let redeem = CommittedScript::p2sh(script_pubkey, redeem_script).ok_or(Error::ToSignInvalid)?;
+  check_script(redeem.script())?;
+
+  Ok(SpendKind::P2sh { redeem, pushes })
+}
+
+/// Enforces the limits every executed legacy and v0 witness script obeys: at
+/// most `MAX_SCRIPT_SIZE` bytes, minimal pushes, and at most
+/// `MAX_OPS_PER_SCRIPT` non-push opcodes.
+fn check_script(script: &Script) -> Result<()> {
+  if script.len() > MAX_SCRIPT_SIZE {
+    return Err(Error::InvalidWitness);
+  }
+
+  let mut non_push_opcodes = 0;
+  for instruction in script.instructions_minimal() {
+    match instruction {
+      Ok(Instruction::Op(opcode)) if opcode.to_u8() > opcodes::all::OP_PUSHNUM_16.to_u8() => {
+        non_push_opcodes += 1;
+        if non_push_opcodes > MAX_OPS_PER_SCRIPT {
+          return Err(Error::InvalidWitness);
+        }
+      }
+      Ok(_) => {}
+      Err(_) => return Err(Error::InvalidWitness),
+    }
+  }
+
+  Ok(())
+}
+
+/// Enforces the v0 witness stack limits: at most `MAX_STACK_SIZE` items of
+/// at most `MAX_SCRIPT_ELEMENT_SIZE` bytes each.
+fn check_witness_stack<'a>(mut stack: impl ExactSizeIterator<Item = &'a [u8]>) -> Result<()> {
+  if stack.len() > MAX_STACK_SIZE || stack.any(|item| item.len() > MAX_SCRIPT_ELEMENT_SIZE) {
+    return Err(Error::InvalidWitness);
+  }
+  Ok(())
 }
 
 /// Whether a script contains OP_CODESEPARATOR as an opcode (occurrences
@@ -329,5 +392,20 @@ impl<'a> Spend<'a> {
 fn contains_codeseparator(script: &Script) -> bool {
   script.instructions().any(
     |instruction| matches!(instruction, Ok(Instruction::Op(opcode)) if opcode == opcodes::all::OP_CODESEPARATOR),
+  )
+}
+
+/// Whether a script is exactly `0 OP_CHECKSEQUENCEVERIFY` or
+/// `0 OP_CHECKLOCKTIMEVERIFY`.
+fn is_naked_zero_timelock(script: &Script) -> bool {
+  let mut instructions = script.instructions();
+  matches!(
+    (instructions.next(), instructions.next(), instructions.next()),
+    (
+      Some(Ok(Instruction::PushBytes(empty))),
+      Some(Ok(Instruction::Op(opcode))),
+      None
+    ) if empty.is_empty()
+      && (opcode == opcodes::all::OP_CSV || opcode == opcodes::all::OP_CLTV)
   )
 }

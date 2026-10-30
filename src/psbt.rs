@@ -23,13 +23,7 @@ pub struct Bip322Psbt {
 
 /// Runs the detection checks on a PSBT.
 pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
-  let message = psbt
-    .unknown
-    .get(&bitcoin::psbt::raw::Key {
-      type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-      key: vec![],
-    })?
-    .clone();
+  let message = psbt.unknown.get(&signed_message_key())?.clone();
   std::str::from_utf8(&message).ok()?;
 
   if psbt.inputs.len() != psbt.unsigned_tx.input.len()
@@ -78,13 +72,7 @@ pub fn detect_bip322_psbt(psbt: &Psbt) -> Option<Bip322Psbt> {
     return None;
   }
 
-  let op_return = bitcoin::script::Builder::new()
-    .push_opcode(opcodes::all::OP_RETURN)
-    .into_script();
-
-  let outputs = &psbt.unsigned_tx.output;
-  if outputs.len() != 1 || outputs[0].script_pubkey != op_return || outputs[0].value != Amount::ZERO
-  {
+  if !is_bip322_output(&psbt.unsigned_tx.output) {
     return None;
   }
 

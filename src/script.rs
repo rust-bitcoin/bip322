@@ -135,67 +135,26 @@ pub(crate) fn require_low_s(signature: &bitcoin::secp256k1::ecdsa::Signature) ->
   Ok(())
 }
 
-/// Whether the input is spent via segwit, which decides if BIP-174 requires a
-/// `witness_utxo` or a `non_witness_utxo` for it. A P2SH input is only segwit
-/// if it wraps a witness program; with no script known (`witness_script:
-/// None`) it is assumed to be P2SH-P2WPKH, whose redeem script the signer
-/// derives from its own key.
-pub(crate) fn is_segwit_input(spk: &ScriptBuf, witness_script: Option<&ScriptBuf>) -> bool {
-  if spk.is_p2wpkh() || spk.is_p2wsh() || spk.is_p2tr() {
-    true
-  } else if spk.is_p2sh() {
-    match witness_script {
-      Some(ws) => *spk != ScriptBuf::new_p2sh(&ws.script_hash()),
-      None => true,
-    }
-  } else {
-    false
-  }
+/// Whether spending `script_pubkey` is a segwit spend, which decides whether
+/// BIP-174 accepts its `witness_utxo` alone or requires the previous
+/// transaction in `non_witness_utxo`.
+///
+/// A P2SH output is segwit if its redeem script is a witness program. With
+/// no redeem script known yet, it is assumed to be P2SH-P2WPKH, whose redeem
+/// script the signer derives from its own key. This serves producers and the
+/// PSBT roles; the verifier instead classifies each spend from its final
+/// scriptSig.
+pub(crate) fn spends_witness(script_pubkey: &Script, redeem_script: Option<&Script>) -> bool {
+  script_pubkey.is_witness_program()
+    || (script_pubkey.is_p2sh() && redeem_script.map_or(true, Script::is_witness_program))
 }
 
-/// Sets the UTXO field a proof input requires per BIP-174, validating
-/// `prev_tx` against the outpoint for legacy inputs.
-pub(crate) fn set_proof_input_utxo(
-  psbt_input: &mut bitcoin::psbt::Input,
-  input: &ProofInput,
-  index: usize,
-) -> Result<()> {
-  if is_segwit_input(&input.prevout.script_pubkey, input.witness_script.as_ref()) {
-    psbt_input.witness_utxo = Some(input.prevout.clone());
-    return Ok(());
+/// The P2SH redeem script a producer's `witness_script` argument stands for:
+/// the script itself for bare P2SH, its P2WSH program for P2SH-P2WSH.
+pub(crate) fn p2sh_redeem_script(script_pubkey: &Script, witness_script: &Script) -> ScriptBuf {
+  if *script_pubkey == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
+    witness_script.to_owned()
+  } else {
+    ScriptBuf::new_p2wsh(&witness_script.wscript_hash())
   }
-
-  let prev_tx = input
-    .prev_tx
-    .as_ref()
-    .ok_or_else(|| Error::InvalidProofInput {
-      index,
-      reason: "legacy input requires prev_tx".into(),
-    })?;
-
-  if prev_tx.compute_txid() != input.outpoint.txid {
-    return Err(Error::InvalidProofInput {
-      index,
-      reason: "prev_tx txid does not match outpoint".into(),
-    });
-  }
-
-  let claimed = prev_tx
-    .output
-    .get(input.outpoint.vout as usize)
-    .ok_or_else(|| Error::InvalidProofInput {
-      index,
-      reason: "outpoint vout exceeds prev_tx outputs".into(),
-    })?;
-
-  if *claimed != input.prevout {
-    return Err(Error::InvalidProofInput {
-      index,
-      reason: "prevout does not match prev_tx output".into(),
-    });
-  }
-
-  psbt_input.non_witness_utxo = Some(prev_tx.clone());
-
-  Ok(())
 }

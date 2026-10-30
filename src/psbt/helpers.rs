@@ -45,7 +45,7 @@ pub(crate) fn require_multisig_challenge(
 ) -> Result<()> {
   let p2wsh = ScriptBuf::new_p2wsh(&script.wscript_hash());
 
-  if !is_witness && script.len() > 520 {
+  if !is_witness && script.len() > MAX_SCRIPT_ELEMENT_SIZE {
     return Err(Error::InvalidWitness);
   }
 
@@ -60,7 +60,7 @@ pub(crate) fn require_multisig_challenge(
   };
 
   if !matches {
-    return Err(Error::PublicKeyMismatch);
+    return Err(Error::WitnessScriptMismatch);
   }
 
   Ok(())

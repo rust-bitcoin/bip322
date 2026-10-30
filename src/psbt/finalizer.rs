@@ -13,13 +13,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
   };
 
   validate_psbt_structure(&psbt)?;
-  let input_count = psbt.unsigned_tx.input.len();
-  if input_count > MAX_PROOF_INPUTS {
-    return Err(Error::TooManyProofInputs {
-      count: input_count,
-      max: MAX_PROOF_INPUTS,
-    });
-  }
+  check_input_count(psbt.unsigned_tx.input.len())?;
   let resolver = PrevoutResolver::new(&psbt)?;
   let mut challenges = Vec::with_capacity(psbt.inputs.len());
   for index in 0..psbt.inputs.len() {
@@ -42,10 +36,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
       .serialize_to_writer(&mut buffer)
       .context(error::TransactionEncode)?;
 
-    return Ok(format!(
-      "{POF_SIGNATURE_PREFIX}{}",
-      general_purpose::STANDARD.encode(buffer)
-    ));
+    return Ok(encode_payload(POF_SIGNATURE_PREFIX, &buffer));
   }
 
   let to_sign = psbt.extract_tx_unchecked_fee_rate();
@@ -56,10 +47,7 @@ pub fn finalize_bip322_psbt(mut psbt: Psbt) -> Result<String> {
     .consensus_encode(&mut buffer)
     .context(error::TransactionEncode)?;
 
-  Ok(format!(
-    "{FULL_SIGNATURE_PREFIX}{}",
-    general_purpose::STANDARD.encode(buffer)
-  ))
+  Ok(encode_payload(FULL_SIGNATURE_PREFIX, &buffer))
 }
 
 /// Removes all non-final BIP174 input fields after successful finalization.

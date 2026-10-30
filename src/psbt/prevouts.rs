@@ -6,12 +6,10 @@ pub(crate) fn checked_psbt_input_prevout(
   index: usize,
 ) -> Result<TxOut> {
   let prevout = resolver.resolve(index)?;
-  let is_segwit = prevout.script_pubkey.is_witness_program()
-    || (prevout.script_pubkey.is_p2sh()
-      && psbt.inputs[index]
-        .redeem_script
-        .as_ref()
-        .map_or(true, |redeem| redeem.is_witness_program()));
+  let is_segwit = spends_witness(
+    &prevout.script_pubkey,
+    psbt.inputs[index].redeem_script.as_deref(),
+  );
   if !is_segwit && !resolver.has_non_witness(index) {
     return Err(Error::ToSignInvalid);
   }

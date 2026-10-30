@@ -116,9 +116,11 @@ fn pof_tampered_witness_utxo_is_rejected() {
     ScriptBuf::from_hex("5120ca0dca0f4f6a2fe99f83c74ce304b031e4b94007b79ae2a94f35355563f9f5ca")
       .unwrap();
 
+  // Taproot signatures commit to every previous output, so even the
+  // challenge's signature no longer verifies.
   assert!(matches!(
     verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-    Verification::Invalid(_)
+    Verification::Invalid(Error::SignatureInvalid { .. })
   ));
 }
 
@@ -292,20 +294,123 @@ fn pof_uninterpretable_input_is_inconclusive() {
 #[test]
 fn pof_rejects_mismatched_or_non_utf8_signed_message_field() {
   for value in [b"different message".to_vec(), vec![0xff]] {
+    let utf8 = std::str::from_utf8(&value).is_ok();
     let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
-    psbt.unknown.insert(
-      bitcoin::psbt::raw::Key {
-        type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-        key: vec![],
-      },
-      value,
-    );
+    psbt.unknown.insert(signed_message_key(), value);
 
-    assert!(matches!(
-      verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-      Verification::Invalid(Error::ToSignInvalid)
-    ));
+    let result = verify_pof(&address, POF_P2TR_MESSAGE, psbt);
+    if utf8 {
+      assert!(
+        matches!(result, Verification::Invalid(Error::ToSignInvalid)),
+        "got {result:?}"
+      );
+    } else {
+      assert!(
+        matches!(result, Verification::Invalid(Error::MessageNotUtf8)),
+        "got {result:?}"
+      );
+    }
   }
+}
+
+#[test]
+fn pof_challenge_utxo_must_be_the_challenge_output() {
+  let secp = Secp256k1::new();
+  let victim = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+  let victim_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let attacker_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap();
+
+  // Signs every input against the UTXO data the PSBT itself carries.
+  let sign = |mut psbt: Psbt, challenge_key: &PrivateKey| {
+    let prevouts: Vec<TxOut> = psbt
+      .inputs
+      .iter()
+      .map(|input| input.witness_utxo.clone().unwrap())
+      .collect();
+    let challenge =
+      create_message_signature_p2wpkh(&psbt, challenge_key, &prevouts[0], 0, false).unwrap();
+    let proof = create_message_signature_taproot(
+      &psbt,
+      &PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap(),
+      &prevouts,
+      1,
+      None,
+    )
+    .unwrap();
+    psbt.inputs[0].final_script_witness = Some(challenge);
+    psbt.inputs[1].final_script_witness = Some(proof);
+    psbt
+  };
+
+  let unsigned = create_bip322_psbt(
+    &victim,
+    POF_P2TR_MESSAGE,
+    None,
+    &[pof_p2tr_proof_input()],
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_pof(
+    &victim,
+    POF_P2TR_MESSAGE,
+    sign(unsigned.clone(), &victim_key),
+  ));
+
+  for (challenge_utxo, challenge_key) in [
+    // An attacker's own script, signed by the attacker.
+    (
+      TxOut {
+        value: Amount::ZERO,
+        script_pubkey: ScriptBuf::new_p2wpkh(
+          &attacker_key.public_key(&secp).wpubkey_hash().unwrap(),
+        ),
+      },
+      attacker_key,
+    ),
+    // The victim's script with a different value.
+    (
+      TxOut {
+        value: Amount::from_sat(1),
+        script_pubkey: victim.script_pubkey(),
+      },
+      victim_key,
+    ),
+  ] {
+    let mut psbt = unsigned.clone();
+    psbt.inputs[0].witness_utxo = Some(challenge_utxo);
+    let result = verify_pof(&victim, POF_P2TR_MESSAGE, sign(psbt, &challenge_key));
+    assert!(
+      matches!(result, Verification::Invalid(Error::ToSignInvalid)),
+      "got {result:?}"
+    );
+  }
+}
+
+#[test]
+fn pof_challenge_is_bound_to_message() {
+  let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+  assert!(psbt
+    .unknown
+    .remove(&bitcoin::psbt::raw::Key {
+      type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
+      key: vec![],
+    })
+    .is_some());
+  assert_valid(verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()));
+  assert!(matches!(
+    verify_pof(&address, "different message", psbt),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  assert_valid(verify_pof_encoded(
+    POF_P2TR_ADDRESS,
+    POF_P2TR_MESSAGE,
+    POF_P2TR_SIGNATURE,
+  ));
+  assert!(matches!(
+    verify_pof_encoded(POF_P2TR_ADDRESS, "different message", POF_P2TR_SIGNATURE),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
 }
 
 #[test]
@@ -355,16 +460,11 @@ fn pof_codeseparator_check_is_independent_of_input_order() {
 
 #[test]
 fn pof_bare_codeseparator_script_is_invalid() {
-  let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
   let codeseparator_script = ScriptBuf::builder()
     .push_opcode(opcodes::all::OP_CODESEPARATOR)
     .push_opcode(opcodes::all::OP_PUSHNUM_1)
     .into_script();
-
-  psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey = codeseparator_script;
-  psbt.inputs[1].final_script_sig = None;
-  psbt.inputs[1].final_script_witness = None;
-  supply_legacy_non_witness_utxo(&mut psbt, 1);
+  let (address, mut psbt) = pof_with_bare_proof_input(codeseparator_script);
 
   assert!(matches!(
     verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()),
@@ -381,21 +481,19 @@ fn pof_bare_codeseparator_script_is_invalid() {
 
 #[test]
 fn pof_bare_codeseparator_byte_in_pushed_data_is_not_an_opcode() {
-  let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+  // 0xab inside pushed data is data, not OP_CODESEPARATOR. The challenge is
+  // validly signed, and miniscript cannot express the script, so the proof
+  // is inconclusive rather than invalid.
   let script = ScriptBuf::builder()
     .push_slice([0xab; 32])
     .push_opcode(opcodes::all::OP_DROP)
     .push_opcode(opcodes::all::OP_PUSHNUM_1)
     .into_script();
-
-  psbt.inputs[1].witness_utxo.as_mut().unwrap().script_pubkey = script;
-  psbt.inputs[1].final_script_sig = None;
-  psbt.inputs[1].final_script_witness = None;
-  supply_legacy_non_witness_utxo(&mut psbt, 1);
+  let (address, psbt) = pof_with_bare_proof_input(script);
 
   let result = verify_pof(&address, POF_P2TR_MESSAGE, psbt);
   assert!(
-    !matches!(result, Verification::Invalid(Error::CodeSeparator)),
+    matches!(result, Verification::Inconclusive),
     "got {result:?}"
   );
 }
@@ -594,6 +692,13 @@ fn transaction_weight_is_enforced_for_full_and_pof() {
 
 #[test]
 fn excessive_pof_input_count_is_inconclusive() {
+  fn encoded(psbt: &Psbt) -> String {
+    format!(
+      "{POF_SIGNATURE_PREFIX}{}",
+      general_purpose::STANDARD.encode(psbt.serialize())
+    )
+  }
+
   let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
   for vout in 1..1024 {
     let mut txin = psbt.unsigned_tx.input[1].clone();
@@ -601,7 +706,28 @@ fn excessive_pof_input_count_is_inconclusive() {
     psbt.unsigned_tx.input.push(txin);
     psbt.inputs.push(psbt.inputs[1].clone());
   }
+  assert_eq!(psbt.unsigned_tx.input.len(), MAX_PROOF_INPUTS + 1);
 
+  assert!(matches!(
+    verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded(&psbt)),
+    Verification::Inconclusive
+  ));
+  assert!(matches!(
+    verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()),
+    Verification::Inconclusive
+  ));
+
+  // The bound precedes every other check, so typed and encoded proofs agree
+  // even when the proof is also malformed.
+  psbt
+    .unsigned_tx
+    .output
+    .push(psbt.unsigned_tx.output[0].clone());
+  psbt.outputs.push(psbt.outputs[0].clone());
+  assert!(matches!(
+    verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded(&psbt)),
+    Verification::Inconclusive
+  ));
   assert!(matches!(
     verify_pof(&address, POF_P2TR_MESSAGE, psbt),
     Verification::Inconclusive
@@ -609,13 +735,33 @@ fn excessive_pof_input_count_is_inconclusive() {
 }
 
 #[test]
-fn producers_reject_excessive_pof_input_counts() {
-  assert_eq!(
-    check_proof_input_count(MAX_PROOF_INPUTS - 1).unwrap(),
-    MAX_PROOF_INPUTS
+fn encoded_pof_with_two_outputs_is_invalid() {
+  let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+  psbt
+    .unsigned_tx
+    .output
+    .push(psbt.unsigned_tx.output[0].clone());
+  psbt.outputs.push(psbt.outputs[0].clone());
+
+  let encoded = format!(
+    "{POF_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(psbt.serialize())
   );
   assert!(matches!(
-    check_proof_input_count(MAX_PROOF_INPUTS),
+    verify_pof_encoded(&address.to_string(), POF_P2TR_MESSAGE, &encoded),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    verify_pof(&address, POF_P2TR_MESSAGE, psbt),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn producers_reject_excessive_pof_input_counts() {
+  assert!(check_input_count(MAX_PROOF_INPUTS).is_ok());
+  assert!(matches!(
+    check_input_count(MAX_PROOF_INPUTS + 1),
     Err(Error::TooManyProofInputs { .. })
   ));
 
@@ -676,6 +822,118 @@ fn pof_required_failure_precedes_earlier_inconclusive_input() {
 
   assert!(matches!(
     verify_pof(&address, POF_P2TR_MESSAGE, psbt),
-    Verification::Invalid(_)
+    Verification::Invalid(Error::SignatureInvalid { .. })
   ));
+}
+
+#[test]
+fn conflicting_utxo_fields_are_rejected() {
+  let (address, psbt) = pof_with_bare_proof_input(ScriptBuf::from_bytes(vec![
+    opcodes::all::OP_PUSHNUM_1.to_u8(),
+  ]));
+  assert_valid(verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()));
+
+  // The proof input's witness_utxo disagrees with its previous transaction.
+  let mut conflicting = psbt;
+  let prevout = conflicting.inputs[1]
+    .non_witness_utxo
+    .as_ref()
+    .unwrap()
+    .output[0]
+    .clone();
+  conflicting.inputs[1].witness_utxo = Some(TxOut {
+    value: prevout.value + Amount::from_sat(1),
+    ..prevout
+  });
+
+  assert!(matches!(
+    verify_pof(&address, POF_P2TR_MESSAGE, conflicting.clone()),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    sign_bip322_psbt_input(
+      &mut conflicting.clone(),
+      &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+      0
+    ),
+    Err(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    finalize_bip322_psbt(conflicting),
+    Err(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn producers_validate_legacy_proof_input_utxo_data() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let prev_tx = Transaction {
+    version: Version(2),
+    lock_time: LockTime::ZERO,
+    input: vec![TxIn::default()],
+    output: vec![TxOut {
+      value: Amount::from_sat(345678),
+      script_pubkey: ScriptBuf::new_p2pkh(&private_key.public_key(&Secp256k1::new()).pubkey_hash()),
+    }],
+  };
+  let valid = ProofInput {
+    outpoint: OutPoint {
+      txid: prev_tx.compute_txid(),
+      vout: 0,
+    },
+    prevout: prev_tx.output[0].clone(),
+    prev_tx: Some(prev_tx),
+    private_keys: vec![private_key],
+    witness_script: None,
+  };
+  let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+  let create =
+    |input: ProofInput| create_bip322_psbt(&address, "foo", None, &[input], LockParams::default());
+  assert!(create(valid.clone()).is_ok());
+
+  for (input, expected) in [
+    (
+      ProofInput {
+        prev_tx: None,
+        ..valid.clone()
+      },
+      "legacy input requires prev_tx",
+    ),
+    (
+      ProofInput {
+        outpoint: OutPoint {
+          txid: bitcoin::Txid::from_byte_array([1; 32]),
+          vout: 0,
+        },
+        ..valid.clone()
+      },
+      "prev_tx txid does not match outpoint",
+    ),
+    (
+      ProofInput {
+        outpoint: OutPoint {
+          vout: 1,
+          ..valid.outpoint
+        },
+        ..valid.clone()
+      },
+      "outpoint vout exceeds prev_tx outputs",
+    ),
+    (
+      ProofInput {
+        prevout: TxOut {
+          value: Amount::from_sat(1),
+          ..valid.prevout.clone()
+        },
+        ..valid.clone()
+      },
+      "prevout does not match prev_tx output",
+    ),
+  ] {
+    let result = create(input);
+    assert!(
+      matches!(&result, Err(Error::InvalidProofInput { index: 0, reason }) if reason == expected),
+      "{expected}: got {result:?}"
+    );
+  }
 }

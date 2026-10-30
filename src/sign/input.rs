@@ -26,9 +26,7 @@ pub(super) fn sign_input(
     let ws = witness_script.ok_or(Error::InvalidWitness)?;
 
     if *spk != ScriptBuf::new_p2wsh(&ws.wscript_hash()) {
-      return Err(Error::UnsupportedAddress {
-        address: spk.to_string(),
-      });
+      return Err(Error::WitnessScriptMismatch);
     }
 
     create_message_signature_p2wsh(
@@ -66,9 +64,7 @@ pub(super) fn sign_input(
 
           witness
         } else {
-          return Err(Error::UnsupportedAddress {
-            address: spk.to_string(),
-          });
+          return Err(Error::WitnessScriptMismatch);
         }
       }
       None => {
@@ -83,9 +79,7 @@ pub(super) fn sign_input(
 
         let redeem = ScriptBuf::new_p2wpkh(&wpkh);
         if *spk != ScriptBuf::new_p2sh(&redeem.script_hash()) {
-          return Err(Error::UnsupportedAddress {
-            address: spk.to_string(),
-          });
+          return Err(Error::PublicKeyMismatch);
         }
 
         let witness = create_message_signature_p2wpkh(
@@ -109,8 +103,8 @@ pub(super) fn sign_input(
       input_index,
     )?
   } else {
-    return Err(Error::UnsupportedAddress {
-      address: spk.to_string(),
+    return Err(Error::UnsupportedScriptPubkey {
+      script_pubkey: spk.clone(),
     });
   };
 
@@ -307,7 +301,7 @@ pub fn create_message_signature_p2sh_multisig(
   redeem_script: &ScriptBuf,
   input_index: usize,
 ) -> Result<Witness> {
-  if redeem_script.len() > 520 {
+  if redeem_script.len() > MAX_SCRIPT_ELEMENT_SIZE {
     return Err(Error::InvalidWitness);
   }
 

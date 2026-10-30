@@ -9,7 +9,7 @@ fn simple_verify_rejects_p2sh_p2wpkh() {
       "Hello World",
       "smpAkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
     ),
-    Verification::Invalid(Error::UnsupportedAddress { .. })
+    Verification::Invalid(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -22,7 +22,7 @@ fn simple_sign_rejects_p2sh_p2wpkh() {
       &[NESTED_SEGWIT_WIF_PRIVATE_KEY],
       None
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -75,7 +75,7 @@ fn roundtrip_p2sh_p2wsh_2of2_shuffled_keys() {
 }
 
 #[test]
-fn p2sh_simple_rejects_uncompressed_key_as_unsupported() {
+fn p2sh_p2wpkh_rejects_uncompressed_key() {
   assert!(matches!(
     crate::sign::sign_simple_encoded(
       NESTED_SEGWIT_ADDRESS,
@@ -83,7 +83,17 @@ fn p2sh_simple_rejects_uncompressed_key_as_unsupported() {
       &[UNCOMPRESSED_WIF_PRIVATE_KEY],
       None
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::SimpleFormatUnsupported { .. })
+  ));
+  assert!(matches!(
+    crate::sign::sign_full_encoded(
+      NESTED_SEGWIT_ADDRESS,
+      "foo",
+      &[UNCOMPRESSED_WIF_PRIVATE_KEY],
+      None,
+      LockParams::default(),
+    ),
+    Err(Error::UncompressedPublicKey { .. })
   ));
 }
 
@@ -97,7 +107,7 @@ fn verify_simple_rejects_legacy_p2sh_multisig() {
       "foo",
       Witness::new()
     ),
-    Verification::Invalid(Error::UnsupportedAddress { .. })
+    Verification::Invalid(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -156,7 +166,7 @@ fn sign_simple_rejects_p2sh_p2wsh() {
       &[P2SH_P2WSH_2OF2_PRIVATE_KEY_1, P2SH_P2WSH_2OF2_PRIVATE_KEY_2],
       Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -180,6 +190,105 @@ fn roundtrip_p2sh_multisig_full() {
 }
 
 #[test]
+fn bare_p2sh_rejects_uncommitted_redeem_script() {
+  let victim = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let mut to_sign = crate::sign::sign_full(
+    &victim,
+    "foo",
+    &[
+      PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+      PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+    ],
+    Some(&ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap()),
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&victim, "foo", to_sign.clone()));
+
+  // The attacker validly signs a 1-of-1 multisig of their own key over the
+  // victim's to_sign, but the victim's address does not commit to it.
+  let attacker = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let redeem_script = ScriptBuf::builder()
+    .push_opcode(opcodes::all::OP_PUSHNUM_1)
+    .push_key(&attacker.public_key(&Secp256k1::new()))
+    .push_opcode(opcodes::all::OP_PUSHNUM_1)
+    .push_opcode(opcodes::all::OP_CHECKMULTISIG)
+    .into_script();
+  let sighash = SighashCache::new(&to_sign)
+    .legacy_signature_hash(0, &redeem_script, EcdsaSighashType::All.to_u32())
+    .unwrap();
+  to_sign.input[0].script_sig = ScriptBuf::builder()
+    .push_opcode(opcodes::OP_0)
+    .push_slice(push_bytes(&ecdsa_signature(
+      sighash.to_byte_array(),
+      &attacker,
+    )))
+    .push_slice(push_bytes(redeem_script.as_bytes()))
+    .into_script();
+
+  assert!(matches!(
+    verify_full(&victim, "foo", to_sign),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn verify_p2sh_p2wpkh_rejects_mismatched_key() {
+  let attacker = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+  // The attacker's redeem script is not committed to by the victim's address.
+  let victim = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let mut to_sign = crate::sign::sign_full(
+    &victim,
+    "foo",
+    &[
+      PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
+      PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
+    ],
+    Some(&ScriptBuf::from_hex(P2SH_P2WSH_2OF2_WITNESS_SCRIPT).unwrap()),
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&victim, "foo", to_sign.clone()));
+
+  to_sign.input[0].script_sig = push_only_script(&ScriptBuf::new_p2wpkh(
+    &attacker
+      .public_key(&Secp256k1::new())
+      .wpubkey_hash()
+      .unwrap(),
+  ));
+  to_sign.input[0].witness = p2wpkh_witness(&to_sign, &attacker);
+  assert!(matches!(
+    verify_full(&victim, "foo", to_sign),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  // The victim's redeem script does not commit to the attacker's key.
+  let victim = Address::from_str(NESTED_SEGWIT_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let mut to_sign = crate::sign::sign_full(
+    &victim,
+    "foo",
+    &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
+    None,
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&victim, "foo", to_sign.clone()));
+
+  to_sign.input[0].witness = p2wpkh_witness(&to_sign, &attacker);
+  assert!(matches!(
+    verify_full(&victim, "foo", to_sign),
+    Verification::Invalid(Error::PublicKeyMismatch)
+  ));
+}
+
+#[test]
 fn verify_p2sh_p2wsh_rejects_tampered_script_sig() {
   let address = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
     .unwrap()
@@ -199,9 +308,11 @@ fn verify_p2sh_p2wsh_rejects_tampered_script_sig() {
 
   to_sign.input[0].script_sig = ScriptBuf::from_hex("deadbeef").unwrap();
 
+  // Without a redeem script push, the spend is bare P2SH, which takes no
+  // witness.
   assert!(matches!(
     crate::verify::verify_full(&address, P2SH_P2WSH_2OF2_MESSAGE, to_sign),
-    Verification::Invalid(Error::ToSignInvalid)
+    Verification::Invalid(Error::InvalidWitness)
   ));
 }
 
@@ -215,7 +326,7 @@ fn sign_p2sh_rejects_mismatched_witness_script() {
       Some(P2WSH_2OF2_WITNESS_SCRIPT),
       LockParams::default()
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -316,7 +427,10 @@ fn bare_p2sh_non_minimal_multisig_pubkey_push_is_invalid() {
     .into_script();
 
   let result = verify_full(&address, "foo", tx);
-  assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
+  assert!(
+    matches!(result, Verification::Invalid(Error::InvalidWitness)),
+    "got {result:?}"
+  );
 }
 
 #[test]
@@ -361,7 +475,10 @@ fn p2sh_small_integer_pass_through_is_not_rejected() {
       .into_script();
 
     let result = verify_full(&address, "foo", tx);
-    assert!(!result.is_invalid(), "opcode {opcode:?}: {result:?}");
+    assert!(
+      matches!(result, Verification::Inconclusive),
+      "opcode {opcode:?}: {result:?}"
+    );
   }
 }
 
@@ -502,5 +619,119 @@ fn oversized_bare_p2sh_redeem_script_is_invalid() {
   assert!(matches!(
     verify_full(&address, "foo", tx),
     Verification::Invalid(Error::InvalidWitness)
+  ));
+}
+
+/// The data pushes of a push-only scriptSig.
+fn script_sig_pushes(script_sig: &Script) -> Vec<Vec<u8>> {
+  script_sig
+    .instructions()
+    .map(|instruction| match instruction.unwrap() {
+      Instruction::PushBytes(bytes) => bytes.as_bytes().to_vec(),
+      other => panic!("expected a push, got {other:?}"),
+    })
+    .collect()
+}
+
+#[test]
+fn bare_p2sh_multisig_requires_null_dummy_and_sighash_all() {
+  let address = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let to_sign = crate::sign::sign_full(
+    &address,
+    "foo",
+    &[
+      PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+      PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+    ],
+    Some(&ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap()),
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&address, "foo", to_sign.clone()));
+
+  // `OP_0 <sig_1> <sig_2> <redeem script>`
+  let pushes = script_sig_pushes(&to_sign.input[0].script_sig);
+  assert!(pushes[0].is_empty());
+
+  // NULLDUMMY: the element CHECKMULTISIG pops beyond the signatures must be
+  // empty.
+  let mut non_null_dummy = to_sign.clone();
+  non_null_dummy.input[0].script_sig = pushes[1..]
+    .iter()
+    .fold(
+      ScriptBuf::builder().push_opcode(opcodes::all::OP_PUSHNUM_1),
+      |builder, push| builder.push_slice(push_bytes(push)),
+    )
+    .into_script();
+  assert!(matches!(
+    verify_full(&address, "foo", non_null_dummy),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+
+  let mut sighash_none = to_sign;
+  let mut pushes = pushes;
+  *pushes[1].last_mut().unwrap() = EcdsaSighashType::None as u8;
+  sighash_none.input[0].script_sig = pushes
+    .iter()
+    .fold(ScriptBuf::builder(), |builder, push| {
+      builder.push_slice(push_bytes(push))
+    })
+    .into_script();
+  assert!(matches!(
+    verify_full(&address, "foo", sighash_none),
+    Verification::Invalid(Error::SigHashTypeUnsupported { .. })
+  ));
+}
+
+#[test]
+fn producers_reject_oversized_redeem_scripts() {
+  // A 1-of-16 multisig of compressed keys is 547 bytes, more than any push
+  // can carry, so no scriptSig can reveal it.
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let public_key = private_key.public_key(&Secp256k1::new());
+  let redeem = (0..16)
+    .fold(
+      ScriptBuf::builder().push_opcode(opcodes::all::OP_PUSHNUM_1),
+      |builder, _| builder.push_key(&public_key),
+    )
+    .push_opcode(opcodes::all::OP_PUSHNUM_16)
+    .push_opcode(opcodes::all::OP_CHECKMULTISIG)
+    .into_script();
+  assert!(redeem.len() > MAX_SCRIPT_ELEMENT_SIZE);
+  let address = Address::from_script(
+    &ScriptBuf::new_p2sh(&redeem.script_hash()),
+    bitcoin::Network::Bitcoin,
+  )
+  .unwrap();
+
+  assert!(matches!(
+    crate::sign::sign_full(
+      &address,
+      "foo",
+      &[private_key],
+      Some(&redeem),
+      LockParams::default()
+    ),
+    Err(Error::InvalidWitness)
+  ));
+  assert!(matches!(
+    create_bip322_psbt(&address, "foo", Some(&redeem), &[], LockParams::default()),
+    Err(Error::InvalidWitness)
+  ));
+
+  // A coordinator supplying the script anyway gets neither a signature nor a
+  // finalized proof.
+  let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+  psbt.inputs[0].redeem_script = Some(redeem);
+  psbt.inputs[0].non_witness_utxo = Some(create_to_spend(&address, "foo"));
+  assert!(matches!(
+    sign_bip322_psbt_input(&mut psbt.clone(), &private_key, 0),
+    Err(Error::InvalidWitness)
+  ));
+  assert!(matches!(
+    finalize_bip322_psbt(psbt),
+    Err(Error::InvalidWitness)
   ));
 }

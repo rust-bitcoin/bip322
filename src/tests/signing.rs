@@ -221,10 +221,35 @@ fn mismatched_keys_rejected_for_all_address_types() {
     ];
 
     for address in addresses {
+      let result = crate::sign::sign_full(&address, "foo", &[k2], None, LockParams::default());
       assert!(
-        crate::sign::sign_full(&address, "foo", &[k2], None, LockParams::default()).is_err(),
-        "wrong key was accepted for {address}"
+        matches!(result, Err(Error::PublicKeyMismatch)),
+        "{address}: got {result:?}"
       );
+
+      assert_valid(verify_full(
+        &address,
+        "foo",
+        sign_full_unchecked(&address, "foo", &k1),
+      ));
+
+      // The same proof signed with the wrong key, bypassing the signers' check.
+      let result = verify_full(&address, "foo", sign_full_unchecked(&address, "foo", &k2));
+      let rejected = match address.address_type() {
+        // A nested signer pushes its own redeem script, which the address
+        // does not commit to.
+        Some(bitcoin::AddressType::P2sh) => {
+          matches!(result, Verification::Invalid(Error::ToSignInvalid))
+        }
+        Some(bitcoin::AddressType::P2tr) => {
+          matches!(
+            result,
+            Verification::Invalid(Error::SignatureInvalid { .. })
+          )
+        }
+        _ => matches!(result, Verification::Invalid(Error::PublicKeyMismatch)),
+      };
+      assert!(rejected, "{address}: got {result:?}");
     }
   }
 }

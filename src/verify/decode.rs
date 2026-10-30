@@ -1,93 +1,89 @@
 use super::*;
 
 pub(super) fn decode_simple(address: &str, signature: &str) -> Result<(Address, Witness)> {
-  let address = Address::from_str(address)
-    .context(error::AddressParse { address })?
-    .assume_checked();
+  let address = parse_address(address)?;
 
-  let signature = strip_variant_prefix(signature, SIMPLE_SIGNATURE_PREFIX)?;
+  let (_, bytes) = decode_payload(signature, SIMPLE_SIGNATURE_PREFIX, |signature| {
+    error::SignatureDecode { signature }
+  })?;
 
-  let bytes = general_purpose::STANDARD
-    .decode(signature)
-    .context(error::SignatureDecode { signature })?;
-  if !valid_witness_encoding(&bytes) {
+  // A witness this large exceeds the weight limit on its own.
+  if bytes.len() > MAX_ENCODING_SIZE {
+    return Err(Error::ToSignInvalid);
+  }
+  if !preflight::witness(&bytes) {
     return Err(Error::InvalidWitness);
   }
-  let length = bytes.len() as u64;
 
-  let mut cursor = bitcoin::io::Cursor::new(bytes);
-
-  let witness =
-    Witness::consensus_decode_from_finite_reader(&mut cursor).context(error::WitnessMalformed)?;
-
-  if cursor.position() != length {
-    return Err(Error::TrailingBytes);
-  }
+  let witness = decode_exact(&bytes, |reader| {
+    Witness::consensus_decode_from_finite_reader(reader).context(error::WitnessMalformed)
+  })?;
 
   Ok((address, witness))
 }
 
 pub(super) fn decode_full(address: &str, to_sign: &str) -> Result<(Address, Transaction)> {
-  let address = Address::from_str(address)
-    .context(error::AddressParse { address })?
-    .assume_checked();
+  let address = parse_address(address)?;
 
-  let to_sign = strip_variant_prefix(to_sign, FULL_SIGNATURE_PREFIX)?;
+  let (to_sign, bytes) = decode_payload(to_sign, FULL_SIGNATURE_PREFIX, |transaction| {
+    error::TransactionBase64Decode { transaction }
+  })?;
 
-  let bytes =
-    general_purpose::STANDARD
-      .decode(to_sign)
-      .context(error::TransactionBase64Decode {
-        transaction: to_sign,
-      })?;
-  if !valid_transaction_encoding(&bytes) {
+  // A transaction this large exceeds the weight limit.
+  if bytes.len() > MAX_ENCODING_SIZE || !preflight::transaction(&bytes) {
     return Err(Error::ToSignInvalid);
   }
 
-  let length = bytes.len() as u64;
-
-  let mut cursor = bitcoin::io::Cursor::new(bytes);
-
-  let to_sign = Transaction::consensus_decode_from_finite_reader(&mut cursor).context(
-    error::TransactionConsensusDecode {
-      transaction: to_sign,
-    },
-  )?;
-
-  if cursor.position() != length {
-    return Err(Error::TrailingBytes);
-  }
+  let to_sign = decode_exact(&bytes, |reader| {
+    Transaction::consensus_decode_from_finite_reader(reader).context(
+      error::TransactionConsensusDecode {
+        transaction: to_sign,
+      },
+    )
+  })?;
 
   Ok((address, to_sign))
 }
 
-pub(super) fn decode_pof(address: &str, to_sign: &str) -> Result<(Address, Psbt)> {
-  let address = Address::from_str(address)
-    .context(error::AddressParse { address })?
-    .assume_checked();
+/// Decodes a proof of funds. `Ok(None)` means it has more inputs than
+/// verification is bounded to, which makes it inconclusive.
+pub(super) fn decode_pof(address: &str, to_sign: &str) -> Result<Option<(Address, Psbt)>> {
+  let address = parse_address(address)?;
 
-  let to_sign = strip_variant_prefix(to_sign, POF_SIGNATURE_PREFIX)?;
+  let (_, bytes) = decode_payload(to_sign, POF_SIGNATURE_PREFIX, |transaction| {
+    error::TransactionBase64Decode { transaction }
+  })?;
 
-  let bytes =
-    general_purpose::STANDARD
-      .decode(to_sign)
-      .context(error::TransactionBase64Decode {
-        transaction: to_sign,
-      })?;
+  let shape = preflight::psbt(&bytes).ok_or(Error::ToSignInvalid)?;
 
-  if !valid_psbt_encoding(&bytes) {
+  // rust-bitcoin allocates a map for every input and output, so bound both
+  // before decoding. The input bound matches `verify_pof`'s, so an encoded
+  // proof gets the same verdict as the typed one.
+  if shape.inputs > MAX_PROOF_INPUTS {
+    return Ok(None);
+  }
+  if shape.outputs != 1 {
     return Err(Error::ToSignInvalid);
   }
 
-  let length = bytes.len() as u64;
+  let psbt = decode_exact(&bytes, |reader| {
+    Psbt::deserialize_from_reader(reader).map_err(|_| Error::ToSignInvalid)
+  })?;
 
-  let mut cursor = bitcoin::io::Cursor::new(bytes);
+  Ok(Some((address, psbt)))
+}
 
-  let psbt = Psbt::deserialize_from_reader(&mut cursor).map_err(|_| Error::ToSignInvalid)?;
+/// Decodes a value that must span all of `bytes`.
+fn decode_exact<'a, T>(
+  bytes: &'a [u8],
+  decode: impl FnOnce(&mut &'a [u8]) -> Result<T>,
+) -> Result<T> {
+  let mut reader = bytes;
+  let value = decode(&mut reader)?;
 
-  if cursor.position() != length {
+  if !reader.is_empty() {
     return Err(Error::TrailingBytes);
   }
 
-  Ok((address, psbt))
+  Ok(value)
 }

@@ -101,7 +101,7 @@ fn multisig_rejects_mismatched_witness_script() {
       &[P2WSH_2OF2_PRIVATE_KEY_1, P2WSH_2OF2_PRIVATE_KEY_2],
       Some(P2SH_P2WSH_2OF2_WITNESS_SCRIPT),
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -109,7 +109,7 @@ fn multisig_rejects_mismatched_witness_script() {
 fn p2pkh_simple_unsupported() {
   assert!(matches!(
     crate::sign::sign_simple_encoded(LEGACY_ADDRESS, "Hello World", &[WIF_PRIVATE_KEY], None),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -138,6 +138,30 @@ fn verify_full_rejects_noncanonical_to_sign() {
   case(|tx| tx.input[0].script_sig = ScriptBuf::from_hex("deadbeef").unwrap());
   case(|tx| tx.output[0].value = Amount::from_sat(1));
   case(|tx| tx.output[0].script_pubkey = ScriptBuf::new());
+}
+
+#[test]
+fn full_proof_is_bound_to_message() {
+  let (address, to_sign) = full_p2wpkh_to_sign();
+  assert_valid(verify_full(&address, "foo", to_sign.clone()));
+  assert!(matches!(
+    verify_full(&address, "different message", to_sign),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  assert_valid(verify_full_encoded(
+    FULL_P2WPKH_ADDRESS,
+    FULL_P2WPKH_MESSAGE,
+    FULL_P2WPKH_SIGNATURE,
+  ));
+  assert!(matches!(
+    verify_full_encoded(
+      FULL_P2WPKH_ADDRESS,
+      "different message",
+      FULL_P2WPKH_SIGNATURE
+    ),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
 }
 
 #[test]
@@ -618,7 +642,10 @@ fn p2wsh_non_minimal_multisig_pubkey_push_is_invalid() {
     Witness::from_slice(&[Vec::new(), signature.to_vec(), multisig.as_bytes().to_vec()]);
 
   let result = verify_full(&address, "foo", tx);
-  assert!(matches!(result, Verification::Invalid(_)), "got {result:?}");
+  assert!(
+    matches!(result, Verification::Invalid(Error::InvalidWitness)),
+    "got {result:?}"
+  );
 }
 
 #[test]
@@ -863,7 +890,10 @@ fn multiparty_pof_multisig_roundtrip() {
       input: vec![TxIn::default()],
       output: vec![prevout.clone()],
     };
-    let legacy = !is_segwit_input(&prevout.script_pubkey, Some(&script));
+    let legacy = !spends_witness(
+      &prevout.script_pubkey,
+      Some(&p2sh_redeem_script(&prevout.script_pubkey, &script)),
+    );
     ProofInput {
       outpoint: OutPoint {
         txid: if legacy {
@@ -974,6 +1004,16 @@ fn naked_zero_timelock_scripts_are_invalid() {
 
 #[test]
 fn composed_zero_timelock_scripts_are_not_valid() {
+  // Miniscript rejects zero timelocks, so these composed scripts are left
+  // inconclusive rather than accepted.
+  #[track_caller]
+  fn inconclusive(result: Verification) {
+    assert!(
+      matches!(result, Verification::Inconclusive),
+      "got {result:?}"
+    );
+  }
+
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
   for opcode in [opcodes::all::OP_CSV, opcodes::all::OP_CLTV] {
@@ -988,21 +1028,18 @@ fn composed_zero_timelock_scripts_are_not_valid() {
     let to_spend = create_to_spend(&address, "foo");
     let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
     tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
-    let result = verify_full(&address, "foo", tx);
-    assert!(!result.is_valid(), "got {result:?}");
+    inconclusive(verify_full(&address, "foo", tx));
 
     let address = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
     let to_spend = create_to_spend(&address, "foo");
     let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
     tx.input[0].script_sig = push_only_script(&script);
-    let result = verify_full(&address, "foo", tx);
-    assert!(!result.is_valid(), "got {result:?}");
+    inconclusive(verify_full(&address, "foo", tx));
 
     let (address, mut tx, _signature, control_block) =
       p2tr_script_path_spend(&script, &private_key, TapSighashType::Default);
     tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec(), control_block]);
-    let result = verify_full(&address, "foo", tx);
-    assert!(!result.is_valid(), "got {result:?}");
+    inconclusive(verify_full(&address, "foo", tx));
   }
 }
 
@@ -1049,4 +1086,82 @@ fn nested_witness_commitments_and_program_lengths_are_enforced() {
     verify_full(&address, "foo", nested),
     Verification::Invalid(Error::ToSignInvalid)
   ));
+}
+
+#[test]
+fn p2wsh_multisig_requires_null_dummy() {
+  let address = Address::from_str(P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let mut items = p2wsh_2of2_witness(&address).to_vec();
+  assert_valid(verify_simple(
+    &address,
+    P2WSH_2OF2_MESSAGE,
+    Witness::from_slice(&items),
+  ));
+
+  // The element CHECKMULTISIG pops beyond the signatures must be empty.
+  assert!(items[0].is_empty());
+  let mut non_null_dummy = items.clone();
+  non_null_dummy[0] = vec![1];
+  assert!(matches!(
+    verify_simple(
+      &address,
+      P2WSH_2OF2_MESSAGE,
+      Witness::from_slice(&non_null_dummy)
+    ),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+
+  // Each of the required signatures must be present.
+  items[2] = Vec::new();
+  assert!(matches!(
+    verify_simple(&address, P2WSH_2OF2_MESSAGE, Witness::from_slice(&items)),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+}
+
+#[test]
+fn p2pkh_requires_sighash_all() {
+  let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+  let to_sign = crate::sign::sign_full(
+    &address,
+    "foo",
+    &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+    None,
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&address, "foo", to_sign.clone()));
+
+  // scriptSig: <signature> <public key>
+  let mut instructions = to_sign.input[0].script_sig.instructions();
+  let (Some(Ok(Instruction::PushBytes(signature))), Some(Ok(Instruction::PushBytes(public_key)))) =
+    (instructions.next(), instructions.next())
+  else {
+    panic!("expected two pushes");
+  };
+
+  for sighash_type in [
+    EcdsaSighashType::None,
+    EcdsaSighashType::Single,
+    EcdsaSighashType::AllPlusAnyoneCanPay,
+  ] {
+    let mut signature = signature.as_bytes().to_vec();
+    *signature.last_mut().unwrap() = sighash_type as u8;
+    let mut tampered = to_sign.clone();
+    tampered.input[0].script_sig = ScriptBuf::builder()
+      .push_slice(push_bytes(&signature))
+      .push_slice(push_bytes(public_key.as_bytes()))
+      .into_script();
+
+    let result = verify_full(&address, "foo", tampered);
+    assert!(
+      matches!(
+        result,
+        Verification::Invalid(Error::SigHashTypeUnsupported { .. })
+      ),
+      "{sighash_type:?}: got {result:?}"
+    );
+  }
 }

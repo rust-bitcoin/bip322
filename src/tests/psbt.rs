@@ -49,7 +49,7 @@ fn sign_psbt_rejects_script_not_matching_challenge() {
       &PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
       0
     ),
-    Err(Error::PublicKeyMismatch)
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -77,7 +77,7 @@ fn sign_psbt_rejects_script_layout_not_matching_challenge() {
       &PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
       0
     ),
-    Err(Error::PublicKeyMismatch)
+    Err(Error::WitnessScriptMismatch)
   ));
 
   // only redeem_script present, but the challenge is the P2WSH program
@@ -102,7 +102,7 @@ fn sign_psbt_rejects_script_layout_not_matching_challenge() {
       &PrivateKey::from_wif(P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
       0
     ),
-    Err(Error::PublicKeyMismatch)
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -246,7 +246,7 @@ fn finalize_psbt_rejects_multisig_script_not_matching_challenge() {
 
   assert!(matches!(
     finalize_bip322_psbt(psbt),
-    Err(Error::PublicKeyMismatch)
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -284,7 +284,7 @@ fn finalize_psbt_rejects_script_layout_not_matching_challenge() {
 
   assert!(matches!(
     finalize_bip322_psbt(psbt),
-    Err(Error::PublicKeyMismatch)
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -469,7 +469,7 @@ fn create_psbt_rejects_unknown_p2sh_script() {
       &[],
       LockParams::default(),
     ),
-    Err(Error::UnsupportedAddress { .. })
+    Err(Error::WitnessScriptMismatch)
   ));
 }
 
@@ -521,25 +521,24 @@ fn sign_psbt_rejects_uncompressed_key_for_segwit() {
 #[test]
 fn psbt_message_sighash_and_finalizer_rules_are_enforced() {
   let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
-  assert!(create_bip322_psbt(&address, [0xff], None, &[], LockParams::default()).is_err());
-  assert!(sign_pof(
-    &address,
-    [0xff],
-    &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
-    None,
-    &[pof_p2tr_proof_input()],
-    LockParams::default(),
-  )
-  .is_err());
+  assert!(matches!(
+    create_bip322_psbt(&address, [0xff], None, &[], LockParams::default()),
+    Err(Error::MessageNotUtf8)
+  ));
+  assert!(matches!(
+    sign_pof(
+      &address,
+      [0xff],
+      &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+      None,
+      &[pof_p2tr_proof_input()],
+      LockParams::default(),
+    ),
+    Err(Error::MessageNotUtf8)
+  ));
 
   let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
-  psbt.unknown.insert(
-    bitcoin::psbt::raw::Key {
-      type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-      key: vec![],
-    },
-    vec![0xff],
-  );
+  psbt.unknown.insert(signed_message_key(), vec![0xff]);
   assert!(detect_bip322_psbt(&psbt).is_none());
 
   let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
@@ -727,4 +726,77 @@ fn taproot_psbt_default_sighash_and_finalizer_cleanup() {
   }
   assert!(!finalized.unknown.is_empty());
   assert_valid(verify_pof(&address, POF_P2TR_MESSAGE, finalized));
+}
+
+#[test]
+fn detection_requires_consistent_challenge_utxo_data() {
+  let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+  let build = || create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+
+  // A legacy challenge carries only the previous transaction.
+  let psbt = build();
+  assert!(psbt.inputs[0].witness_utxo.is_none());
+  assert!(detect_bip322_psbt(&psbt).is_some());
+
+  // Agreeing witness_utxo data is fine.
+  let mut psbt = build();
+  psbt.inputs[0].witness_utxo = Some(create_to_spend(&address, "foo").output[0].clone());
+  assert!(detect_bip322_psbt(&psbt).is_some());
+
+  // A previous transaction other than the one the challenge input spends.
+  let mut psbt = build();
+  psbt.inputs[0].non_witness_utxo = Some(create_to_spend(&address, "bar"));
+  assert!(detect_bip322_psbt(&psbt).is_none());
+
+  // A witness_utxo that disagrees with the previous transaction.
+  let mut psbt = build();
+  psbt.inputs[0].witness_utxo = Some(TxOut {
+    value: Amount::ZERO,
+    script_pubkey: ScriptBuf::new(),
+  });
+  assert!(detect_bip322_psbt(&psbt).is_none());
+
+  // A previous transaction whose challenge output carries value.
+  let mut psbt = build();
+  let mut to_spend = create_to_spend(&address, "foo");
+  to_spend.output[0].value = Amount::from_sat(1);
+  psbt.unsigned_tx.input[0].previous_output.txid = to_spend.compute_txid();
+  psbt.inputs[0].non_witness_utxo = Some(to_spend);
+  assert!(detect_bip322_psbt(&psbt).is_none());
+}
+
+#[test]
+fn psbt_roles_reject_unsupported_sighash_types() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+  for (address, sighash_type) in [
+    (TAPROOT_ADDRESS, TapSighashType::None.into()),
+    (SEGWIT_ADDRESS, EcdsaSighashType::None.into()),
+  ] {
+    let address = Address::from_str(address).unwrap().assume_checked();
+    let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+    psbt.inputs[0].sighash_type = Some(sighash_type);
+    let result = sign_bip322_psbt_input(&mut psbt, &private_key, 0);
+    assert!(
+      matches!(result, Err(Error::SigHashTypeUnsupported { .. })),
+      "{address}: got {result:?}"
+    );
+  }
+
+  // A partial signature whose sighash type differs from the declared one.
+  let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+  let mut psbt = create_bip322_psbt(&address, "foo", None, &[], LockParams::default()).unwrap();
+  sign_bip322_psbt_input(&mut psbt, &private_key, 0).unwrap();
+  let (public_key, signature) = psbt.inputs[0].partial_sigs.pop_first().unwrap();
+  psbt.inputs[0].partial_sigs.insert(
+    public_key,
+    bitcoin::ecdsa::Signature {
+      sighash_type: EcdsaSighashType::None,
+      ..signature
+    },
+  );
+  assert!(matches!(
+    finalize_bip322_psbt(psbt),
+    Err(Error::SigHashTypeUnsupported { .. })
+  ));
 }

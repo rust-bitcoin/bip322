@@ -141,8 +141,8 @@ pub fn sign_bip322_psbt_input(
       (Some(witness_script), _) => (witness_script.clone(), true),
       (None, Some(redeem_script)) => (redeem_script.clone(), false),
       (None, None) => {
-        return Err(Error::UnsupportedAddress {
-          address: challenge.to_string(),
+        return Err(Error::UnsupportedScriptPubkey {
+          script_pubkey: challenge.clone(),
         })
       }
     };

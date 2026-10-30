@@ -12,91 +12,36 @@ pub fn create_bip322_psbt(
   inputs: &[ProofInput],
   locks: LockParams,
 ) -> Result<Psbt> {
-  std::str::from_utf8(message.as_ref()).map_err(|_| Error::ToSignInvalid)?;
-  check_proof_input_count(inputs.len())?;
-
-  let to_spend = create_to_spend(address, &message);
-  let challenge_outpoint = OutPoint {
-    txid: to_spend.compute_txid(),
-    vout: 0,
-  };
-
-  let mut tx_in = vec![TxIn {
-    previous_output: challenge_outpoint,
-    script_sig: ScriptBuf::new(),
-    sequence: locks.sequence,
-    witness: Witness::new(),
-  }];
-
-  for input in inputs {
-    tx_in.push(TxIn {
-      previous_output: input.outpoint,
-      script_sig: ScriptBuf::new(),
-      sequence: Sequence::ZERO,
-      witness: Witness::new(),
-    });
-  }
-
-  let unsigned = Transaction {
-    version: locks.version(),
-    lock_time: locks.lock_time,
-    input: tx_in,
-    output: vec![TxOut {
-      value: Amount::ZERO,
-      script_pubkey: ScriptBuf::builder()
-        .push_opcode(opcodes::all::OP_RETURN)
-        .into_script(),
-    }],
-  };
-
-  validate_outpoints(&unsigned)?;
-  let mut psbt = Psbt::from_unsigned_tx(unsigned).map_err(|_| Error::ToSignInvalid)?;
-
-  // rust-bitcoin has no typed field for PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE
-  // yet, so it goes in the unknown map. Switch once upstream adds one.
-  psbt.unknown.insert(
-    bitcoin::psbt::raw::Key {
-      type_value: PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE,
-      key: vec![],
-    },
-    message.as_ref().to_vec(),
-  );
-
-  psbt.inputs[0].witness_utxo = Some(to_spend.output[0].clone());
+  let (_, mut psbt) = create_proof_psbt(address, message.as_ref(), witness_script, inputs, locks)?;
 
   for (proof_index, input) in inputs.iter().enumerate() {
-    let psbt_input = &mut psbt.inputs[proof_index + 1];
-    set_proof_input_utxo(psbt_input, input, proof_index)?;
     if let Some(script) = &input.witness_script {
-      set_input_script(psbt_input, script, &input.prevout.script_pubkey)?;
+      set_input_script(
+        &mut psbt.inputs[proof_index + 1],
+        script,
+        &input.prevout.script_pubkey,
+      )?;
     }
   }
 
-  let spk = &to_spend.output[0].script_pubkey;
+  let spk = address.script_pubkey();
 
   if spk.is_p2wpkh() || spk.is_p2tr() || spk.is_p2pkh() {
     if witness_script.is_some() {
       return Err(Error::InvalidWitness);
     }
-    if spk.is_p2pkh() {
-      psbt.inputs[0].witness_utxo = None;
-      psbt.inputs[0].non_witness_utxo = Some(to_spend);
-    }
     return Ok(psbt);
   }
 
   let Some(witness_script) = witness_script else {
+    // P2SH-P2WPKH: the signer derives the redeem script from its key.
     if spk.is_p2sh() {
       return Ok(psbt);
     }
     return Err(Error::InvalidWitness);
   };
 
-  set_input_script(&mut psbt.inputs[0], witness_script, spk)?;
-  if *spk == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
-    // Legacy P2SH inputs require the full previous transaction per BIP174.
-    psbt.inputs[0].non_witness_utxo = Some(to_spend);
-  }
+  set_input_script(&mut psbt.inputs[0], witness_script, &spk)?;
   Ok(psbt)
 }
 
@@ -114,15 +59,12 @@ fn set_input_script(
     input.witness_script = Some(witness_script.clone());
     input.redeem_script = Some(p2wsh_program);
   } else if *script_pubkey == ScriptBuf::new_p2sh(&witness_script.script_hash()) {
-    if witness_script.len() > 520 {
+    if witness_script.len() > MAX_SCRIPT_ELEMENT_SIZE {
       return Err(Error::InvalidWitness);
     }
     input.redeem_script = Some(witness_script.clone());
-    input.witness_utxo = None;
   } else {
-    return Err(Error::UnsupportedAddress {
-      address: script_pubkey.to_string(),
-    });
+    return Err(Error::WitnessScriptMismatch);
   }
 
   Ok(())

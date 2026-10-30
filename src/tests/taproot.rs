@@ -119,7 +119,7 @@ fn p2tr_script_path_explicit_default_sighash_is_invalid() {
 }
 
 #[test]
-fn p2tr_malformed_commitment_is_invalid() {
+fn p2tr_undecodable_control_block_is_invalid() {
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
   let tapscript = single_key_tapscript(&private_key);
   let (address, mut tx, signature, mut control_block) =
@@ -133,7 +133,75 @@ fn p2tr_malformed_commitment_is_invalid() {
 
   assert!(matches!(
     verify_full(&address, "foo", tx),
-    Verification::Invalid(_)
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+}
+
+#[test]
+fn p2tr_control_block_parity_is_committed() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let tapscript = single_key_tapscript(&private_key);
+  let (address, mut tx, signature, mut control_block) =
+    p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+  tx.input[0].witness = Witness::from_slice(&[
+    signature.to_vec(),
+    tapscript.to_bytes(),
+    control_block.clone(),
+  ]);
+  assert_valid(verify_full(&address, "foo", tx.clone()));
+
+  control_block[0] ^= 1;
+  tx.input[0].witness =
+    Witness::from_slice(&[signature.to_vec(), tapscript.to_bytes(), control_block]);
+
+  assert!(matches!(
+    verify_full(&address, "foo", tx),
+    Verification::Invalid(Error::ScriptNotSatisfied)
+  ));
+}
+
+#[test]
+fn p2tr_control_block_does_not_commit_to_attacker_tapscript() {
+  let secp = Secp256k1::new();
+  let victim_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let victim_script = single_key_tapscript(&victim_key);
+  let (address, mut tx, signature, control_block) =
+    p2tr_script_path_spend(&victim_script, &victim_key, TapSighashType::Default);
+  tx.input[0].witness = Witness::from_slice(&[
+    signature.to_vec(),
+    victim_script.to_bytes(),
+    control_block.clone(),
+  ]);
+  assert_valid(verify_full(&address, "foo", tx.clone()));
+
+  // The attacker validly signs their own leaf over the victim's to_sign, but
+  // the victim's control block commits to a different leaf.
+  let attacker_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap();
+  let attacker_script = single_key_tapscript(&attacker_key);
+  let sighash = SighashCache::new(&tx)
+    .taproot_script_spend_signature_hash(
+      0,
+      &sighash::Prevouts::All(&create_to_spend(&address, "foo").output),
+      bitcoin::taproot::TapLeafHash::from_script(
+        &attacker_script,
+        bitcoin::taproot::LeafVersion::TapScript,
+      ),
+      TapSighashType::Default,
+    )
+    .unwrap();
+  let signature = secp.sign_schnorr_no_aux_rand(
+    &Message::from_digest(sighash.to_byte_array()),
+    &Keypair::from_secret_key(&secp, &attacker_key.inner),
+  );
+  tx.input[0].witness = Witness::from_slice(&[
+    signature.as_ref().to_vec(),
+    attacker_script.to_bytes(),
+    control_block,
+  ]);
+
+  assert!(matches!(
+    verify_full(&address, "foo", tx),
+    Verification::Invalid(Error::ScriptNotSatisfied)
   ));
 }
 
@@ -456,12 +524,12 @@ fn p2tr_non_minimal_unknown_key_push_is_invalid() {
 
   assert!(matches!(
     verify_full(&address, "foo", tx.clone()),
-    Verification::Invalid(_)
+    Verification::Invalid(Error::InvalidWitness)
   ));
   tx.input[0].witness.push([0x50]);
   assert!(matches!(
     verify_full(&address, "foo", tx),
-    Verification::Invalid(_)
+    Verification::Invalid(Error::InvalidWitness)
   ));
 }
 
@@ -492,6 +560,189 @@ fn p2tr_malformed_known_key_and_empty_script_are_invalid() {
   tx.input[0].witness.push([0x50]);
   assert!(matches!(
     verify_full(&address, "foo", tx),
+    Verification::Invalid(Error::ScriptNotSatisfied)
+  ));
+}
+
+#[test]
+fn p2tr_single_key_script_path_is_valid() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let tapscript = single_key_tapscript(&private_key);
+
+  let (address, mut tx, signature, control_block) =
+    p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+
+  tx.input[0].witness =
+    Witness::from_slice(&[signature.to_vec(), tapscript.to_bytes(), control_block]);
+
+  assert!(matches!(
+    verify_full(&address, "foo", tx),
+    Verification::Valid {
+      time: LockTime::ZERO,
+      age: Sequence(0)
+    }
+  ));
+}
+
+#[test]
+fn p2tr_single_key_script_path_wrong_key_is_invalid() {
+  // The script names private_key but wrong_key signs, so the spend is
+  // well-formed but the signature does not verify.
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let wrong_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap();
+  let tapscript = single_key_tapscript(&private_key);
+
+  let (address, mut tx, signature, control_block) =
+    p2tr_script_path_spend(&tapscript, &wrong_key, TapSighashType::Default);
+
+  tx.input[0].witness =
+    Witness::from_slice(&[signature.to_vec(), tapscript.to_bytes(), control_block]);
+
+  let result = verify_full(&address, "foo", tx);
+  assert!(
+    matches!(
+      result,
+      Verification::Invalid(Error::SignatureInvalid { .. })
+    ),
+    "got {result:?}"
+  );
+}
+
+#[test]
+fn p2tr_inexpressible_tapscript_is_inconclusive() {
+  // A bare hashlock without miniscript's OP_SIZE 32 OP_EQUALVERIFY prefix
+  // is not an expressible fragment, so the interpreter cannot parse it.
+  let tapscript = ScriptBuf::builder()
+    .push_opcode(opcodes::all::OP_SHA256)
+    .push_slice(sha256::Hash::hash(&[7u8; 32]).to_byte_array())
+    .push_opcode(opcodes::all::OP_EQUAL)
+    .into_script();
+
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+  // No signature is needed: the script fails to parse before any check.
+  let (address, mut tx, _signature, control_block) =
+    p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+
+  tx.input[0].witness = Witness::from_slice(&[vec![7; 32], tapscript.to_bytes(), control_block]);
+
+  assert!(matches!(
+    verify_full(&address, "foo", tx),
+    Verification::Inconclusive
+  ));
+}
+
+#[test]
+fn p2tr_non_template_tapscript_is_interpreted() {
+  // `<K> CHECKSIGVERIFY 1` matches no template, so the interpreter checks it.
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let tapscript = ScriptBuf::builder()
+    .push_x_only_key(
+      &private_key
+        .public_key(&Secp256k1::new())
+        .inner
+        .x_only_public_key()
+        .0,
+    )
+    .push_opcode(opcodes::all::OP_CHECKSIGVERIFY)
+    .push_opcode(opcodes::all::OP_PUSHNUM_1)
+    .into_script();
+
+  let verify = |signer: &PrivateKey, sighash_type: TapSighashType, explicit_default: bool| {
+    let (address, mut tx, signature, control_block) =
+      p2tr_script_path_spend(&tapscript, signer, sighash_type);
+    let mut encoded = signature.to_vec();
+    if explicit_default {
+      encoded.push(TapSighashType::Default as u8);
+    }
+    tx.input[0].witness = Witness::from_slice(&[encoded, tapscript.to_bytes(), control_block]);
+    verify_full(&address, "foo", tx)
+  };
+
+  assert_valid(verify(&private_key, TapSighashType::Default, false));
+
+  let result = verify(
+    &PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap(),
+    TapSighashType::Default,
+    false,
+  );
+  assert!(
+    matches!(
+      result,
+      Verification::Invalid(Error::SignatureInvalid { .. })
+    ),
+    "got {result:?}"
+  );
+
+  for (sighash_type, explicit_default) in [
+    (TapSighashType::None, false),
+    (TapSighashType::Default, true),
+  ] {
+    let result = verify(&private_key, sighash_type, explicit_default);
+    assert!(
+      matches!(
+        result,
+        Verification::Invalid(Error::SigHashTypeUnsupported { .. })
+      ),
+      "{sighash_type:?}: got {result:?}"
+    );
+  }
+}
+
+#[test]
+fn p2tr_empty_witness_and_wrong_length_signatures_are_invalid() {
+  let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
+
+  assert!(matches!(
+    verify_simple(&address, "foo", Witness::new()),
+    Verification::Invalid(Error::WitnessEmpty)
+  ));
+
+  let signature = crate::sign::sign_simple(
+    &address,
+    "foo",
+    &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+    None,
+  )
+  .unwrap()
+  .nth(0)
+  .unwrap()
+  .to_vec();
+  assert_eq!(signature.len(), 65);
+
+  for length in [63, 66] {
+    let mut resized = signature.clone();
+    resized.resize(length, 1);
+    let result = verify_simple(&address, "foo", Witness::from_slice(&[resized]));
+    assert!(
+      matches!(result, Verification::Invalid(Error::SignatureLength { length: found, .. }) if found == length),
+      "{length}: got {result:?}"
+    );
+  }
+}
+
+#[test]
+fn p2tr_single_key_template_rejects_oversized_and_empty_keys() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let verify = |key: &[u8]| {
+    let tapscript = ScriptBuf::builder()
+      .push_slice(push_bytes(key))
+      .push_opcode(opcodes::all::OP_CHECKSIG)
+      .into_script();
+    let (address, mut tx, _signature, control_block) =
+      p2tr_script_path_spend(&tapscript, &private_key, TapSighashType::Default);
+    tx.input[0].witness = Witness::from_slice(&[vec![1; 64], tapscript.to_bytes(), control_block]);
+    verify_full(&address, "foo", tx)
+  };
+
+  // No push may exceed the element size limit.
+  assert!(matches!(
+    verify(&[7; 521]),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+  // BIP342: an empty public key fails the script.
+  assert!(matches!(
+    verify(&[]),
     Verification::Invalid(Error::ScriptNotSatisfied)
   ));
 }

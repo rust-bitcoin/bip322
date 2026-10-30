@@ -2,9 +2,7 @@ use super::*;
 
 /// Verifies a BIP-137 legacy proof from string inputs.
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
-  let address = Address::from_str(address)
-    .context(error::AddressParse { address })?
-    .assume_checked();
+  let address = parse_address(address)?;
 
   let signature_bytes = general_purpose::STANDARD
     .decode(signature)

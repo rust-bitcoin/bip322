@@ -31,7 +31,7 @@ mod sign;
 mod transaction;
 mod verify;
 
-pub use {error::Error, message::*, psbt::*, sign::*, verify::*};
+pub use {error::Error, limits::MAX_PROOF_INPUTS, message::*, psbt::*, sign::*, verify::*};
 pub(crate) use {limits::*, script::*, transaction::*};
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;

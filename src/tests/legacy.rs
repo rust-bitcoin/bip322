@@ -50,6 +50,28 @@ fn roundtrip_legacy_typed() {
 }
 
 #[test]
+fn sign_legacy_rejects_mismatched_key_and_unsupported_address() {
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+
+  assert!(matches!(
+    crate::sign::sign_legacy(
+      &Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked(),
+      "foo",
+      &PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap(),
+    ),
+    Err(Error::PublicKeyMismatch)
+  ));
+  assert!(matches!(
+    crate::sign::sign_legacy(
+      &Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked(),
+      "foo",
+      &private_key,
+    ),
+    Err(Error::UnsupportedAddress { .. })
+  ));
+}
+
+#[test]
 fn legacy_address_rejects_simple_proof() {
   assert!(matches!(
     crate::verify::verify_simple_encoded(
@@ -57,7 +79,7 @@ fn legacy_address_rejects_simple_proof() {
       "",
       "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI="
     ),
-    Verification::Invalid(Error::InvalidWitness)
+    Verification::Invalid(Error::SimpleFormatUnsupported { .. })
   ));
 }
 
@@ -142,9 +164,112 @@ fn legacy_and_nested_spends_enforce_consensus_structure() {
     LockParams::default(),
   )
   .unwrap();
+  // Without the redeem script in its scriptSig, the spend is bare P2SH, which
+  // takes no witness.
   nested.input[0].script_sig = ScriptBuf::new();
   assert!(matches!(
     verify_full(&nested_address, "foo", nested),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+
+  // P2PKH takes no witness, and exactly a signature and key in its scriptSig.
+  let p2pkh_address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+  let p2pkh = crate::sign::sign_full(
+    &p2pkh_address,
+    "foo",
+    &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+    None,
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&p2pkh_address, "foo", p2pkh.clone()));
+
+  let mut with_witness = p2pkh.clone();
+  with_witness.input[0].witness.push([1]);
+  assert!(matches!(
+    verify_full(&p2pkh_address, "foo", with_witness),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+
+  let mut signature_only = p2pkh;
+  let signature = match signature_only.input[0].script_sig.instructions().next() {
+    Some(Ok(Instruction::PushBytes(signature))) => signature.as_bytes().to_vec(),
+    other => panic!("expected a push, got {other:?}"),
+  };
+  signature_only.input[0].script_sig = ScriptBuf::builder()
+    .push_slice(push_bytes(&signature))
+    .into_script();
+  assert!(matches!(
+    verify_full(&p2pkh_address, "foo", signature_only),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+}
+
+#[test]
+fn witness_spends_enforce_consensus_structure() {
+  // A P2WSH spend needs at least its witness script.
+  let witness_script = ScriptBuf::builder()
+    .push_opcode(opcodes::all::OP_PUSHNUM_1)
+    .into_script();
+  let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
+  let to_sign = create_to_sign(
+    &create_to_spend(&address, "foo"),
+    None,
+    LockParams::default(),
+  )
+  .unsigned_tx;
+  assert!(matches!(
+    verify_full(&address, "foo", to_sign),
+    Verification::Invalid(Error::InvalidWitness)
+  ));
+
+  // A nested spend's scriptSig must be exactly the push of its program.
+  let address = Address::from_str(NESTED_SEGWIT_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let mut nested = crate::sign::sign_full(
+    &address,
+    "foo",
+    &[PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap()],
+    None,
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&address, "foo", nested.clone()));
+
+  let mut script_sig = vec![opcodes::OP_0.to_u8()];
+  script_sig.extend_from_slice(nested.input[0].script_sig.as_bytes());
+  nested.input[0].script_sig = ScriptBuf::from_bytes(script_sig);
+  assert!(matches!(
+    verify_full(&address, "foo", nested),
     Verification::Invalid(Error::ToSignInvalid)
   ));
+
+  // A P2WPKH witness is exactly a signature and a key, and an empty
+  // signature is no signature.
+  let (address, to_sign) = full_p2wpkh_to_sign();
+  let items = to_sign.input[0].witness.to_vec();
+  for (witness, empty_signature) in [
+    (vec![items[0].clone()], false),
+    (vec![items[0].clone(), items[1].clone(), Vec::new()], false),
+    (vec![Vec::new(), items[1].clone()], true),
+  ] {
+    let mut tampered = to_sign.clone();
+    tampered.input[0].witness = Witness::from_slice(&witness);
+    let result = verify_full(&address, "foo", tampered);
+    if empty_signature {
+      assert!(
+        matches!(
+          result,
+          Verification::Invalid(Error::SignatureLength { length: 0, .. })
+        ),
+        "got {result:?}"
+      );
+    } else {
+      assert!(
+        matches!(result, Verification::Invalid(Error::InvalidWitness)),
+        "got {result:?}"
+      );
+    }
+  }
 }

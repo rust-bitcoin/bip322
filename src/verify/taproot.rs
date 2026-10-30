@@ -1,4 +1,10 @@
-use super::*;
+use {
+  super::*,
+  bitcoin::{
+    opcodes::{Class, ClassifyContext},
+    taproot::{LeafVersion, TapLeafHash},
+  },
+};
 
 fn parse_taproot_signature(encoded: &[u8]) -> Result<(Signature, TapSighashType)> {
   let (signature, sighash_type) = match encoded.len() {
@@ -33,105 +39,109 @@ fn parse_taproot_signature(encoded: &[u8]) -> Result<(Signature, TapSighashType)
   Ok((signature, sighash_type))
 }
 
-pub(crate) fn verify_full_p2tr(
+/// Verifies a P2TR spend. `None` hands a committed tapscript no template
+/// matches to the interpreter.
+pub(crate) fn verify_p2tr(
   spend: &Spend,
+  output_key: XOnlyPublicKey,
+  annex: Option<&[u8]>,
+  path: &TaprootPath,
   sighash_cache: &mut SighashCache<&Transaction>,
-) -> Result<InputVerification> {
-  use bitcoin::taproot::LeafVersion;
+) -> Result<Option<InputVerification>> {
+  // The annex is reserved for upgrades, so a spend using it is at best
+  // inconclusive.
+  let satisfied = if annex.is_some() {
+    InputVerification::Inconclusive
+  } else {
+    InputVerification::Valid
+  };
 
-  let taproot = spend.taproot.as_ref().expect("dispatched by P2TR");
-  let pub_key = taproot.output_key.ok_or(Error::InvalidPublicKey)?;
-
-  match &taproot.path {
-    TaprootPath::Empty => Err(Error::WitnessEmpty),
+  let leaf = match path {
     TaprootPath::Key { signature } => {
-      let (signature, sighash_type) = parse_taproot_signature(signature)?;
-      let annex = taproot
-        .annex
-        .map(sighash::Annex::new)
-        .transpose()
-        .map_err(|_| Error::InvalidWitness)?;
-      let sighash = sighash_cache
-        .taproot_signature_hash(
-          spend.input_index,
-          &sighash::Prevouts::All(spend.prevouts),
-          annex,
-          None,
-          sighash_type,
-        )
-        .map_err(|_| Error::ToSignInvalid)?;
-      let message = Message::from_digest(sighash.to_byte_array());
-      Secp256k1::verification_only()
-        .verify_schnorr(&signature, &message, &pub_key)
-        .context(error::SignatureInvalid)?;
-
-      Ok(if taproot.annex.is_some() {
-        InputVerification::Inconclusive
-      } else {
-        InputVerification::Valid
-      })
+      verify_schnorr(spend, annex, None, signature, &output_key, sighash_cache)?;
+      return Ok(Some(satisfied));
     }
-    TaprootPath::Script(script) => {
-      let control = script.control_block.as_ref().ok_or(Error::InvalidWitness)?;
-      if !script.commitment_valid(taproot.output_key) {
-        return Err(Error::ScriptNotSatisfied);
-      }
-      if control.leaf_version != LeafVersion::TapScript {
-        return Ok(InputVerification::Inconclusive);
-      }
-      if contains_op_success(script.tapscript) {
-        return Ok(InputVerification::Inconclusive);
-      }
-      if script
-        .tapscript
-        .instructions_minimal()
-        .any(|instruction| instruction.is_err())
-      {
-        return Err(Error::InvalidWitness);
-      }
+    TaprootPath::Script(leaf) => leaf,
+  };
 
-      if script.tapscript.is_empty() {
-        let stack_is_true = script.initial_stack.len() == 1
-          && script.initial_stack[0].len() <= 520
-          && bitcoin::script::read_scriptbool(script.initial_stack[0]);
-        if !stack_is_true {
-          return Err(Error::ScriptNotSatisfied);
-        }
-        return Ok(if taproot.annex.is_some() {
-          InputVerification::Inconclusive
-        } else {
-          InputVerification::Valid
-        });
-      }
+  let stack_len = leaf.stack_len();
+  let leaf = leaf.commit(output_key).ok_or(Error::ScriptNotSatisfied)?;
+  if leaf.version() != LeafVersion::TapScript {
+    return Ok(Some(InputVerification::Inconclusive));
+  }
 
-      match parse_simple_tapscript(script.tapscript, &script.initial_stack)? {
-        Some(SimpleTapscript::UnknownKey) => Ok(InputVerification::Inconclusive),
-        Some(SimpleTapscript::SingleKey(public_key)) => {
-          verify_single_key_tapscript(spend, taproot, script, public_key, sighash_cache)?;
-          Ok(if taproot.annex.is_some() {
-            InputVerification::Inconclusive
-          } else {
-            InputVerification::Valid
-          })
-        }
-        None if taproot.annex.is_some() => Ok(InputVerification::Inconclusive),
-        None => Ok(InputVerification::Unsupported),
-      }
+  let tapscript = leaf.script();
+
+  // OP_SUCCESSx overrides every other rule, including the stack limits.
+  if contains_op_success(tapscript) {
+    return Ok(Some(InputVerification::Inconclusive));
+  }
+  if stack_len > MAX_STACK_SIZE
+    || spend
+      .taproot_stack()
+      .any(|item| item.len() > MAX_SCRIPT_ELEMENT_SIZE)
+  {
+    return Err(Error::InvalidWitness);
+  }
+  if tapscript
+    .instructions_minimal()
+    .any(|instruction| instruction.is_err())
+  {
+    return Err(Error::InvalidWitness);
+  }
+
+  if tapscript.is_empty() {
+    // BIP342: an empty tapscript leaves the initial stack, which must then
+    // be exactly one true element.
+    let true_stack = stack_len == 1
+      && spend
+        .taproot_stack()
+        .next()
+        .is_some_and(bitcoin::script::read_scriptbool);
+    if !true_stack {
+      return Err(Error::ScriptNotSatisfied);
     }
+    return Ok(Some(satisfied));
+  }
+
+  match parse_simple_tapscript(tapscript, stack_len, spend.taproot_stack().next())? {
+    Some(SimpleTapscript::UnknownKey) => Ok(Some(InputVerification::Inconclusive)),
+    Some(SimpleTapscript::SingleKey { key, signature }) => {
+      let leaf_hash = TapLeafHash::from_script(tapscript, LeafVersion::TapScript);
+      verify_schnorr(
+        spend,
+        annex,
+        Some(leaf_hash),
+        signature,
+        &key,
+        sighash_cache,
+      )?;
+      Ok(Some(satisfied))
+    }
+    None if annex.is_some() => {
+      verify_taproot_annex_required_rules(spend)?;
+      Ok(Some(InputVerification::Inconclusive))
+    }
+    None => Ok(None),
   }
 }
 
-enum SimpleTapscript {
-  SingleKey(XOnlyPublicKey),
+enum SimpleTapscript<'a> {
+  SingleKey {
+    key: XOnlyPublicKey,
+    signature: &'a [u8],
+  },
   UnknownKey,
 }
 
-/// Parses the single-key TapScript template using BIP322's required minimal
-/// push rules. Unknown key types retain BIP342's witness-stack semantics.
-fn parse_simple_tapscript(
+/// Parses the single-key `<key> OP_CHECKSIG` tapscript template using
+/// BIP-322's required minimal push rules. Unknown key types retain BIP342's
+/// witness-stack semantics.
+fn parse_simple_tapscript<'a>(
   tapscript: &Script,
-  initial_stack: &[&[u8]],
-) -> Result<Option<SimpleTapscript>> {
+  stack_len: usize,
+  first: Option<&'a [u8]>,
+) -> Result<Option<SimpleTapscript<'a>>> {
   let mut instructions = tapscript.instructions_minimal();
   let (
     Some(Ok(Instruction::PushBytes(key))),
@@ -146,13 +156,13 @@ fn parse_simple_tapscript(
     return Ok(None);
   };
 
-  if initial_stack.len() != 1 {
+  let (1, Some(signature)) = (stack_len, first) else {
     return Err(Error::InvalidWitness);
-  }
-  if initial_stack[0].is_empty() {
+  };
+  if signature.is_empty() {
     return Err(Error::ScriptNotSatisfied);
   }
-  if key.len() > 520 || initial_stack[0].len() > 520 {
+  if key.len() > MAX_SCRIPT_ELEMENT_SIZE {
     return Err(Error::InvalidWitness);
   }
   if key.is_empty() {
@@ -162,55 +172,56 @@ fn parse_simple_tapscript(
     return Ok(Some(SimpleTapscript::UnknownKey));
   }
 
-  Ok(Some(SimpleTapscript::SingleKey(
-    XOnlyPublicKey::from_slice(key.as_bytes()).map_err(|_| Error::InvalidPublicKey)?,
-  )))
+  Ok(Some(SimpleTapscript::SingleKey {
+    key: XOnlyPublicKey::from_slice(key.as_bytes()).map_err(|_| Error::InvalidPublicKey)?,
+    signature,
+  }))
 }
 
-fn verify_single_key_tapscript(
+/// Verifies a Schnorr signature over the key path (`leaf_hash` is `None`) or
+/// a tapscript leaf. The key is the output key or one a committed leaf names.
+fn verify_schnorr(
   spend: &Spend,
-  taproot: &TaprootSpend,
-  script: &TaprootScriptSpend,
-  public_key: XOnlyPublicKey,
+  annex: Option<&[u8]>,
+  leaf_hash: Option<TapLeafHash>,
+  encoded_signature: &[u8],
+  key: &XOnlyPublicKey,
   sighash_cache: &mut SighashCache<&Transaction>,
 ) -> Result<()> {
-  use bitcoin::taproot::{LeafVersion, TapLeafHash};
-
-  let (signature, sighash_type) = parse_taproot_signature(script.initial_stack[0])?;
-  let annex = taproot
-    .annex
+  let (signature, sighash_type) = parse_taproot_signature(encoded_signature)?;
+  let annex = annex
     .map(sighash::Annex::new)
     .transpose()
     .map_err(|_| Error::InvalidWitness)?;
-  let leaf_hash = TapLeafHash::from_script(script.tapscript, LeafVersion::TapScript);
+
   let sighash = sighash_cache
     .taproot_signature_hash(
-      spend.input_index,
-      &sighash::Prevouts::All(spend.prevouts),
+      spend.input_index(),
+      &sighash::Prevouts::All(spend.prevouts()),
       annex,
-      Some((leaf_hash, 0xffff_ffff)),
+      leaf_hash.map(|leaf_hash| (leaf_hash, 0xffff_ffff)),
       sighash_type,
     )
     .map_err(|_| Error::ToSignInvalid)?;
+
   Secp256k1::verification_only()
     .verify_schnorr(
       &signature,
       &Message::from_digest(sighash.to_byte_array()),
-      &public_key,
+      key,
     )
-    .context(error::SignatureInvalid)?;
-
-  Ok(())
+    .context(error::SignatureInvalid)
 }
 
-fn contains_op_success(script: &Script) -> bool {
-  for instruction in script.instructions_minimal() {
+/// Whether the tapscript contains an OP_SUCCESSx opcode before its first
+/// undecodable or non-minimal push.
+fn contains_op_success(tapscript: &Script) -> bool {
+  for instruction in tapscript.instructions_minimal() {
     match instruction {
       Ok(Instruction::Op(opcode))
-        if matches!(opcode.to_u8(),
-          80 | 98 | 126..=129 | 131..=134 | 137..=138 | 141..=142 | 149..=153 | 187..=254) =>
+        if opcode.classify(ClassifyContext::TapScript) == Class::SuccessOp =>
       {
-        return true;
+        return true
       }
       Ok(_) => {}
       Err(_) => return false,

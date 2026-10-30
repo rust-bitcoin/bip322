@@ -5,6 +5,7 @@ mod encoding;
 mod fixtures;
 mod interpreter;
 mod legacy;
+mod limits;
 mod p2sh;
 mod pof;
 mod psbt;

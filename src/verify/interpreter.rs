@@ -6,31 +6,33 @@ use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
 ///
 /// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
 /// script this validator does not understand is neither accepted nor rejected.
-pub(crate) fn verify_with_interpreter(
-  to_sign: &Transaction,
-  spend: &Spend,
-) -> Result<InputVerification> {
+pub(crate) fn verify_with_interpreter(spend: &Spend) -> Result<InputVerification> {
   let secp = Secp256k1::verification_only();
-  let prevouts_all = sighash::Prevouts::All(spend.prevouts);
+  let txin = spend.txin();
 
   // If the interpreter cannot even parse the spend, we cannot verify it.
   // Report Inconclusive rather than turning an unsupported script shape into a
   // required-rule failure.
   let Ok(interpreter) = Interpreter::from_txdata(
-    &spend.prevout.script_pubkey,
-    &spend.txin.script_sig,
-    &spend.txin.witness,
-    spend.txin.sequence,
-    to_sign.lock_time,
+    &spend.prevout().script_pubkey,
+    &txin.script_sig,
+    &txin.witness,
+    txin.sequence,
+    spend.to_sign().lock_time,
   ) else {
     return Ok(InputVerification::Inconclusive);
   };
 
-  for result in interpreter.iter(&secp, to_sign, spend.input_index, &prevouts_all) {
+  for result in interpreter.iter(
+    &secp,
+    spend.to_sign(),
+    spend.input_index(),
+    &sighash::Prevouts::All(spend.prevouts()),
+  ) {
     match result {
       Ok(SatisfiedConstraint::PublicKey { key_sig })
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
-        check_required_signature(key_sig, spend.taproot_initial_stack())?
+        check_required_signature(key_sig, spend)?
       }
       Ok(_) => {}
       Err(miniscript::interpreter::Error::EcdsaSig(_))
@@ -51,7 +53,7 @@ pub(crate) fn verify_with_interpreter(
 
 /// Enforces the BIP-322 required signature rules for a signature the script
 /// interpreter has identified.
-fn check_required_signature(key_sig: KeySigPair, initial_stack: &[&[u8]]) -> Result<()> {
+fn check_required_signature(key_sig: KeySigPair, spend: &Spend) -> Result<()> {
   match key_sig {
     KeySigPair::Ecdsa(_, signature) => {
       if signature.sighash_type != EcdsaSighashType::All {
@@ -70,7 +72,7 @@ fn check_required_signature(key_sig: KeySigPair, initial_stack: &[&[u8]]) -> Res
         });
       }
       if signature.sighash_type == TapSighashType::Default
-        && has_explicit_default_taproot_signature(initial_stack, &signature)
+        && has_explicit_default_taproot_signature(spend, &signature)
       {
         return Err(Error::SigHashTypeUnsupported {
           sighash_type: signature.sighash_type.to_string(),
@@ -81,34 +83,28 @@ fn check_required_signature(key_sig: KeySigPair, initial_stack: &[&[u8]]) -> Res
   Ok(())
 }
 
-/// Runs the BIP-322 required checks on an annexed Taproot script that the
-/// normal interpreter path rejects outright. The annex is stripped only for
-/// script parsing; the final verdict remains `Inconclusive` because annex is an
+/// Runs the BIP-322 required checks on an annexed tapscript that no template
+/// matches, which the interpreter rejects outright. The annex is stripped only
+/// for script parsing; the verdict stays `Inconclusive` because the annex is an
 /// upgradeable rule.
-pub(crate) fn verify_taproot_annex_required_rules(
-  to_sign: &Transaction,
-  spend: &Spend,
-) -> Result<()> {
-  let Some(taproot) = spend.taproot.as_ref() else {
-    return Ok(());
-  };
-  if taproot.annex.is_none() {
-    return Ok(());
+pub(crate) fn verify_taproot_annex_required_rules(spend: &Spend) -> Result<()> {
+  let txin = spend.txin();
+
+  let mut witness = Witness::new();
+  for item in txin
+    .witness
+    .iter()
+    .take(txin.witness.len().saturating_sub(1))
+  {
+    witness.push(item);
   }
 
-  let mut items: Vec<&[u8]> = spend.txin.witness.iter().collect();
-  if items.len() < 2 {
-    return Ok(());
-  }
-  items.pop();
-
-  let witness = Witness::from_slice(&items);
   let Ok(interpreter) = Interpreter::from_txdata(
-    &spend.prevout.script_pubkey,
-    &spend.txin.script_sig,
+    &spend.prevout().script_pubkey,
+    &txin.script_sig,
     &witness,
-    spend.txin.sequence,
-    to_sign.lock_time,
+    txin.sequence,
+    spend.to_sign().lock_time,
   ) else {
     return Ok(());
   };
@@ -119,7 +115,7 @@ pub(crate) fn verify_taproot_annex_required_rules(
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
         // Sighash-type failures are required-rule failures we can detect
         // without verifying the signature itself.
-        check_required_signature(key_sig, spend.taproot_initial_stack())?
+        check_required_signature(key_sig, spend)?
       }
       Ok(_) => {}
       // Signature verification is unavailable with the annex present. Do not
@@ -132,10 +128,10 @@ pub(crate) fn verify_taproot_annex_required_rules(
 }
 
 fn has_explicit_default_taproot_signature(
-  initial_stack: &[&[u8]],
+  spend: &Spend,
   signature: &bitcoin::taproot::Signature,
 ) -> bool {
-  initial_stack
-    .iter()
+  spend
+    .taproot_stack()
     .any(|item| item.len() == 65 && item[64] == 0 && item[..64] == signature.signature.as_ref()[..])
 }

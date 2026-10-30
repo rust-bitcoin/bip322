@@ -78,6 +78,17 @@ pub(crate) const POF_P2TR_PROVEN_KEY_3: &str =
 
 pub(crate) const POF_P2TR_MESSAGE: &str = "FUYMQWKYGS7HJEN7YFEZU5SNR5";
 
+/// The official BIP-322 proof of funds for `POF_P2TR_ADDRESS` and
+/// `POF_P2TR_MESSAGE`. Like every official vector, it has no message field.
+pub(crate) const POF_P2TR_SIGNATURE: &str = "pofcHNidP8BALgCAAAABDzMFysa2DX0k4ZymoVfzNzTIL3gsWlu03HcfI+NxhOxAAAAAADIAQAAVd4moQMhq/rd+2ecRsJ0Xeg6/SdhA+owjzyzg/Fqd/oAAAAAAAAAAABuZFRaqjWRO6kKy5hrEHAg+T12/Iuz+FZBwwMt/FQvkgAAAAAAAAAAAG5kVFqqNZE7qQrLmGsQcCD5PXb8i7P4VkHDAy38VC+SAQAAAAAAAAAAAQAAAAAAAAAAAWp7AAAAAAEBKwAAAAAAAAAAIlEgtFgIuDOqzZM4FWyfZTeIEHVku/9kDldUuGLtGSsTbhsBCEIBQKoTEBqEPkib1fLnELbmsbDVlmWGzOdiiN/XJefU3tF9AEi7PszYEPguomxXp7X2rL0dP0xkV6LbBcVz7oAEeKkAAQErTkYFAAAAAAAiUSB4i5DCtSPHOkI30E30ayMoWL47vA5l2NBJp/pZ1XGduAEIQgFAic0muhAJNc4ZlRWeJGRgkN+oE/ptV4Znyli19VAnSsHM/Pb9Mp02dd3zk3RmuT6VgjBxdJn2yURGKOka3l9cugABAStORgUAAAAAACJRIMoNyg9Pai/pn4PHTOMEsDHkuUAHt5riqU81NVVj+fXKAQhCAUCL3W2Jh3ImNRSpbp0bLe+rBE4GJw5AjwJEhakHsm83YfuQKeY1syBFrmNV2ZvLv8R8uTLcmkJ1s/lWUxZ9o4qJAAEBK05GBQAAAAAAIlEgXCutuyDOvc4hiADdov7VmOUfq4ww6HES7JZ6NAucMJkBCEIBQDqu/4oik+J+eAbvUhzzuBkoVoOgD5RySjpvJQqTKNieBda8dMTkH2avx6ghs7zd6puujlBCQw3r/NiG4VX7wAEAAA==";
+
+/// An official BIP-322 full P2WPKH proof, with its address and message.
+pub(crate) const FULL_P2WPKH_ADDRESS: &str = "bc1qrqtlzcq86850yzgsyq9sssawx2qxlx5yq3xpkd";
+
+pub(crate) const FULL_P2WPKH_MESSAGE: &str = "KLE5MMJBTNF4AVZXIO3GIL5UWF";
+
+pub(crate) const FULL_P2WPKH_SIGNATURE: &str = "AgAAAAABAUrfzHHOLAKmgCIFSTT3krp+cQxj1BDPBN4GBg3tRmFXAAAAAADgBwAAAQAAAAAAAAAAAWoCSDBFAiEAjYj85zyhQKa9DbMO0reDwdhkNwKJkF3q2qFcijXDgMUCIAaQ75s3fwqrCeYIUJugLvhxZFxQIVquGN90vIKCW3QLASEDMurnDzvc0zABUwVwCADfGXoDx/M3SQnYt7e3IHDoU3PgBwAA";
+
 pub(crate) const NO_PREFIX_ADDRESS: &str =
   "bc1pss0zhytly75awhm6x2hhvd5lnzv3vssgrf9axfheq8ldyzn88ges79fler";
 
@@ -158,19 +169,53 @@ pub(crate) fn pof_with_p2wpkh_challenge(proof_inputs: &[ProofInput]) -> (Address
   (address, psbt)
 }
 
-pub(crate) fn supply_legacy_non_witness_utxo(psbt: &mut Psbt, index: usize) {
-  let prevout = psbt.inputs[index].witness_utxo.clone().unwrap();
+/// A proof of funds with a signed P2WPKH challenge and one proof input that
+/// spends `script_pubkey` with an empty scriptSig. The PSBT carries the proof
+/// input's previous transaction, and the challenge is signed only once every
+/// outpoint is final.
+pub(crate) fn pof_with_bare_proof_input(script_pubkey: ScriptBuf) -> (Address, Psbt) {
+  let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
   let prev_tx = Transaction {
-    version: Version(0),
+    version: Version(2),
     lock_time: LockTime::ZERO,
     input: vec![TxIn::default()],
-    output: vec![prevout],
+    output: vec![TxOut {
+      value: Amount::from_sat(345678),
+      script_pubkey,
+    }],
   };
-  psbt.unsigned_tx.input[index].previous_output = OutPoint {
-    txid: prev_tx.compute_txid(),
-    vout: 0,
+  let proof_input = ProofInput {
+    outpoint: OutPoint {
+      txid: prev_tx.compute_txid(),
+      vout: 0,
+    },
+    prevout: prev_tx.output[0].clone(),
+    prev_tx: Some(prev_tx),
+    private_keys: Vec::new(),
+    witness_script: None,
   };
-  psbt.inputs[index].non_witness_utxo = Some(prev_tx);
+
+  let mut psbt = create_bip322_psbt(
+    &address,
+    POF_P2TR_MESSAGE,
+    None,
+    &[proof_input],
+    LockParams::default(),
+  )
+  .unwrap();
+  let challenge = psbt.inputs[0].witness_utxo.clone().unwrap();
+  psbt.inputs[0].final_script_witness = Some(
+    create_message_signature_p2wpkh(
+      &psbt,
+      &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
+      &challenge,
+      0,
+      false,
+    )
+    .unwrap(),
+  );
+
+  (address, psbt)
 }
 
 pub(crate) fn non_minimal_one_of_one_multisig(public_key: &PublicKey) -> ScriptBuf {
@@ -288,4 +333,83 @@ pub(crate) fn single_key_tapscript(private_key: &PrivateKey) -> ScriptBuf {
     .push_x_only_key(&private_key.public_key(&secp).inner.x_only_public_key().0)
     .push_opcode(opcodes::all::OP_CHECKSIG)
     .into_script()
+}
+
+/// Signs `sighash` with `private_key` and appends SIGHASH_ALL.
+pub(crate) fn ecdsa_signature(sighash: [u8; 32], private_key: &PrivateKey) -> Vec<u8> {
+  bitcoin::ecdsa::Signature {
+    signature: Secp256k1::new().sign_ecdsa(&Message::from_digest(sighash), &private_key.inner),
+    sighash_type: EcdsaSighashType::All,
+  }
+  .to_vec()
+}
+
+/// The `[signature, public key]` witness that spends the challenge input of
+/// `to_sign` as P2WPKH under `private_key`, whatever the challenge is.
+pub(crate) fn p2wpkh_witness(to_sign: &Transaction, private_key: &PrivateKey) -> Witness {
+  let public_key = private_key.public_key(&Secp256k1::new());
+  let sighash = SighashCache::new(to_sign)
+    .p2wpkh_signature_hash(
+      0,
+      &ScriptBuf::new_p2wpkh(&public_key.wpubkey_hash().unwrap()),
+      Amount::ZERO,
+      EcdsaSighashType::All,
+    )
+    .unwrap();
+
+  Witness::from_slice(&[
+    ecdsa_signature(sighash.to_byte_array(), private_key),
+    public_key.to_bytes(),
+  ])
+}
+
+/// Builds the full proof an honest signer holding `private_key` would produce
+/// for `address`, but without the signers' check that the key controls it.
+/// Supports P2TR, P2WPKH, P2SH-P2WPKH and P2PKH addresses.
+pub(crate) fn sign_full_unchecked(
+  address: &Address,
+  message: &str,
+  private_key: &PrivateKey,
+) -> Transaction {
+  let secp = Secp256k1::new();
+  let to_spend = create_to_spend(address, message);
+  let mut to_sign = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let public_key = private_key.public_key(&secp);
+  let script_pubkey = address.script_pubkey();
+
+  if script_pubkey.is_p2tr() {
+    let sighash = SighashCache::new(&to_sign)
+      .taproot_key_spend_signature_hash(
+        0,
+        &sighash::Prevouts::All(&to_spend.output),
+        TapSighashType::Default,
+      )
+      .unwrap();
+    let keypair = Keypair::from_secret_key(&secp, &private_key.inner)
+      .tap_tweak(&secp, None)
+      .to_keypair();
+    let signature =
+      secp.sign_schnorr_no_aux_rand(&Message::from_digest(sighash.to_byte_array()), &keypair);
+    to_sign.input[0].witness = Witness::from_slice(&[signature.as_ref()]);
+  } else if script_pubkey.is_p2pkh() {
+    let sighash = SighashCache::new(&to_sign)
+      .legacy_signature_hash(0, &script_pubkey, EcdsaSighashType::All.to_u32())
+      .unwrap();
+    to_sign.input[0].script_sig = ScriptBuf::builder()
+      .push_slice(push_bytes(&ecdsa_signature(
+        sighash.to_byte_array(),
+        private_key,
+      )))
+      .push_key(&public_key)
+      .into_script();
+  } else {
+    // P2WPKH, either native or nested in P2SH with the signer's own program.
+    to_sign.input[0].witness = p2wpkh_witness(&to_sign, private_key);
+    if script_pubkey.is_p2sh() {
+      to_sign.input[0].script_sig =
+        push_only_script(&ScriptBuf::new_p2wpkh(&public_key.wpubkey_hash().unwrap()));
+    }
+  }
+
+  to_sign
 }

@@ -107,10 +107,20 @@ fn codeseparator_spend_is_invalid() {
 
 #[test]
 fn codeseparator_in_script_sig_is_invalid() {
-  let (address, mut to_sign) = full_p2wpkh_to_sign();
-  to_sign.input[0].script_sig = ScriptBuf::builder()
-    .push_opcode(opcodes::all::OP_CODESEPARATOR)
-    .into_script();
+  let address = Address::from_str(LEGACY_ADDRESS).unwrap().assume_checked();
+  let mut to_sign = crate::sign::sign_full(
+    &address,
+    "foo",
+    &[PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap()],
+    None,
+    LockParams::default(),
+  )
+  .unwrap();
+  assert_valid(verify_full(&address, "foo", to_sign.clone()));
+
+  let mut script_sig = vec![opcodes::all::OP_CODESEPARATOR.to_u8()];
+  script_sig.extend_from_slice(to_sign.input[0].script_sig.as_bytes());
+  to_sign.input[0].script_sig = ScriptBuf::from_bytes(script_sig);
 
   assert!(matches!(
     verify_full(&address, "foo", to_sign),
