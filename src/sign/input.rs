@@ -42,7 +42,6 @@ pub(super) fn sign_input(
       single_key(private_keys)?,
       &prevouts[input_index],
       input_index,
-      false,
     )?
   } else if spk.is_p2sh() {
     match witness_script {
@@ -50,7 +49,13 @@ pub(super) fn sign_input(
         let p2wsh_redeem = ScriptBuf::new_p2wsh(&ws.wscript_hash());
 
         if *spk == ScriptBuf::new_p2sh(&ws.script_hash()) {
-          create_message_signature_p2sh_multisig(to_sign, private_keys, ws, input_index)?
+          create_message_signature_p2sh_multisig(
+            to_sign,
+            private_keys,
+            ws,
+            &prevouts[input_index],
+            input_index,
+          )?
         } else if *spk == ScriptBuf::new_p2sh(&p2wsh_redeem.script_hash()) {
           let witness = create_message_signature_p2wsh(
             to_sign,
@@ -82,12 +87,11 @@ pub(super) fn sign_input(
           return Err(Error::PublicKeyMismatch);
         }
 
-        let witness = create_message_signature_p2wpkh(
+        let witness = create_message_signature_p2sh_p2wpkh(
           to_sign,
           private_key,
           &prevouts[input_index],
           input_index,
-          true,
         )?;
 
         to_sign.inputs[input_index].final_script_sig = Some(push_only_script(&redeem));
@@ -115,8 +119,27 @@ pub(super) fn sign_input(
   Ok(())
 }
 
-/// Sign for segwit inputs
+/// Sign for native P2WPKH inputs
 pub fn create_message_signature_p2wpkh(
+  to_sign: &Psbt,
+  private_key: &PrivateKey,
+  prevout: &TxOut,
+  input_index: usize,
+) -> Result<Witness> {
+  create_message_signature_p2wpkh_inner(to_sign, private_key, prevout, input_index, false)
+}
+
+/// Sign for P2SH-wrapped P2WPKH inputs
+pub fn create_message_signature_p2sh_p2wpkh(
+  to_sign: &Psbt,
+  private_key: &PrivateKey,
+  prevout: &TxOut,
+  input_index: usize,
+) -> Result<Witness> {
+  create_message_signature_p2wpkh_inner(to_sign, private_key, prevout, input_index, true)
+}
+
+fn create_message_signature_p2wpkh_inner(
   to_sign: &Psbt,
   private_key: &PrivateKey,
   prevout: &TxOut,
@@ -150,16 +173,7 @@ pub fn create_message_signature_p2wpkh(
   }
 
   let sighash = sighash_cache
-    .p2wpkh_signature_hash(
-      input_index,
-      &if is_p2sh {
-        p2wpkh_script
-      } else {
-        prevout.script_pubkey.clone()
-      },
-      prevout.value,
-      sighash_type,
-    )
+    .p2wpkh_signature_hash(input_index, &p2wpkh_script, prevout.value, sighash_type)
     .map_err(|_| Error::ToSignInvalid)?;
 
   let signature = secp.sign_ecdsa(
@@ -269,6 +283,12 @@ pub fn create_message_signature_p2wsh(
     return Err(Error::ToSignInvalid);
   }
 
+  let p2wsh_script = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
+  let p2sh_script = ScriptBuf::new_p2sh(&p2wsh_script.script_hash());
+  if prevout.script_pubkey != p2wsh_script && prevout.script_pubkey != p2sh_script {
+    return Err(Error::WitnessScriptMismatch);
+  }
+
   let secp = Secp256k1::new();
   let sighash_type = EcdsaSighashType::All;
   let mut sighash_cache = SighashCache::new(to_sign.unsigned_tx.clone());
@@ -299,6 +319,7 @@ pub fn create_message_signature_p2sh_multisig(
   to_sign: &mut Psbt,
   private_keys: &[PrivateKey],
   redeem_script: &ScriptBuf,
+  prevout: &TxOut,
   input_index: usize,
 ) -> Result<Witness> {
   if redeem_script.len() > MAX_SCRIPT_ELEMENT_SIZE {
@@ -307,6 +328,10 @@ pub fn create_message_signature_p2sh_multisig(
 
   if input_index >= to_sign.inputs.len() || input_index >= to_sign.unsigned_tx.input.len() {
     return Err(Error::ToSignInvalid);
+  }
+
+  if prevout.script_pubkey != ScriptBuf::new_p2sh(&redeem_script.script_hash()) {
+    return Err(Error::WitnessScriptMismatch);
   }
 
   let secp = Secp256k1::new();

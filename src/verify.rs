@@ -112,13 +112,16 @@ pub fn verify_simple(
     return Verification::Invalid(error);
   }
 
-  let to_sign = create_to_sign(
+  let to_sign = match create_to_sign(
     &create_to_spend(address, &message),
     Some(signature),
     LockParams::default(),
-  )
-  .extract_tx()
-  .expect("extracting a freshly built transaction cannot fail");
+  ) {
+    Ok(to_sign) => to_sign
+      .extract_tx()
+      .expect("extracting a freshly built transaction cannot fail"),
+    Err(error) => return Verification::Invalid(error),
+  };
 
   verify_full(address, &message, to_sign)
 }

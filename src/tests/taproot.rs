@@ -28,7 +28,9 @@ fn empty_tapscript_uses_bip342_stack_semantics() {
     .serialize();
   let to_spend = create_to_spend(&address, "foo");
 
-  let mut valid = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut valid = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   valid.input[0].witness = Witness::from_slice(&[
     vec![1],
     tapscript.as_bytes().to_vec(),
@@ -37,7 +39,9 @@ fn empty_tapscript_uses_bip342_stack_semantics() {
   assert_valid(verify_full(&address, "foo", valid));
 
   for false_element in [vec![0], vec![0x80]] {
-    let mut false_stack = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut false_stack = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     false_stack.input[0].witness = Witness::from_slice(&[
       false_element,
       tapscript.as_bytes().to_vec(),
@@ -49,7 +53,9 @@ fn empty_tapscript_uses_bip342_stack_semantics() {
     ));
   }
 
-  let mut annexed = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut annexed = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   annexed.input[0].witness = Witness::from_slice(&[
     vec![1],
     tapscript.as_bytes().to_vec(),
@@ -77,7 +83,7 @@ fn p2tr_explicit_default_sighash_is_invalid() {
   // The producer uses ALL. Re-sign as DEFAULT so only the forbidden explicit
   // 0x00 representation distinguishes this from a valid 64-byte signature.
   let to_spend = create_to_spend(&address, "foo");
-  let psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   let sighash = SighashCache::new(psbt.unsigned_tx)
     .taproot_key_spend_signature_hash(
       0,
@@ -210,7 +216,9 @@ fn p2tr_annex_and_op_success_are_inconclusive() {
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
   let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   let annex = vec![0x50, 1, 2, 3];
   tx.input[0].witness = Witness::from_slice(&[Vec::new(), annex.clone()]);
   let sighash = SighashCache::new(&mut tx)
@@ -443,7 +451,9 @@ fn p2tr_unknown_leaf_version_naked_zero_is_inconclusive() {
   let decoded = bitcoin::taproot::ControlBlock::decode(&control_block).unwrap();
   assert!(decoded.verify_taproot_commitment(&secp, output_key, &tapscript));
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   tx.input[0].witness = Witness::from_slice(&[tapscript.as_bytes().to_vec(), control_block]);
 
   let result = verify_full(&address, "foo", tx);

@@ -327,8 +327,7 @@ fn pof_challenge_utxo_must_be_the_challenge_output() {
       .iter()
       .map(|input| input.witness_utxo.clone().unwrap())
       .collect();
-    let challenge =
-      create_message_signature_p2wpkh(&psbt, challenge_key, &prevouts[0], 0, false).unwrap();
+    let challenge = create_message_signature_p2wpkh(&psbt, challenge_key, &prevouts[0], 0).unwrap();
     let proof = create_message_signature_taproot(
       &psbt,
       &PrivateKey::from_wif(POF_P2TR_PROVEN_KEY_1).unwrap(),

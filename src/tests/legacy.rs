@@ -97,7 +97,9 @@ fn legacy_and_v0_opcode_limit_is_enforced() {
     let script = script_with_ops(non_push_ops);
     let p2wsh = Address::p2wsh(&script, bitcoin::Network::Bitcoin);
     let to_spend = create_to_spend(&p2wsh, "foo");
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
     let result = verify_full(&p2wsh, "foo", tx);
     assert_eq!(
@@ -114,7 +116,9 @@ fn legacy_and_v0_opcode_limit_is_enforced() {
 
     let p2sh = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
     let to_spend = create_to_spend(&p2sh, "foo");
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].script_sig = push_only_script(&script);
     let result = verify_full(&p2sh, "foo", tx);
     assert_eq!(
@@ -217,6 +221,7 @@ fn witness_spends_enforce_consensus_structure() {
     None,
     LockParams::default(),
   )
+  .unwrap()
   .unsigned_tx;
   assert!(matches!(
     verify_full(&address, "foo", to_sign),

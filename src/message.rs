@@ -92,7 +92,15 @@ pub fn create_to_spend_from_script(
 }
 
 /// Create the `to_sign` transaction.
-pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>, locks: LockParams) -> Psbt {
+pub fn create_to_sign(
+  to_spend: &Transaction,
+  witness: Option<Witness>,
+  locks: LockParams,
+) -> Result<Psbt> {
+  if to_spend.output.is_empty() {
+    return Err(Error::ToSignInvalid);
+  }
+
   let mut psbt = Psbt::from_unsigned_tx(to_sign_transaction(to_spend, &[], locks))
     .expect("unsigned transaction has empty script_sigs and witnesses");
 
@@ -103,7 +111,7 @@ pub fn create_to_sign(to_spend: &Transaction, witness: Option<Witness>, locks: L
 
   psbt.inputs[0].final_script_witness = witness;
 
-  psbt
+  Ok(psbt)
 }
 
 /// The unsigned `to_sign` transaction: the challenge input, then one input
