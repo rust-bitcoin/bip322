@@ -93,23 +93,23 @@ fn legacy_and_v0_opcode_limit_is_enforced() {
     builder.into_script()
   };
 
-  for (non_push_ops, valid) in [(200, true), (202, false)] {
+  for (non_push_ops, within_limit) in [(200, true), (202, false)] {
     let script = script_with_ops(non_push_ops);
     let p2wsh = Address::p2wsh(&script, bitcoin::Network::Bitcoin);
     let to_spend = create_to_spend(&p2wsh, "foo");
     let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
     tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
     let result = verify_full(&p2wsh, "foo", tx);
-    assert_eq!(
-      result.is_valid(),
-      valid,
-      "P2WSH with {non_push_ops} ops: {result:?}"
-    );
-    if !valid {
-      assert!(matches!(
-        result,
-        Verification::Invalid(Error::InvalidWitness)
-      ));
+    if within_limit {
+      assert!(
+        matches!(result, Verification::Inconclusive),
+        "P2WSH with {non_push_ops} ops: {result:?}"
+      );
+    } else {
+      assert!(
+        matches!(result, Verification::Invalid(Error::InvalidWitness)),
+        "P2WSH with {non_push_ops} ops: {result:?}"
+      );
     }
 
     let p2sh = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
@@ -117,16 +117,16 @@ fn legacy_and_v0_opcode_limit_is_enforced() {
     let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
     tx.input[0].script_sig = push_only_script(&script);
     let result = verify_full(&p2sh, "foo", tx);
-    assert_eq!(
-      result.is_valid(),
-      valid,
-      "P2SH with {non_push_ops} ops: {result:?}"
-    );
-    if !valid {
-      assert!(matches!(
-        result,
-        Verification::Invalid(Error::InvalidWitness)
-      ));
+    if within_limit {
+      assert!(
+        matches!(result, Verification::Inconclusive),
+        "P2SH with {non_push_ops} ops: {result:?}"
+      );
+    } else {
+      assert!(
+        matches!(result, Verification::Invalid(Error::InvalidWitness)),
+        "P2SH with {non_push_ops} ops: {result:?}"
+      );
     }
   }
 }
