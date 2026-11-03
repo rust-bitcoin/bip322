@@ -23,12 +23,24 @@ pub(crate) struct PsbtShape {
 
 /// Checks a consensus-encoded witness.
 pub(crate) fn witness(bytes: &[u8]) -> bool {
-  Cursor::new(bytes).witness().is_some()
+  witness_with_limit(bytes, None)
+}
+
+/// Checks a consensus-encoded witness with at most `max_items` items when
+/// `max_items` is set.
+pub(crate) fn witness_with_limit(bytes: &[u8], max_items: Option<usize>) -> bool {
+  Cursor::new(bytes).witness(max_items).is_some()
 }
 
 /// Checks a consensus-encoded transaction.
 pub(crate) fn transaction(bytes: &[u8]) -> bool {
-  Cursor::new(bytes).transaction().is_some()
+  transaction_with_limit(bytes, None)
+}
+
+/// Checks a consensus-encoded transaction with at most `max_items` items per
+/// witness when `max_items` is set.
+pub(crate) fn transaction_with_limit(bytes: &[u8], max_items: Option<usize>) -> bool {
+  Cursor::new(bytes).transaction(max_items).is_some()
 }
 
 /// Checks a PSBT and returns the shape of its unsigned transaction.
@@ -63,7 +75,9 @@ pub(crate) fn psbt(bytes: &[u8]) -> Option<PsbtShape> {
         PSBT_IN_NON_WITNESS_UTXO => {
           pair.value.len() <= MAX_ENCODING_SIZE && transaction(pair.value)
         }
-        PSBT_IN_FINAL_SCRIPTWITNESS => pair.value.len() <= MAX_ENCODING_SIZE && witness(pair.value),
+        PSBT_IN_FINAL_SCRIPTWITNESS => {
+          pair.value.len() <= MAX_POF_DECODED_SIZE && witness(pair.value)
+        }
         _ => true,
       };
       if !valid {
@@ -136,9 +150,13 @@ impl<'a> Cursor<'a> {
     (count <= self.remaining() as u64 / size).then_some(count)
   }
 
-  fn witness(&mut self) -> Option<()> {
+  fn witness(&mut self, max_items: Option<usize>) -> Option<()> {
     // Every item needs at least its length prefix.
-    for _ in 0..self.count(1)? {
+    let count = self.count(1)?;
+    if max_items.is_some_and(|max_items| count > max_items as u64) {
+      return None;
+    }
+    for _ in 0..count {
       let length = self.compact_size()?;
       self.skip(length)?;
     }
@@ -171,7 +189,7 @@ impl<'a> Cursor<'a> {
 
   /// A transaction, which rust-bitcoin reads in the BIP-144 witness
   /// serialization when the input count is zero.
-  fn transaction(&mut self) -> Option<()> {
+  fn transaction(&mut self, max_items: Option<usize>) -> Option<()> {
     self.skip(4)?;
     if self.inputs()? == 0 {
       if self.take(1)? != [1] {
@@ -180,7 +198,7 @@ impl<'a> Cursor<'a> {
       let inputs = self.inputs()?;
       self.outputs()?;
       for _ in 0..inputs {
-        self.witness()?;
+        self.witness(max_items)?;
       }
     } else {
       self.outputs()?;

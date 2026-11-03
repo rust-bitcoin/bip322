@@ -17,6 +17,32 @@ pub(crate) const MAX_OPS_PER_SCRIPT: usize = 201;
 /// exceeds the consensus weight limit on its own.
 pub(crate) const MAX_ENCODING_SIZE: usize = 4_000_000;
 
+/// Maximum length of the Base64 text encoding of [`MAX_ENCODING_SIZE`] bytes.
+pub(crate) const MAX_ENCODED_SIZE: usize = base64_length(MAX_ENCODING_SIZE);
+
+/// Maximum decoded size of a proof of funds.
+pub(crate) const MAX_POF_DECODED_SIZE: usize = 16 * 1024 * 1024;
+
+/// Maximum length of the Base64 text encoding of [`MAX_POF_DECODED_SIZE`]
+/// bytes.
+pub(crate) const MAX_POF_ENCODED_SIZE: usize = base64_length(MAX_POF_DECODED_SIZE);
+
+/// Maximum number of items in a v0 or v1 witness: the stack, witness script,
+/// control block, and annex.
+pub(crate) const MAX_WITNESS_ITEMS: usize = MAX_STACK_SIZE + 3;
+
+/// The length of the padded Base64 encoding of `bytes` bytes.
+const fn base64_length(bytes: usize) -> usize {
+  let groups = match bytes.checked_add(2) {
+    Some(bytes) => bytes / 3,
+    None => return usize::MAX,
+  };
+  match groups.checked_mul(4) {
+    Some(length) => length,
+    None => usize::MAX,
+  }
+}
+
 /// Maximum total inputs (challenge plus proven UTXOs) allowed in a Proof of
 /// Funds. Verification bounds its work to this many inputs and reports
 /// larger proofs as [`Verification::Inconclusive`], so producers reject them

@@ -1,5 +1,6 @@
 use super::fixtures::*;
 use super::*;
+use crate::verify::preflight;
 
 /// A bare hashlock, which miniscript cannot express, so the interpreter
 /// leaves any spend of it inconclusive unless a structural rule rejects it
@@ -210,6 +211,131 @@ fn huge_witness_stacks_are_rejected_without_materializing() {
   assert!(matches!(
     verify_full(&address, "foo", to_sign),
     Verification::Invalid(Error::InvalidWitness)
+  ));
+}
+
+#[test]
+fn encoded_witnesses_reject_more_than_max_witness_items() {
+  let excessive = witness_with_empty_items(MAX_WITNESS_ITEMS + 1, &[]);
+  let mut witness_bytes = Vec::new();
+  excessive.consensus_encode(&mut witness_bytes).unwrap();
+
+  for encoded_address in [SEGWIT_ADDRESS, TAPROOT_ADDRESS] {
+    let address = Address::from_str(encoded_address).unwrap().assume_checked();
+    let simple = format!(
+      "{SIMPLE_SIGNATURE_PREFIX}{}",
+      general_purpose::STANDARD.encode(&witness_bytes)
+    );
+    assert!(matches!(
+      verify_simple_encoded(&address.to_string(), "foo", &simple),
+      Verification::Invalid(Error::InvalidWitness)
+    ));
+
+    let mut to_sign = create_to_sign(
+      &create_to_spend(&address, "foo"),
+      None,
+      LockParams::default(),
+    )
+    .unsigned_tx;
+    to_sign.input[0].witness = excessive.clone();
+    let mut transaction_bytes = Vec::new();
+    to_sign.consensus_encode(&mut transaction_bytes).unwrap();
+    let full = format!(
+      "{FULL_SIGNATURE_PREFIX}{}",
+      general_purpose::STANDARD.encode(&transaction_bytes)
+    );
+    assert!(matches!(
+      verify_full_encoded(&address.to_string(), "foo", &full),
+      Verification::Invalid(Error::ToSignInvalid)
+    ));
+  }
+}
+
+#[test]
+fn witness_item_limit_boundaries_are_inclusive() {
+  let at_limit = witness_with_empty_items(MAX_WITNESS_ITEMS, &[]);
+  let mut bytes = Vec::new();
+  at_limit.consensus_encode(&mut bytes).unwrap();
+  assert!(preflight::witness_with_limit(
+    &bytes,
+    Some(MAX_WITNESS_ITEMS)
+  ));
+
+  let over_limit = witness_with_empty_items(MAX_WITNESS_ITEMS + 1, &[]);
+  let mut bytes = Vec::new();
+  over_limit.consensus_encode(&mut bytes).unwrap();
+  assert!(!preflight::witness_with_limit(
+    &bytes,
+    Some(MAX_WITNESS_ITEMS)
+  ));
+
+  let witness_script = inexpressible_script();
+  let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
+  let witness = witness_with_empty_items(MAX_STACK_SIZE, &[witness_script.as_bytes()]);
+  assert_eq!(witness.len(), MAX_STACK_SIZE + 1);
+  let mut bytes = Vec::new();
+  witness.consensus_encode(&mut bytes).unwrap();
+  let encoded = format!(
+    "{SIMPLE_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(&bytes)
+  );
+  assert!(matches!(
+    verify_simple_encoded(&address.to_string(), "foo", &encoded),
+    Verification::Inconclusive
+  ));
+}
+
+#[test]
+fn future_witness_versions_are_not_subject_to_the_item_limit() {
+  let program = bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[7; 32]).unwrap();
+  let address = Address::from_witness_program(program, bitcoin::Network::Bitcoin);
+  let witness = witness_with_empty_items(MAX_WITNESS_ITEMS + 1, &[]);
+
+  let mut witness_bytes = Vec::new();
+  witness.consensus_encode(&mut witness_bytes).unwrap();
+  let simple = format!(
+    "{SIMPLE_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(&witness_bytes)
+  );
+  assert!(matches!(
+    verify_simple_encoded(&address.to_string(), "foo", &simple),
+    Verification::Inconclusive
+  ));
+
+  let mut to_sign = create_to_sign(
+    &create_to_spend(&address, "foo"),
+    None,
+    LockParams::default(),
+  )
+  .unsigned_tx;
+  to_sign.input[0].witness = witness;
+  let mut transaction_bytes = Vec::new();
+  to_sign.consensus_encode(&mut transaction_bytes).unwrap();
+  let full = format!(
+    "{FULL_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(&transaction_bytes)
+  );
+  assert!(matches!(
+    verify_full_encoded(&address.to_string(), "foo", &full),
+    Verification::Inconclusive
+  ));
+}
+
+#[test]
+fn psbt_final_witnesses_are_not_subject_to_the_item_limit() {
+  let program = bitcoin::WitnessProgram::new(bitcoin::WitnessVersion::V2, &[7; 32]).unwrap();
+  let script_pubkey =
+    Address::from_witness_program(program, bitcoin::Network::Bitcoin).script_pubkey();
+  let (address, mut psbt) = pof_with_bare_proof_input(script_pubkey);
+  psbt.inputs[1].final_script_witness = Some(witness_with_empty_items(MAX_WITNESS_ITEMS + 1, &[]));
+
+  let encoded = format!(
+    "{POF_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(psbt.serialize())
+  );
+  assert!(matches!(
+    verify_pof_encoded(&address.to_string(), POF_P2TR_MESSAGE, &encoded),
+    Verification::Inconclusive
   ));
 }
 

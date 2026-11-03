@@ -255,6 +255,58 @@ fn encoded_verifiers_reject_payloads_over_the_weight_limit() {
 }
 
 #[test]
+fn encoded_verifiers_reject_oversized_base64_text() {
+  let payload = "A".repeat(MAX_ENCODED_SIZE + 1);
+
+  assert!(matches!(
+    verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &payload),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &payload),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  let simple = format!("{SIMPLE_SIGNATURE_PREFIX}{payload}");
+  assert!(matches!(
+    verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &simple),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  let full = format!("{FULL_SIGNATURE_PREFIX}{payload}");
+  assert!(matches!(
+    verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &full),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn pof_encoded_verifier_rejects_oversized_base64_text() {
+  let payload = "A".repeat(MAX_POF_ENCODED_SIZE + 1);
+  let encoded = format!("{POF_SIGNATURE_PREFIX}{payload}");
+
+  assert!(matches!(
+    verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn pof_encoded_verifier_rejects_oversized_decoded_payloads() {
+  let payload = "A".repeat(MAX_POF_ENCODED_SIZE);
+  let encoded = format!("{POF_SIGNATURE_PREFIX}{payload}");
+
+  assert_eq!(
+    general_purpose::STANDARD.decode(&payload).unwrap().len(),
+    MAX_POF_DECODED_SIZE + 2
+  );
+  assert!(matches!(
+    verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
 fn psbt_preflight_reads_zero_input_transactions_like_rust_bitcoin() {
   for outputs in [1, 2] {
     let unsigned = Transaction {
