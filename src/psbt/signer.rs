@@ -18,6 +18,7 @@ pub fn sign_bip322_psbt_input(
     return Err(Error::OrdinaryPsbt);
   };
 
+  check_input_count(psbt.unsigned_tx.input.len())?;
   validate_psbt_structure(psbt)?;
   if input_index >= psbt.unsigned_tx.input.len() {
     return Err(Error::ToSignInvalid);
