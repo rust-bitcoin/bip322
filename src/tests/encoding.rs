@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::verify::preflight::{self, PsbtShape};
+use crate::verify::preflight::{self, Check, PsbtShape};
 
 #[test]
 fn encoded_decode_failure_and_validation_failure_are_both_invalid() {
@@ -114,7 +114,7 @@ fn full_and_psbt_preflights_bound_witness_counts() {
 
   let (_, psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
   let valid_psbt = psbt.serialize();
-  assert!(preflight::psbt(&valid_psbt).is_some());
+  assert!(matches!(preflight::psbt(&valid_psbt), Check::Valid(_)));
 
   let unsigned = Transaction {
     version: Version(0),
@@ -145,7 +145,7 @@ fn full_and_psbt_preflights_bound_witness_counts() {
   bad_psbt.extend_from_slice(&bad_witness);
   bad_psbt.push(0);
   bad_psbt.push(0);
-  assert!(preflight::psbt(&bad_psbt).is_none());
+  assert!(matches!(preflight::psbt(&bad_psbt), Check::Malformed));
   let encoded = format!(
     "{}{}",
     POF_SIGNATURE_PREFIX,
@@ -164,7 +164,7 @@ fn full_and_psbt_preflights_bound_witness_counts() {
     .unwrap();
   bad_global_tx.extend_from_slice(&bad_tx);
   bad_global_tx.push(0);
-  assert!(preflight::psbt(&bad_global_tx).is_none());
+  assert!(matches!(preflight::psbt(&bad_global_tx), Check::Malformed));
 
   let mut bad_non_witness_utxo = b"psbt\xff".to_vec();
   bad_non_witness_utxo.push(1);
@@ -182,7 +182,10 @@ fn full_and_psbt_preflights_bound_witness_counts() {
   bad_non_witness_utxo.extend_from_slice(&bad_tx);
   bad_non_witness_utxo.push(0);
   bad_non_witness_utxo.push(0);
-  assert!(preflight::psbt(&bad_non_witness_utxo).is_none());
+  assert!(matches!(
+    preflight::psbt(&bad_non_witness_utxo),
+    Check::Malformed
+  ));
 }
 
 #[test]
@@ -255,6 +258,91 @@ fn encoded_verifiers_reject_payloads_over_the_weight_limit() {
 }
 
 #[test]
+fn encoded_verifiers_reject_oversized_base64_text() {
+  let payload = "A".repeat(MAX_ENCODED_SIZE + 1);
+
+  assert!(matches!(
+    verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &payload),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &payload),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  let simple = format!("{SIMPLE_SIGNATURE_PREFIX}{payload}");
+  assert!(matches!(
+    verify_simple_encoded(SEGWIT_ADDRESS, "Hello World", &simple),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+
+  let full = format!("{FULL_SIGNATURE_PREFIX}{payload}");
+  assert!(matches!(
+    verify_full_encoded(SEGWIT_ADDRESS, "Hello World", &full),
+    Verification::Invalid(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn pof_encoded_verifier_reports_oversized_base64_text_as_inconclusive() {
+  let payload = "A".repeat(MAX_POF_ENCODED_SIZE + 1);
+  let encoded = format!("{POF_SIGNATURE_PREFIX}{payload}");
+
+  assert!(matches!(
+    verify_pof_encoded(SEGWIT_ADDRESS, POF_P2TR_MESSAGE, &encoded),
+    Verification::Inconclusive
+  ));
+}
+
+#[test]
+fn pof_encoded_verifier_reports_oversized_decoded_payloads_as_inconclusive() {
+  let (address, mut psbt) = pof_with_p2wpkh_challenge(&[pof_p2tr_proof_input()]);
+
+  // Pad a valid proof with an unknown global field so the decoded PSBT is
+  // exactly two bytes over the limit. Its Base64 text stays within the text
+  // limit, so the decoded-size check is what must reject it.
+  let base = psbt.serialize().len();
+  let pair_overhead = 1 + 1 + 5; // key length, key type, value length
+  let value_len = MAX_POF_DECODED_SIZE + 2 - base - pair_overhead;
+  psbt.unknown.insert(
+    bitcoin::psbt::raw::Key {
+      type_value: 0xfc,
+      key: Vec::new(),
+    },
+    vec![0; value_len],
+  );
+
+  let bytes = psbt.serialize();
+  assert_eq!(bytes.len(), MAX_POF_DECODED_SIZE + 2);
+
+  let encoded = format!(
+    "{POF_SIGNATURE_PREFIX}{}",
+    general_purpose::STANDARD.encode(&bytes)
+  );
+  assert_eq!(
+    encoded.len(),
+    POF_SIGNATURE_PREFIX.len() + MAX_POF_ENCODED_SIZE
+  );
+  assert!(matches!(
+    verify_pof_encoded(&address.to_string(), POF_P2TR_MESSAGE, &encoded),
+    Verification::Inconclusive
+  ));
+}
+
+#[test]
+fn legacy_encoded_verifier_rejects_oversized_signature_before_decoding() {
+  let payload = "A".repeat(MAX_LEGACY_ENCODED_SIZE + 1);
+
+  assert!(matches!(
+    crate::verify::verify_legacy_encoded(LEGACY_ADDRESS, "", &payload),
+    Err(Error::EncodedSignatureTooLong {
+      length,
+      max,
+    }) if length == MAX_LEGACY_ENCODED_SIZE + 1 && max == MAX_LEGACY_ENCODED_SIZE
+  ));
+}
+
+#[test]
 fn psbt_preflight_reads_zero_input_transactions_like_rust_bitcoin() {
   for outputs in [1, 2] {
     let unsigned = Transaction {
@@ -275,7 +363,7 @@ fn psbt_preflight_reads_zero_input_transactions_like_rust_bitcoin() {
     assert_eq!((decoded.inputs.len(), decoded.outputs.len()), (0, outputs));
     assert_eq!(
       preflight::psbt(&bytes),
-      Some(PsbtShape { inputs: 0, outputs })
+      Check::Valid(PsbtShape { inputs: 0, outputs })
     );
 
     let encoded = format!(
@@ -342,7 +430,7 @@ fn preflights_accept_every_mutation_rust_bitcoin_decodes() {
       decoded_psbts += 1;
       assert_eq!(
         shape,
-        Some(PsbtShape {
+        Check::Valid(PsbtShape {
           inputs: decoded.inputs.len(),
           outputs: decoded.outputs.len(),
         }),

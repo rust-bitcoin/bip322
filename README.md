@@ -37,6 +37,15 @@ The encoded APIs parse addresses with `Address::from_str(..).assume_checked()`
 and do not compare the WIF network with the address network. Callers that
 require a particular network must enforce that policy themselves.
 
+## Limits
+
+Encoded simple and full proofs are limited to 4 MB decoded, which is
+consensus-derived. Encoded proof-of-funds packets are limited to
+`MAX_POF_DECODED_SIZE` (16 MiB); larger packets are reported as
+`Verification::Inconclusive`. Witnesses over the local item limit are `Invalid`
+for v0 addresses and `Inconclusive` for v1 and later, where upgradeable rules
+may apply.
+
 ## Test Vectors
 
 - from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)

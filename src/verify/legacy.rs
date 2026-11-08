@@ -8,6 +8,16 @@ use super::*;
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = parse_address(address)?;
 
+  // A BIP-137 signature is always 65 bytes, so anything longer than its
+  // Base64 encoding is malformed. Reject it before allocating the decoded
+  // buffer.
+  if signature.len() > MAX_LEGACY_ENCODED_SIZE {
+    return Err(Error::EncodedSignatureTooLong {
+      length: signature.len(),
+      max: MAX_LEGACY_ENCODED_SIZE,
+    });
+  }
+
   let signature_bytes = general_purpose::STANDARD
     .decode(signature)
     .context(error::SignatureDecode { signature })?;
