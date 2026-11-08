@@ -69,6 +69,40 @@ fn clear_non_final_fields(input: &mut bitcoin::psbt::Input) {
   input.tap_merkle_root = None;
 }
 
+/// Finalizes a P2SH-P2WPKH input, deriving the redeem script when absent.
+fn finalize_p2sh_p2wpkh(input: &mut bitcoin::psbt::Input, challenge: &ScriptBuf) -> Result<()> {
+  let supplied_redeem_script = input.redeem_script.clone();
+  let (pub_key, signature) = single_partial_sig(input, challenge, |pub_key| {
+    let redeem_script = ScriptBuf::new_p2wpkh(
+      &pub_key
+        .wpubkey_hash()
+        .context(error::UncompressedPublicKey)?,
+    );
+    if supplied_redeem_script
+      .as_ref()
+      .is_some_and(|supplied| *supplied != redeem_script)
+    {
+      return Err(Error::PublicKeyMismatch);
+    }
+    Ok(ScriptBuf::new_p2sh(&redeem_script.script_hash()))
+  })?;
+
+  let redeem_script = ScriptBuf::new_p2wpkh(
+    &pub_key
+      .wpubkey_hash()
+      .context(error::UncompressedPublicKey)?,
+  );
+
+  let mut witness = Witness::new();
+  witness.push(signature.to_vec());
+  witness.push(pub_key.to_bytes());
+  input.final_script_witness = Some(witness);
+  input.final_script_sig = Some(push_only_script(&redeem_script));
+  clear_non_final_fields(input);
+
+  Ok(())
+}
+
 /// Finalizes one input against the script pubkey it spends.
 fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Result<()> {
   // Taproot key path: the tap_key_sig becomes a one-element witness.
@@ -88,24 +122,18 @@ fn finalize_input(psbt: &mut Psbt, index: usize, challenge: &ScriptBuf) -> Resul
   }
 
   // P2SH-P2WPKH: the redeem script is pushed in the script_sig.
-  if let Some(redeem_script) = psbt.inputs[index].redeem_script.clone() {
-    if redeem_script.is_p2wpkh() {
-      let (pub_key, signature) = single_partial_sig(&psbt.inputs[index], challenge, |pk| {
-        let wpkh = pk.wpubkey_hash().context(error::UncompressedPublicKey)?;
-        if ScriptBuf::new_p2wpkh(&wpkh) != redeem_script {
-          return Err(Error::PublicKeyMismatch);
-        }
-        Ok(ScriptBuf::new_p2sh(&redeem_script.script_hash()))
-      })?;
-
-      let mut witness = Witness::new();
-      witness.push(signature.to_vec());
-      witness.push(pub_key.to_bytes());
-      psbt.inputs[index].final_script_witness = Some(witness);
-      psbt.inputs[index].final_script_sig = Some(push_only_script(&redeem_script));
-      clear_non_final_fields(&mut psbt.inputs[index]);
-      return Ok(());
-    }
+  let redeem_script = psbt.inputs[index].redeem_script.clone();
+  let missing_p2sh_p2wpkh = redeem_script.is_none()
+    && challenge.is_p2sh()
+    && psbt.inputs[index].witness_script.is_none()
+    && psbt.inputs[index].partial_sigs.len() == 1;
+  if redeem_script
+    .as_ref()
+    .is_some_and(|redeem_script| redeem_script.is_p2wpkh())
+    || missing_p2sh_p2wpkh
+  {
+    finalize_p2sh_p2wpkh(&mut psbt.inputs[index], challenge)?;
+    return Ok(());
   }
 
   if challenge.is_p2wpkh() {
