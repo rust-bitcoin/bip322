@@ -831,7 +831,10 @@ fn conflicting_utxo_fields_are_rejected() {
   let (address, psbt) = pof_with_bare_proof_input(ScriptBuf::from_bytes(vec![
     opcodes::all::OP_PUSHNUM_1.to_u8(),
   ]));
-  assert_valid(verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()));
+  assert!(matches!(
+    verify_pof(&address, POF_P2TR_MESSAGE, psbt.clone()),
+    Verification::Inconclusive
+  ));
 
   // The proof input's witness_utxo disagrees with its previous transaction.
   let mut conflicting = psbt;

@@ -214,9 +214,9 @@ fn verify_schnorr(
 }
 
 /// Whether the tapscript contains an OP_SUCCESSx opcode before its first
-/// undecodable or non-minimal push.
+/// undecodable push.
 fn contains_op_success(tapscript: &Script) -> bool {
-  for instruction in tapscript.instructions_minimal() {
+  for instruction in tapscript.instructions() {
     match instruction {
       Ok(Instruction::Op(opcode))
         if opcode.classify(ClassifyContext::TapScript) == Class::SuccessOp =>

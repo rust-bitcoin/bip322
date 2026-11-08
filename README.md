@@ -16,6 +16,12 @@ PRs on the interface design and security is welcome and encouraged.
 - [x] full (proof-of-funds)
 - [x] legacy (BIP-137)
 
+Only the dedicated script templates can return `Verification::Valid`. Scripts
+evaluated by the miniscript interpreter fallback return
+`Verification::Inconclusive` when satisfied, since the fallback cannot prove
+every consensus rule. It still returns `Verification::Invalid` when it can
+prove a required-rule failure.
+
 The goal is to provide a full signing and verifying library similar to
 [this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
 

@@ -26,21 +26,22 @@ pub enum Verification {
     /// `nSequence` of `to_sign`'s first input — the age S.
     age: Sequence,
   },
-  /// The validator could not interpret the script; neither accepted nor rejected.
+  /// The validator could not establish full consensus validity; neither
+  /// accepted nor rejected.
   Inconclusive,
   /// The proof failed a required check.
   Invalid(Error),
 }
 
 /// Per-input outcome: `Valid`, or `Inconclusive` when this validator cannot
-/// interpret the input's script. Failed checks travel in the `Err` channel of
-/// the internal helpers and become [`Verification::Invalid`] at the public
+/// fully verify the input's script. Failed checks travel in the `Err` channel
+/// of the internal helpers and become [`Verification::Invalid`] at the public
 /// boundary.
 #[derive(Debug)]
 enum InputVerification {
   /// The input's script was interpreted and its signature(s) check out.
   Valid,
-  /// The input's script cannot be interpreted by this validator
+  /// The input's script cannot be fully verified by this validator
   Inconclusive,
 }
 
