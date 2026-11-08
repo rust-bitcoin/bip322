@@ -16,6 +16,12 @@ PRs on the interface design and security is welcome and encouraged.
 - [x] full (proof-of-funds)
 - [x] legacy (BIP-137)
 
+Only the dedicated script templates can return `Verification::Valid`. Scripts
+evaluated by the miniscript interpreter fallback return
+`Verification::Inconclusive` when satisfied, since the fallback cannot prove
+every consensus rule. It still returns `Verification::Invalid` when it can
+prove a required-rule failure.
+
 The goal is to provide a full signing and verifying library similar to
 [this](https://github.com/ACken2/bip322-js/tree/main) Javascript library.
 
@@ -23,6 +29,15 @@ PSBT interoperability is currently limited to PSBTv0. PSBTv2 signing requests
 are not supported by the PSBT creator, signer, or finalizer roles. Taproot
 script-path PSBT signing and finalization are not supported; only key-path
 spends are.
+
+## Network
+
+A BIP-322 proof binds the `scriptPubKey`, not the network. The same proof can
+therefore verify for equivalent mainnet, testnet, or signet `scriptPubKey`s.
+
+The encoded APIs parse addresses with `Address::from_str(..).assume_checked()`
+and do not compare the WIF network with the address network. Callers that
+require a particular network must enforce that policy themselves.
 
 ## Test Vectors
 

@@ -26,21 +26,22 @@ pub enum Verification {
     /// `nSequence` of `to_sign`'s first input — the age S.
     age: Sequence,
   },
-  /// The validator could not interpret the script; neither accepted nor rejected.
+  /// The validator could not establish full consensus validity; neither
+  /// accepted nor rejected.
   Inconclusive,
   /// The proof failed a required check.
   Invalid(Error),
 }
 
 /// Per-input outcome: `Valid`, or `Inconclusive` when this validator cannot
-/// interpret the input's script. Failed checks travel in the `Err` channel of
-/// the internal helpers and become [`Verification::Invalid`] at the public
+/// fully verify the input's script. Failed checks travel in the `Err` channel
+/// of the internal helpers and become [`Verification::Invalid`] at the public
 /// boundary.
 #[derive(Debug)]
 enum InputVerification {
   /// The input's script was interpreted and its signature(s) check out.
   Valid,
-  /// The input's script cannot be interpreted by this validator
+  /// The input's script cannot be fully verified by this validator
   Inconclusive,
 }
 
@@ -66,6 +67,10 @@ impl Verification {
 ///
 /// A malformed encoding is reported as [`Verification::Invalid`], like any
 /// other failed check — the return value is always the verdict.
+///
+/// The address is parsed with `Address::from_str(..).assume_checked()`, and
+/// the proof binds its `scriptPubKey` rather than the network. Callers that
+/// require a particular network must enforce it themselves.
 pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> Verification {
   decode_simple(address, signature)
     .map(|(address, witness)| verify_simple(&address, message, witness))
@@ -76,6 +81,10 @@ pub fn verify_simple_encoded(address: &str, message: &str, signature: &str) -> V
 ///
 /// A malformed encoding is reported as [`Verification::Invalid`], like any
 /// other failed check — the return value is always the verdict.
+///
+/// The address is parsed with `Address::from_str(..).assume_checked()`, and
+/// the proof binds its `scriptPubKey` rather than the network. Callers that
+/// require a particular network must enforce it themselves.
 pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
   decode_full(address, to_sign)
     .map(|(address, to_sign)| verify_full(&address, message, to_sign))
@@ -90,6 +99,10 @@ pub fn verify_full_encoded(address: &str, message: &str, to_sign: &str) -> Verif
 /// other failed check — the return value is always the verdict. A proof with
 /// more than [`MAX_PROOF_INPUTS`] inputs is [`Verification::Inconclusive`]
 /// without being decoded, as [`verify_pof`] reports it.
+///
+/// The address is parsed with `Address::from_str(..).assume_checked()`, and
+/// the proof binds its `scriptPubKey` rather than the network. Callers that
+/// require a particular network must enforce it themselves.
 pub fn verify_pof_encoded(address: &str, message: &str, to_sign: &str) -> Verification {
   match decode_pof(address, to_sign) {
     Ok(Some((address, psbt))) => verify_pof(&address, message, psbt),

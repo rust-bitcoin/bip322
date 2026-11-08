@@ -1,11 +1,15 @@
 use super::*;
-use miniscript::interpreter::{Interpreter, KeySigPair, SatisfiedConstraint};
+use miniscript::interpreter::{
+  Error as InterpreterError, Interpreter, KeySigPair, SatisfiedConstraint,
+};
 
 /// Fallback verification via the miniscript interpreter for scripts the
 /// templates cannot classify.
 ///
-/// Returns `Inconclusive` when the interpreter cannot parse the spend, so a
-/// script this validator does not understand is neither accepted nor rejected.
+/// Returns `Inconclusive` even when the interpreter fully satisfies the spend,
+/// because only the dedicated templates can establish full consensus validity.
+/// It still returns `Invalid` when the interpreter proves a required-rule
+/// failure.
 pub(crate) fn verify_with_interpreter(spend: &Spend) -> Result<InputVerification> {
   let secp = Secp256k1::verification_only();
   let txin = spend.txin();
@@ -34,21 +38,71 @@ pub(crate) fn verify_with_interpreter(spend: &Spend) -> Result<InputVerification
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
         check_required_signature(key_sig, spend)?
       }
-      Ok(_) => {}
-      Err(miniscript::interpreter::Error::EcdsaSig(_))
-      | Err(miniscript::interpreter::Error::SchnorrSig(_))
-      | Err(miniscript::interpreter::Error::InvalidEcdsaSignature(_))
-      | Err(miniscript::interpreter::Error::InvalidSchnorrSignature(_))
-      | Err(miniscript::interpreter::Error::InvalidSchnorrSighashType(_)) => {
-        return Err(Error::SignatureInvalid {
-          source: bitcoin::secp256k1::Error::IncorrectSignature,
-        })
+      Ok(SatisfiedConstraint::AbsoluteTimelock { .. })
+        if spend.txin().sequence == Sequence::MAX =>
+      {
+        return Err(Error::ScriptNotSatisfied)
       }
-      Err(_) => return Err(Error::ScriptNotSatisfied),
+      Ok(SatisfiedConstraint::RelativeTimelock { .. }) if spend.to_sign().version < Version(2) => {
+        return Err(Error::ScriptNotSatisfied)
+      }
+      Ok(_) => {}
+      Err(error) => match required_rule_failure(error) {
+        Some(error) => return Err(error),
+        None => return Ok(InputVerification::Inconclusive),
+      },
     }
   }
 
-  Ok(InputVerification::Valid)
+  Ok(InputVerification::Inconclusive)
+}
+
+/// Maps an interpreter error to the required-rule failure it proves. Unsupported
+/// or ambiguous evaluation returns `None` and stays inconclusive.
+fn required_rule_failure(error: InterpreterError) -> Option<Error> {
+  match error {
+    InterpreterError::AbsoluteLockTimeNotMet(_)
+    | InterpreterError::AbsoluteLockTimeComparisonInvalid(_, _)
+    | InterpreterError::RelativeLockTimeNotMet(_)
+    | InterpreterError::RelativeLockTimeDisabled(_)
+    | InterpreterError::ExpectedPush
+    | InterpreterError::HashPreimageLengthMismatch
+    | InterpreterError::InsufficientSignaturesMultiSig
+    | InterpreterError::MissingExtraZeroMultiSig
+    | InterpreterError::MultiSigEvaluationError
+    | InterpreterError::PkHashVerifyFail(_)
+    | InterpreterError::ScriptSatisfactionError
+    | InterpreterError::UnexpectedStackEnd
+    | InterpreterError::VerifyFailed => Some(Error::ScriptNotSatisfied),
+    InterpreterError::EcdsaSig(_)
+    | InterpreterError::InvalidEcdsaSignature(_)
+    | InterpreterError::InvalidSchnorrSignature(_)
+    | InterpreterError::InvalidSchnorrSighashType(_)
+    | InterpreterError::NonStandardSighash(_)
+    | InterpreterError::PkEvaluationError(_)
+    | InterpreterError::SchnorrSig(_)
+    | InterpreterError::Secp(_) => Some(Error::SignatureInvalid {
+      source: bitcoin::secp256k1::Error::IncorrectSignature,
+    }),
+    InterpreterError::SighashError(source) => Some(Error::SigHashTypeInvalid { source }),
+    InterpreterError::ControlBlockParse(_)
+    | InterpreterError::ControlBlockVerificationError
+    | InterpreterError::IncorrectPubkeyHash
+    | InterpreterError::IncorrectScriptHash
+    | InterpreterError::IncorrectWPubkeyHash
+    | InterpreterError::IncorrectWScriptHash
+    | InterpreterError::NonEmptyWitness
+    | InterpreterError::NonEmptyScriptSig
+    | InterpreterError::UnexpectedStackBoolean
+    | InterpreterError::UnexpectedStackElementPush => Some(Error::InvalidWitness),
+    InterpreterError::PubkeyParseError
+    | InterpreterError::XOnlyPublicKeyParseError
+    | InterpreterError::UncompressedPubkey => Some(Error::InvalidPublicKey),
+    InterpreterError::CannotInferTrDescriptors
+    | InterpreterError::CouldNotEvaluate
+    | InterpreterError::Miniscript(_)
+    | InterpreterError::TapAnnexUnsupported => None,
+  }
 }
 
 /// Enforces the BIP-322 required signature rules for a signature the script
@@ -113,14 +167,21 @@ pub(crate) fn verify_taproot_annex_required_rules(spend: &Spend) -> Result<()> {
     match result {
       Ok(SatisfiedConstraint::PublicKey { key_sig })
       | Ok(SatisfiedConstraint::PublicKeyHash { key_sig, .. }) => {
-        // Sighash-type failures are required-rule failures we can detect
-        // without verifying the signature itself.
         check_required_signature(key_sig, spend)?
       }
+      Ok(SatisfiedConstraint::AbsoluteTimelock { .. }) if txin.sequence == Sequence::MAX => {
+        return Err(Error::ScriptNotSatisfied)
+      }
+      Ok(SatisfiedConstraint::RelativeTimelock { .. }) if spend.to_sign().version < Version(2) => {
+        return Err(Error::ScriptNotSatisfied)
+      }
       Ok(_) => {}
-      // Signature verification is unavailable with the annex present. Do not
-      // turn an approximate evaluation into a required-rule failure.
-      Err(_) => return Ok(()),
+      Err(error) => {
+        if let Some(error) = required_rule_failure(error) {
+          return Err(error);
+        }
+        return Ok(());
+      }
     }
   }
 
