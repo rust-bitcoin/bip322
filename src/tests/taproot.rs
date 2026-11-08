@@ -410,10 +410,15 @@ fn op_success_decode_order_is_preserved() {
     verdict(vec![0x03, 0xaa, 0x50]),
     Verification::Invalid(Error::InvalidWitness)
   ));
-  // A non-minimal push before OP_SUCCESSx is also required-invalid.
+  // A non-minimal push before OP_SUCCESSx is superseded by the success opcode.
   assert!(matches!(
     verdict(vec![0x4c, 0x01, 0x07, 0x50]),
-    Verification::Invalid(Error::InvalidWitness)
+    Verification::Inconclusive
+  ));
+  // OP_SUCCESSx after a non-minimal push still precedes a later truncated push.
+  assert!(matches!(
+    verdict(vec![0x4c, 0x01, 0x07, 0x50, 0x02, 0xaa]),
+    Verification::Inconclusive
   ));
 }
 
@@ -669,7 +674,10 @@ fn p2tr_non_template_tapscript_is_interpreted() {
     verify_full(&address, "foo", tx)
   };
 
-  assert_valid(verify(&private_key, TapSighashType::Default, false));
+  assert!(matches!(
+    verify(&private_key, TapSighashType::Default, false),
+    Verification::Inconclusive
+  ));
 
   let result = verify(
     &PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap(),

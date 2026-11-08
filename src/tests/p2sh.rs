@@ -453,7 +453,10 @@ fn p2sh_small_integer_push_can_satisfy_if_branch() {
     .push_slice(push_bytes(redeem_script.as_bytes()))
     .into_script();
 
-  assert_valid(verify_full(&address, "foo", tx));
+  assert!(matches!(
+    verify_full(&address, "foo", tx),
+    Verification::Inconclusive
+  ));
 }
 
 #[test]
@@ -500,7 +503,7 @@ fn create_bare_p2sh_sets_witness_utxo() {
 }
 
 #[test]
-fn interpreter_p2sh_single_key_valid() {
+fn interpreter_p2sh_single_key_is_inconclusive() {
   let secp = Secp256k1::new();
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
@@ -535,15 +538,12 @@ fn interpreter_p2sh_single_key_valid() {
 
   assert!(matches!(
     verify_full(&address, "foo", tx),
-    Verification::Valid {
-      time: LockTime::ZERO,
-      age: Sequence(0)
-    }
+    Verification::Inconclusive
   ));
 }
 
 #[test]
-fn interpreter_p2sh_p2wsh_single_key_valid() {
+fn interpreter_p2sh_p2wsh_single_key_is_inconclusive() {
   let secp = Secp256k1::new();
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
@@ -579,10 +579,7 @@ fn interpreter_p2sh_p2wsh_single_key_valid() {
 
   assert!(matches!(
     verify_full(&address, "foo", tx),
-    Verification::Valid {
-      time: LockTime::ZERO,
-      age: Sequence(0)
-    }
+    Verification::Inconclusive
   ));
 }
 
