@@ -3,8 +3,11 @@
 //!
 //! rust-bitcoin allocates from CompactSize counts and lengths before reading
 //! the data they describe, so every count and length is first checked against
-//! the bytes actually present. These checks never allocate, and they accept
-//! every encoding rust-bitcoin decodes, reporting the same shape.
+//! the bytes actually present. These checks never allocate. The unbounded
+//! witness and transaction checks accept every encoding rust-bitcoin decodes,
+//! reporting the same shape. The bounded preflights additionally report
+//! witnesses with more items than a caller-supplied limit, leaving the caller
+//! to decide whether that limit is a required rule or an upgradeable one.
 
 use super::*;
 
@@ -21,76 +24,141 @@ pub(crate) struct PsbtShape {
   pub(crate) outputs: usize,
 }
 
+/// The result of a preflight check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Check<T> {
+  /// The value is structurally valid.
+  Valid(T),
+  /// The value is structurally malformed.
+  Malformed,
+  /// The value is structurally valid but exceeds the witness item limit.
+  OverLimit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreflightError {
+  Malformed,
+  OverLimit,
+}
+
 /// Checks a consensus-encoded witness.
+#[cfg(test)]
 pub(crate) fn witness(bytes: &[u8]) -> bool {
-  witness_with_limit(bytes, None)
+  matches!(witness_with_limit(bytes, None), Check::Valid(()))
 }
 
 /// Checks a consensus-encoded witness with at most `max_items` items when
 /// `max_items` is set.
-pub(crate) fn witness_with_limit(bytes: &[u8], max_items: Option<usize>) -> bool {
-  Cursor::new(bytes).witness(max_items).is_some()
+pub(crate) fn witness_with_limit(bytes: &[u8], max_items: Option<usize>) -> Check<()> {
+  check(Cursor::new(bytes).witness(max_items))
 }
 
 /// Checks a consensus-encoded transaction.
+#[cfg(test)]
 pub(crate) fn transaction(bytes: &[u8]) -> bool {
-  transaction_with_limit(bytes, None)
+  matches!(transaction_with_limit(bytes, None), Check::Valid(()))
 }
 
 /// Checks a consensus-encoded transaction with at most `max_items` items per
 /// witness when `max_items` is set.
-pub(crate) fn transaction_with_limit(bytes: &[u8], max_items: Option<usize>) -> bool {
-  Cursor::new(bytes).transaction(max_items).is_some()
+pub(crate) fn transaction_with_limit(bytes: &[u8], max_items: Option<usize>) -> Check<()> {
+  check(Cursor::new(bytes).transaction(max_items))
 }
 
-/// Checks a PSBT and returns the shape of its unsigned transaction.
-pub(crate) fn psbt(bytes: &[u8]) -> Option<PsbtShape> {
+fn check(result: Result<(), PreflightError>) -> Check<()> {
+  match result {
+    Ok(()) => Check::Valid(()),
+    Err(PreflightError::Malformed) => Check::Malformed,
+    Err(PreflightError::OverLimit) => Check::OverLimit,
+  }
+}
+
+/// Checks a PSBT and returns the shape of its unsigned transaction. Witness
+/// item counts are bounded; `OverLimit` reports a PSBT whose final witness or
+/// previous transaction may be upgradeable but exceeds the limit.
+pub(crate) fn psbt(bytes: &[u8]) -> Check<PsbtShape> {
+  match psbt_inner(bytes) {
+    Ok(shape) => Check::Valid(shape),
+    Err(PreflightError::Malformed) => Check::Malformed,
+    Err(PreflightError::OverLimit) => Check::OverLimit,
+  }
+}
+
+fn psbt_inner(bytes: &[u8]) -> Result<PsbtShape, PreflightError> {
   let mut cursor = Cursor::new(bytes);
-  if cursor.take(5)? != b"psbt\xff" {
-    return None;
+  if cursor.take(5).ok_or(PreflightError::Malformed)? != b"psbt\xff" {
+    return Err(PreflightError::Malformed);
   }
 
   let mut shape = None;
-  while let Some(pair) = cursor.pair()? {
+  loop {
+    let pair = cursor.pair().ok_or(PreflightError::Malformed)?;
+    let Some(pair) = pair else {
+      break;
+    };
     if pair.key_type == PSBT_GLOBAL_UNSIGNED_TX && pair.key_data.is_empty() {
       // rust-bitcoin rejects a second unsigned transaction.
       if shape.is_some() {
-        return None;
+        return Err(PreflightError::Malformed);
       }
       let mut unsigned_tx = Cursor::new(pair.value);
-      shape = Some(unsigned_tx.unsigned_transaction()?);
+      shape = Some(
+        unsigned_tx
+          .unsigned_transaction()
+          .ok_or(PreflightError::Malformed)?,
+      );
       if unsigned_tx.remaining() != 0 {
-        return None;
+        return Err(PreflightError::Malformed);
       }
     }
   }
-  let shape = shape?;
+  let shape = shape.ok_or(PreflightError::Malformed)?;
 
   for _ in 0..shape.inputs {
-    while let Some(pair) = cursor.pair()? {
+    loop {
+      let pair = cursor.pair().ok_or(PreflightError::Malformed)?;
+      let Some(pair) = pair else {
+        break;
+      };
       if !pair.key_data.is_empty() {
         continue;
       }
-      let valid = match pair.key_type {
+      match pair.key_type {
         PSBT_IN_NON_WITNESS_UTXO => {
-          pair.value.len() <= MAX_ENCODING_SIZE && transaction(pair.value)
+          if pair.value.len() > MAX_ENCODING_SIZE {
+            return Err(PreflightError::Malformed);
+          }
+          match transaction_with_limit(pair.value, Some(MAX_WITNESS_ITEMS)) {
+            Check::Valid(()) => {}
+            Check::Malformed => return Err(PreflightError::Malformed),
+            Check::OverLimit => return Err(PreflightError::OverLimit),
+          }
         }
         PSBT_IN_FINAL_SCRIPTWITNESS => {
-          pair.value.len() <= MAX_POF_DECODED_SIZE && witness(pair.value)
+          if pair.value.len() > MAX_ENCODING_SIZE {
+            return Err(PreflightError::Malformed);
+          }
+          match witness_with_limit(pair.value, Some(MAX_WITNESS_ITEMS)) {
+            Check::Valid(()) => {}
+            Check::Malformed => return Err(PreflightError::Malformed),
+            Check::OverLimit => return Err(PreflightError::OverLimit),
+          }
         }
-        _ => true,
-      };
-      if !valid {
-        return None;
+        _ => {}
       }
     }
   }
 
   for _ in 0..shape.outputs {
-    while cursor.pair()?.is_some() {}
+    loop {
+      let pair = cursor.pair().ok_or(PreflightError::Malformed)?;
+      if pair.is_none() {
+        break;
+      }
+    }
   }
 
-  Some(shape)
+  Ok(shape)
 }
 
 /// A key-value pair of a PSBT map.
@@ -150,17 +218,17 @@ impl<'a> Cursor<'a> {
     (count <= self.remaining() as u64 / size).then_some(count)
   }
 
-  fn witness(&mut self, max_items: Option<usize>) -> Option<()> {
+  fn witness(&mut self, max_items: Option<usize>) -> Result<(), PreflightError> {
     // Every item needs at least its length prefix.
-    let count = self.count(1)?;
+    let count = self.count(1).ok_or(PreflightError::Malformed)?;
     if max_items.is_some_and(|max_items| count > max_items as u64) {
-      return None;
+      return Err(PreflightError::OverLimit);
     }
     for _ in 0..count {
-      let length = self.compact_size()?;
-      self.skip(length)?;
+      let length = self.compact_size().ok_or(PreflightError::Malformed)?;
+      self.skip(length).ok_or(PreflightError::Malformed)?;
     }
-    Some(())
+    Ok(())
   }
 
   fn inputs(&mut self) -> Option<u64> {
@@ -189,21 +257,21 @@ impl<'a> Cursor<'a> {
 
   /// A transaction, which rust-bitcoin reads in the BIP-144 witness
   /// serialization when the input count is zero.
-  fn transaction(&mut self, max_items: Option<usize>) -> Option<()> {
-    self.skip(4)?;
-    if self.inputs()? == 0 {
-      if self.take(1)? != [1] {
-        return None;
+  fn transaction(&mut self, max_items: Option<usize>) -> Result<(), PreflightError> {
+    self.skip(4).ok_or(PreflightError::Malformed)?;
+    if self.inputs().ok_or(PreflightError::Malformed)? == 0 {
+      if self.take(1).ok_or(PreflightError::Malformed)? != [1] {
+        return Err(PreflightError::Malformed);
       }
-      let inputs = self.inputs()?;
-      self.outputs()?;
+      let inputs = self.inputs().ok_or(PreflightError::Malformed)?;
+      self.outputs().ok_or(PreflightError::Malformed)?;
       for _ in 0..inputs {
         self.witness(max_items)?;
       }
     } else {
-      self.outputs()?;
+      self.outputs().ok_or(PreflightError::Malformed)?;
     }
-    self.skip(4)
+    self.skip(4).ok_or(PreflightError::Malformed)
   }
 
   /// A PSBT's unsigned transaction, which rust-bitcoin reads without the

@@ -59,6 +59,8 @@ pub enum Error {
     length: usize,
     encoded_signature: Vec<u8>,
   },
+  #[snafu(display("Encoded signature is {length} bytes, maximum is {max}"))]
+  EncodedSignatureTooLong { length: usize, max: usize },
   #[snafu(display("Invalid signature"))]
   SignatureInvalid { source: bitcoin::secp256k1::Error },
   #[snafu(display("Invalid sighash"))]

@@ -20,12 +20,17 @@ pub(crate) const MAX_ENCODING_SIZE: usize = 4_000_000;
 /// Maximum length of the Base64 text encoding of [`MAX_ENCODING_SIZE`] bytes.
 pub(crate) const MAX_ENCODED_SIZE: usize = base64_length(MAX_ENCODING_SIZE);
 
-/// Maximum decoded size of a proof of funds.
-pub(crate) const MAX_POF_DECODED_SIZE: usize = 16 * 1024 * 1024;
+/// Maximum decoded size of a proof of funds accepted by the encoded
+/// verifier. Larger proofs are reported as [`Verification::Inconclusive`].
+pub const MAX_POF_DECODED_SIZE: usize = 16 * 1024 * 1024;
 
 /// Maximum length of the Base64 text encoding of [`MAX_POF_DECODED_SIZE`]
 /// bytes.
 pub(crate) const MAX_POF_ENCODED_SIZE: usize = base64_length(MAX_POF_DECODED_SIZE);
+
+/// Maximum length of the Base64 text encoding of a BIP-137 signature, which is
+/// always 65 bytes.
+pub(crate) const MAX_LEGACY_ENCODED_SIZE: usize = base64_length(65);
 
 /// Maximum number of items in a v0 or v1 witness: the stack, witness script,
 /// control block, and annex.
