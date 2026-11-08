@@ -1,6 +1,10 @@
 use super::*;
 
 /// Verifies a BIP-137 legacy proof from string inputs.
+///
+/// The address is parsed with `Address::from_str(..).assume_checked()`, and
+/// the proof binds its `scriptPubKey` rather than the network. Callers that
+/// require a particular network must enforce it themselves.
 pub fn verify_legacy_encoded(address: &str, message: &str, signature: &str) -> Result<()> {
   let address = parse_address(address)?;
 

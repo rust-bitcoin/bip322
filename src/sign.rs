@@ -22,6 +22,10 @@ pub struct ProofInput {
 }
 
 /// Signs a message in the BIP-137 legacy format from string inputs.
+///
+/// The WIF's network is not compared with the address's, and the proof binds
+/// the `scriptPubKey` rather than the network. Callers that require a
+/// particular network must enforce it themselves.
 pub fn sign_legacy_encoded(address: &str, message: &str, wif_private_key: &str) -> Result<String> {
   let address = parse_address(address)?;
   let private_key = PrivateKey::from_wif(wif_private_key).context(error::PrivateKeyParse)?;
@@ -56,6 +60,10 @@ pub fn sign_legacy(
 }
 
 /// Signs the BIP-322 simple from spec-compliant string encodings.
+///
+/// The WIF's network is not compared with the address's, and the proof binds
+/// the `scriptPubKey` rather than the network. Callers that require a
+/// particular network must enforce it themselves.
 pub fn sign_simple_encoded(
   address: &str,
   message: &str,
@@ -78,6 +86,10 @@ pub fn sign_simple_encoded(
 }
 
 /// Signs the BIP-322 full from spec-compliant string encodings.
+///
+/// The WIF's network is not compared with the address's, and the proof binds
+/// the `scriptPubKey` rather than the network. Callers that require a
+/// particular network must enforce it themselves.
 pub fn sign_full_encoded(
   address: &str,
   message: &str,
@@ -149,6 +161,10 @@ pub fn sign_full(
 }
 
 /// Signs the BIP-322 full proof of funds from string inputs.
+///
+/// The WIF's network is not compared with the address's, and the proof binds
+/// the `scriptPubKey` rather than the network. Callers that require a
+/// particular network must enforce it themselves.
 pub fn sign_pof_encoded(
   address: &str,
   message: &str,

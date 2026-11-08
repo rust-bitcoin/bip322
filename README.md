@@ -28,6 +28,15 @@ The goal is to provide a full signing and verifying library similar to
 PSBT interoperability is currently limited to PSBTv0. PSBTv2 signing requests
 are not supported by the PSBT creator, signer, or finalizer roles.
 
+## Network
+
+A BIP-322 proof binds the `scriptPubKey`, not the network. The same proof can
+therefore verify for equivalent mainnet, testnet, or signet `scriptPubKey`s.
+
+The encoded APIs parse addresses with `Address::from_str(..).assume_checked()`
+and do not compare the WIF network with the address network. Callers that
+require a particular network must enforce that policy themselves.
+
 ## Test Vectors
 
 - from Bitcoin Core [repo](https://github.com/bitcoin/bitcoin/blob/29b28d07fa958b89e1c7916fda5d8654474cf495/src/test/util_tests.cpp#L2747)
