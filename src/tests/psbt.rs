@@ -112,7 +112,7 @@ fn psbt_roles_reject_ordinary_psbt() {
   let to_spend = create_to_spend(&address, "foo");
 
   // no PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   assert!(detect_bip322_psbt(&psbt).is_none());
 
   assert!(matches!(

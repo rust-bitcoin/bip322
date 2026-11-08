@@ -118,15 +118,14 @@ fn sign_p2sh_p2wpkh_rejects_mismatched_key() {
     .assume_checked();
 
   let to_spend = create_to_spend(&victim, "foo");
-  let to_sign = create_to_sign(&to_spend, None, LockParams::default());
+  let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   assert!(matches!(
-    create_message_signature_p2wpkh(
+    create_message_signature_p2sh_p2wpkh(
       &to_sign,
       &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
       &to_spend.output[0],
       0,
-      true,
     ),
     Err(Error::PublicKeyMismatch)
   ));
@@ -340,7 +339,7 @@ fn codeseparator_in_p2sh_p2wsh_full_is_invalid() {
   let address = Address::p2shwsh(&witness_script, bitcoin::Network::Bitcoin);
   let p2wsh_program = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
   let to_spend = create_to_spend(&address, "msg");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let mut witness = Witness::new();
   witness.push(witness_script.as_bytes());
@@ -409,7 +408,9 @@ fn bare_p2sh_non_minimal_multisig_pubkey_push_is_invalid() {
   let multisig = non_minimal_one_of_one_multisig(&private_key.public_key(&secp));
   let address = Address::p2sh(&multisig, bitcoin::Network::Bitcoin).unwrap();
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   let sighash = SighashCache::new(&mut tx)
     .legacy_signature_hash(0, &multisig, EcdsaSighashType::All.to_u32())
     .unwrap();
@@ -444,7 +445,9 @@ fn p2sh_small_integer_push_can_satisfy_if_branch() {
     .into_script();
   let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   tx.input[0].script_sig = ScriptBuf::builder()
     .push_opcode(opcodes::all::OP_PUSHNUM_1)
     .push_slice(push_bytes(redeem_script.as_bytes()))
@@ -471,7 +474,9 @@ fn p2sh_small_integer_pass_through_is_not_rejected() {
     opcodes::all::OP_PUSHNUM_2,
     opcodes::all::OP_PUSHNUM_16,
   ] {
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].script_sig = ScriptBuf::builder()
       .push_opcode(opcode)
       .push_slice(push_bytes(redeem_script.as_bytes()))
@@ -510,7 +515,7 @@ fn interpreter_p2sh_single_key_is_inconclusive() {
   let address = Address::p2sh(&redeem_script, bitcoin::Network::Bitcoin).unwrap();
 
   let to_spend = create_to_spend(&address, "foo");
-  let psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   let mut tx = psbt.unsigned_tx;
 
   let sighash = SighashCache::new(tx.clone())
@@ -551,7 +556,7 @@ fn interpreter_p2sh_p2wsh_single_key_is_inconclusive() {
   let address = Address::p2sh(&p2wsh_program, bitcoin::Network::Bitcoin).unwrap();
 
   let to_spend = create_to_spend(&address, "foo");
-  let psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   let mut tx = psbt.unsigned_tx;
 
   let sighash = SighashCache::new(tx.clone())
@@ -596,7 +601,9 @@ fn oversized_bare_p2sh_redeem_script_is_invalid() {
   let script_pubkey = ScriptBuf::new_p2sh(&redeem.script_hash());
   let address = Address::from_script(&script_pubkey, bitcoin::Network::Bitcoin).unwrap();
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   let sighash = SighashCache::new(&mut tx)
     .legacy_signature_hash(0, &redeem, EcdsaSighashType::All.to_u32())
     .unwrap();

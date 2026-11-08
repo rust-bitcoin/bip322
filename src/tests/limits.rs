@@ -20,6 +20,7 @@ fn verify_p2wsh(witness_script: &ScriptBuf, witness: Witness) -> Verification {
     None,
     LockParams::default(),
   )
+  .unwrap()
   .unsigned_tx;
   to_sign.input[0].witness = witness;
   verify_full(&address, "foo", to_sign)
@@ -154,6 +155,7 @@ fn scripts_are_limited_to_10000_bytes() {
       None,
       LockParams::default(),
     )
+    .unwrap()
     .unsigned_tx;
     to_sign.input[0].script_sig = ScriptBuf::builder()
       .push_slice(push_bytes(&signature))
@@ -223,6 +225,7 @@ fn p2sh_stack_is_limited_to_1000_items_of_520_bytes() {
       None,
       LockParams::default(),
     )
+    .unwrap()
     .unsigned_tx;
     to_sign.input[0].script_sig = stack
       .iter()

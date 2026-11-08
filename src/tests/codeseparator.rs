@@ -15,7 +15,7 @@ fn codeseparator_spend_is_invalid() {
   let address = Address::p2wsh(&codeseparator_script, bitcoin::Network::Bitcoin);
 
   let to_spend = create_to_spend(&address, "msg");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let mut witness = Witness::new();
   witness.push(codeseparator_script.as_bytes());
@@ -41,6 +41,7 @@ fn codeseparator_spend_is_invalid() {
 
   let to_spend = create_to_spend(&address, "msg");
   let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
     .extract_tx()
     .unwrap();
 
@@ -84,6 +85,7 @@ fn codeseparator_spend_is_invalid() {
 
   let to_spend = create_to_spend(&address, "msg");
   let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
     .extract_tx()
     .unwrap();
 
@@ -142,7 +144,7 @@ fn codeseparator_byte_in_pushed_data_is_not_an_opcode() {
   let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
 
   let to_spend = create_to_spend(&address, "msg");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let mut witness = Witness::new();
   witness.push::<&[u8]>(&[]);

@@ -55,7 +55,7 @@ fn interpreter_inexpressible_script_is_inconclusive() {
   let address = Address::p2wsh(&witness_script, bitcoin::Network::Bitcoin);
 
   let to_spend = create_to_spend(&address, "msg");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let mut witness = Witness::new();
   witness.push::<&[u8]>(&[]);
@@ -154,7 +154,7 @@ fn interpreter_p2wsh_hashlock_is_inconclusive() {
 
   // no signature, so this builds the spend directly rather than via p2wsh_interpreter_spend
   let to_spend = create_to_spend(&address, "foo");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let mut witness = Witness::new();
   witness.push(preimage);

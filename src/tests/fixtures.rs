@@ -210,7 +210,6 @@ pub(crate) fn pof_with_bare_proof_input(script_pubkey: ScriptBuf) -> (Address, P
       &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
       &challenge,
       0,
-      false,
     )
     .unwrap(),
   );
@@ -243,7 +242,7 @@ pub(crate) fn p2wsh_interpreter_spend(
   let address = Address::p2wsh(witness_script, bitcoin::Network::Bitcoin);
 
   let to_spend = create_to_spend(&address, "foo");
-  let psbt = create_to_sign(&to_spend, None, locks);
+  let psbt = create_to_sign(&to_spend, None, locks).unwrap();
 
   let sighash = SighashCache::new(psbt.unsigned_tx.clone())
     .p2wsh_signature_hash(0, witness_script, Amount::ZERO, sighash_type)
@@ -291,7 +290,7 @@ pub(crate) fn p2tr_script_path_spend(
     .unwrap();
 
   let to_spend = create_to_spend(&address, "foo");
-  let psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   let prevout = TxOut {
     value: Amount::ZERO,
@@ -373,7 +372,9 @@ pub(crate) fn sign_full_unchecked(
 ) -> Transaction {
   let secp = Secp256k1::new();
   let to_spend = create_to_spend(address, message);
-  let mut to_sign = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   let public_key = private_key.public_key(&secp);
   let script_pubkey = address.script_pubkey();
 

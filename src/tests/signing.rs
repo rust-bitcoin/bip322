@@ -80,7 +80,7 @@ fn adding_aux_randomness_roundtrips() {
   let address = Address::from_str(TAPROOT_ADDRESS).unwrap().assume_checked();
   let message = "Hello World with aux randomness";
   let to_spend = create_to_spend(&address, message);
-  let to_sign = create_to_sign(&to_spend, None, LockParams::default());
+  let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
 
   let mut aux_rand = [0u8; 32];
@@ -294,13 +294,17 @@ fn sign_p2wsh_rejects_missing_witness_script() {
 fn public_signing_helpers_reject_out_of_range_inputs() {
   let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
   let to_spend = create_to_spend(&address, "foo");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
   let private_keys = [private_key];
   let script = ScriptBuf::from_hex(P2WSH_2OF2_WITNESS_SCRIPT).unwrap();
 
   assert!(matches!(
-    create_message_signature_p2wpkh(&psbt, &private_key, &to_spend.output[0], 1, false),
+    create_message_signature_p2wpkh(&psbt, &private_key, &to_spend.output[0], 1),
+    Err(Error::ToSignInvalid)
+  ));
+  assert!(matches!(
+    create_message_signature_p2sh_p2wpkh(&psbt, &private_key, &to_spend.output[0], 1),
     Err(Error::ToSignInvalid)
   ));
   assert!(matches!(
@@ -316,12 +320,146 @@ fn public_signing_helpers_reject_out_of_range_inputs() {
     Err(Error::ToSignInvalid)
   ));
   assert!(matches!(
-    create_message_signature_p2sh_multisig(&mut psbt, &private_keys, &script, 1),
+    create_message_signature_p2sh_multisig(
+      &mut psbt,
+      &private_keys,
+      &script,
+      &to_spend.output[0],
+      1
+    ),
     Err(Error::ToSignInvalid)
   ));
   assert!(matches!(
     create_message_signature_p2pkh(&mut psbt, &private_key, &to_spend.output[0], 1),
     Err(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn create_to_sign_rejects_to_spend_without_outputs() {
+  let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+  let mut to_spend = create_to_spend(&address, "foo");
+  to_spend.output.clear();
+
+  assert!(matches!(
+    create_to_sign(&to_spend, None, LockParams::default()),
+    Err(Error::ToSignInvalid)
+  ));
+}
+
+#[test]
+fn p2wsh_helper_rejects_mismatched_prevout() {
+  let address = Address::from_str(P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let other = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let witness_script = ScriptBuf::from_hex(P2WSH_2OF2_WITNESS_SCRIPT).unwrap();
+  let to_spend = create_to_spend(&address, "foo");
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+  let private_keys = [
+    PrivateKey::from_wif(P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
+    PrivateKey::from_wif(P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
+  ];
+  let wrong_prevout = create_to_spend(&other, "foo").output[0].clone();
+
+  assert!(matches!(
+    create_message_signature_p2wsh(&psbt, &private_keys, &witness_script, &wrong_prevout, 0),
+    Err(Error::WitnessScriptMismatch)
+  ));
+}
+
+#[test]
+fn p2sh_p2wsh_helper_rejects_mismatched_prevout() {
+  let address = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let other = Address::from_str(P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let witness_script = ScriptBuf::from_hex(P2SH_P2WSH_2OF2_WITNESS_SCRIPT).unwrap();
+  let to_spend = create_to_spend(&address, "foo");
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+  let private_keys = [
+    PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_1).unwrap(),
+    PrivateKey::from_wif(P2SH_P2WSH_2OF2_PRIVATE_KEY_2).unwrap(),
+  ];
+  let wrong_prevout = create_to_spend(&other, "foo").output[0].clone();
+
+  assert!(matches!(
+    create_message_signature_p2wsh(&psbt, &private_keys, &witness_script, &wrong_prevout, 0),
+    Err(Error::WitnessScriptMismatch)
+  ));
+}
+
+#[test]
+fn p2sh_multisig_helper_rejects_mismatched_prevout() {
+  let address = Address::from_str(P2SH_MULTISIG_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let other = Address::from_str(P2SH_P2WSH_2OF2_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let redeem_script = ScriptBuf::from_hex(P2SH_MULTISIG_2OF2_REDEEM_SCRIPT).unwrap();
+  let to_spend = create_to_spend(&address, "foo");
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+  let private_keys = [
+    PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_1).unwrap(),
+    PrivateKey::from_wif(P2SH_MULTISIG_2OF2_PRIVATE_KEY_2).unwrap(),
+  ];
+  let wrong_prevout = create_to_spend(&other, "foo").output[0].clone();
+
+  assert!(matches!(
+    create_message_signature_p2sh_multisig(
+      &mut psbt,
+      &private_keys,
+      &redeem_script,
+      &wrong_prevout,
+      0
+    ),
+    Err(Error::WitnessScriptMismatch)
+  ));
+}
+
+#[test]
+fn p2wpkh_helper_rejects_mismatched_prevout() {
+  let address = Address::from_str(SEGWIT_ADDRESS).unwrap().assume_checked();
+  let private_key = PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap();
+  let to_spend = create_to_spend(&address, "foo");
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+  let pub_key = private_key.public_key(&Secp256k1::new());
+  let nested_script =
+    ScriptBuf::new_p2sh(&ScriptBuf::new_p2wpkh(&pub_key.wpubkey_hash().unwrap()).script_hash());
+  let wrong_prevout = TxOut {
+    value: Amount::ZERO,
+    script_pubkey: nested_script,
+  };
+
+  assert!(matches!(
+    create_message_signature_p2wpkh(&psbt, &private_key, &wrong_prevout, 0),
+    Err(Error::PublicKeyMismatch)
+  ));
+}
+
+#[test]
+fn p2sh_p2wpkh_helper_rejects_mismatched_prevout() {
+  let address = Address::from_str(NESTED_SEGWIT_ADDRESS)
+    .unwrap()
+    .assume_checked();
+  let private_key = PrivateKey::from_wif(NESTED_SEGWIT_WIF_PRIVATE_KEY).unwrap();
+  let to_spend = create_to_spend(&address, "foo");
+  let psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
+  let pub_key = private_key.public_key(&Secp256k1::new());
+  let native_script = ScriptBuf::new_p2wpkh(&pub_key.wpubkey_hash().unwrap());
+  let wrong_prevout = TxOut {
+    value: Amount::ZERO,
+    script_pubkey: native_script,
+  };
+
+  assert!(matches!(
+    create_message_signature_p2sh_p2wpkh(&psbt, &private_key, &wrong_prevout, 0),
+    Err(Error::PublicKeyMismatch)
   ));
 }
 

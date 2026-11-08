@@ -272,6 +272,7 @@ fn verify_p2pkh_rejects_mismatched_key() {
   let to_spend = create_to_spend(&address, "foo");
 
   let mut to_sign = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
     .extract_tx()
     .unwrap();
 
@@ -470,6 +471,7 @@ fn unknown_witness_version_is_inconclusive() {
     None,
     LockParams::default(),
   )
+  .unwrap()
   .extract_tx_unchecked_fee_rate();
   assert!(matches!(
     verify_full(&address, "msg", to_sign.clone()),
@@ -524,14 +526,13 @@ fn unknown_transaction_version_is_inconclusive_only_after_required_rules() {
   ));
 
   let to_spend = create_to_spend(&address, "foo");
-  let mut psbt = create_to_sign(&to_spend, None, LockParams::default());
+  let mut psbt = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
   psbt.unsigned_tx.version = Version(3);
   let witness = create_message_signature_p2wpkh(
     &psbt,
     &PrivateKey::from_wif(WIF_PRIVATE_KEY).unwrap(),
     &to_spend.output[0],
     0,
-    false,
   )
   .unwrap();
   psbt.inputs[0].final_script_witness = Some(witness);
@@ -982,7 +983,9 @@ fn naked_zero_timelock_scripts_are_invalid() {
     let to_spend = create_to_spend(&address, "foo");
 
     for version in [Version(0), Version(2)] {
-      let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+      let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+        .unwrap()
+        .unsigned_tx;
       tx.version = version;
       tx.input[0].witness = Witness::from_slice(&[witness_script.as_bytes().to_vec()]);
       assert!(matches!(
@@ -993,7 +996,9 @@ fn naked_zero_timelock_scripts_are_invalid() {
 
     let address = Address::p2sh(&witness_script, bitcoin::Network::Bitcoin).unwrap();
     let to_spend = create_to_spend(&address, "foo");
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].script_sig = push_only_script(&witness_script);
     assert!(matches!(
       verify_full(&address, "foo", tx),
@@ -1026,13 +1031,17 @@ fn composed_zero_timelock_scripts_are_not_valid() {
 
     let address = Address::p2wsh(&script, bitcoin::Network::Bitcoin);
     let to_spend = create_to_spend(&address, "foo");
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].witness = Witness::from_slice(&[script.as_bytes().to_vec()]);
     inconclusive(verify_full(&address, "foo", tx));
 
     let address = Address::p2sh(&script, bitcoin::Network::Bitcoin).unwrap();
     let to_spend = create_to_spend(&address, "foo");
-    let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+    let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+      .unwrap()
+      .unsigned_tx;
     tx.input[0].script_sig = push_only_script(&script);
     inconclusive(verify_full(&address, "foo", tx));
 
@@ -1052,7 +1061,9 @@ fn nested_witness_commitments_and_program_lengths_are_enforced() {
   .script_pubkey();
   let address = Address::p2sh(&future, bitcoin::Network::Bitcoin).unwrap();
   let to_spend = create_to_spend(&address, "foo");
-  let mut tx = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut tx = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   tx.input[0].script_sig = push_only_script(&future);
   assert!(matches!(
     verify_full(&address, "foo", tx.clone()),
@@ -1061,7 +1072,9 @@ fn nested_witness_commitments_and_program_lengths_are_enforced() {
 
   let wrong_address = Address::p2sh(&ScriptBuf::new(), bitcoin::Network::Bitcoin).unwrap();
   let wrong_to_spend = create_to_spend(&wrong_address, "foo");
-  let mut wrong_tx = create_to_sign(&wrong_to_spend, None, LockParams::default()).unsigned_tx;
+  let mut wrong_tx = create_to_sign(&wrong_to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   wrong_tx.input[0].script_sig = push_only_script(&future);
   assert!(matches!(
     verify_full(&wrong_address, "foo", wrong_tx),
@@ -1080,7 +1093,9 @@ fn nested_witness_commitments_and_program_lengths_are_enforced() {
 
   let address = Address::p2sh(&malformed, bitcoin::Network::Bitcoin).unwrap();
   let to_spend = create_to_spend(&address, "foo");
-  let mut nested = create_to_sign(&to_spend, None, LockParams::default()).unsigned_tx;
+  let mut nested = create_to_sign(&to_spend, None, LockParams::default())
+    .unwrap()
+    .unsigned_tx;
   nested.input[0].script_sig = push_only_script(&malformed);
   assert!(matches!(
     verify_full(&address, "foo", nested),

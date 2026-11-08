@@ -63,7 +63,7 @@ fn to_sign_txids_correct() {
     "",
   );
 
-  let to_sign = create_to_sign(&to_spend, None, LockParams::default());
+  let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   assert_eq!(
     to_sign.unsigned_tx.compute_txid().to_string(),
@@ -75,7 +75,7 @@ fn to_sign_txids_correct() {
     "Hello World",
   );
 
-  let to_sign = create_to_sign(&to_spend, None, LockParams::default());
+  let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   assert_eq!(
     to_sign.unsigned_tx.compute_txid().to_string(),
@@ -87,7 +87,7 @@ fn to_sign_txids_correct() {
     "UTF-8 support: öäüéàè 测试文本 \u{1F604}",
   );
 
-  let to_sign = create_to_sign(&to_spend, None, LockParams::default());
+  let to_sign = create_to_sign(&to_spend, None, LockParams::default()).unwrap();
 
   assert_eq!(
     to_sign.unsigned_tx.compute_txid().to_string(),
